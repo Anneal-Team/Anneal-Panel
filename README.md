@@ -82,6 +82,17 @@ Designed for multi-tenant environments where different teams, resellers and user
 
 ---
 
+## 🤝 Contributing
+
+Contributions are welcome! Whether it's a bug report, a feature idea, a docs fix, or a pull request — all of it helps move the project forward.
+
+If you're going to contribute code, open an issue first so we can discuss the direction. For small fixes and improvements, feel free to send a PR directly.
+
+> [!NOTE]
+> The project is in active development. Some areas of the codebase are still being shaped — good time to get involved early.
+
+---
+
 ## 💜 Acknowledgements
 
 Special thanks to the **[Hiddify](https://github.com/hiddify)** team for their contributions to the ecosystem and strong ideas around convenient domain configuration, client config structure, and delivery pipelines.
