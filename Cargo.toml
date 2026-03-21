@@ -61,7 +61,7 @@ totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth"] }
 tracing = "0.1.41"
 tracing-opentelemetry = "0.30.0"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
-opentelemetry = "0.29.1"
+opentelemetry = "0.31.0"
 opentelemetry-otlp = { version = "0.29.0", features = ["grpc-tonic"] }
 opentelemetry_sdk = "0.29.0"
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
