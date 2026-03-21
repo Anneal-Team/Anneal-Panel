@@ -67,34 +67,38 @@ export function LoginPage() {
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center">
       <div className="grid w-full gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <Card className="bg-gradient-to-br from-accent to-[#1f5e63] text-white">
-          <div className="text-xs uppercase tracking-[0.35em] text-white/70">Anneal</div>
-          <h1 className="mt-4 text-4xl font-semibold">Control Plane</h1>
-          <p className="mt-4 max-w-xl text-sm text-white/80">
-            {t("login.slogan")}
-          </p>
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            <div className="rounded-3xl bg-white/10 p-4">
-              <div className="text-xs uppercase tracking-[0.25em] text-white/60">Auth</div>
-              <div className="mt-3 text-2xl font-semibold">SSO + TOTP</div>
+        <Card className="flex flex-col justify-between gap-8">
+          <div>
+            <div className="inline-block rounded-md bg-[#e2efca] px-3 py-1 text-xs font-bold uppercase tracking-widest text-[#384733]">
+              {t("login.badge_label")}
             </div>
-            <div className="rounded-3xl bg-white/10 p-4">
-              <div className="text-xs uppercase tracking-[0.25em] text-white/60">Security</div>
-              <div className="mt-3 text-2xl font-semibold">RBAC staff</div>
+            <h1 className="mt-4 text-4xl font-bold text-[#1d271a]">{t("login.heading")}</h1>
+            <p className="mt-3 max-w-xl text-sm text-[#485644]">
+              {t("login.slogan")}
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-[22px] bg-[#fbf7ef] px-4 py-4">
+              <div className="text-xs uppercase tracking-widest text-[#485644]">{t("login.feature_auth")}</div>
+              <div className="mt-2 text-base font-semibold text-[#1d271a] leading-snug">{t("login.feature_auth_value")}</div>
             </div>
-            <div className="rounded-3xl bg-white/10 p-4">
-              <div className="text-xs uppercase tracking-[0.25em] text-white/60">Cluster</div>
-              <div className="mt-3 text-2xl font-semibold">Native agent</div>
+            <div className="rounded-[22px] bg-[#fbf7ef] px-4 py-4">
+              <div className="text-xs uppercase tracking-widest text-[#485644]">{t("login.feature_security")}</div>
+              <div className="mt-2 text-base font-semibold text-[#1d271a] leading-snug">{t("login.feature_security_value")}</div>
+            </div>
+            <div className="rounded-[22px] bg-[#fbf7ef] px-4 py-4">
+              <div className="text-xs uppercase tracking-widest text-[#485644]">{t("login.feature_cluster")}</div>
+              <div className="mt-2 text-base font-semibold text-[#1d271a] leading-snug">{t("login.feature_cluster_value")}</div>
             </div>
           </div>
         </Card>
         <Card className="flex w-full flex-col p-8">
           <div className="flex items-center justify-between">
-            <div className="text-xs uppercase tracking-[0.3em] text-foreground/80">Access</div>
+            <div className="text-xs uppercase tracking-widest text-[#485644]">{t("login.access_label")}</div>
             <LanguageSwitcher />
           </div>
-          <h2 className="mt-6 text-3xl font-semibold">{t("login.title")}</h2>
-          <p className="mt-2 text-sm text-foreground/80">
+          <h2 className="mt-6 text-3xl font-bold text-[#1d271a]">{t("login.title")}</h2>
+          <p className="mt-2 text-sm text-[#485644]">
             {t("login.subtitle")}
           </p>
           {step === "credentials" ? (
@@ -131,8 +135,8 @@ export function LoginPage() {
               }}
             >
               {step === "totp_setup" ? (
-                <div className="rounded-3xl bg-[#f2efe4] p-4 text-sm text-foreground/75">
-                  <div className="font-semibold text-foreground">{t("login.totp_setup")}</div>
+                <div className="rounded-[24px] border border-border bg-[#f8f5f0] p-4 text-sm text-[#485644]">
+                  <div className="font-semibold text-[#1d271a]">{t("login.totp_setup")}</div>
                   <div className="mt-3 break-all">{t("login.secret")}: {setupSecret}</div>
                   <div className="mt-2 break-all">{t("login.otp_url")}: {setupUrl}</div>
                 </div>
