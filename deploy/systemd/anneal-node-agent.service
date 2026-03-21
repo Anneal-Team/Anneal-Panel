@@ -1,0 +1,17 @@
+[Unit]
+Description=Anneal Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anneal
+Group=anneal
+EnvironmentFile=/etc/anneal/anneal.env
+WorkingDirectory=/var/lib/anneal
+ExecStart=/opt/anneal/bin/node-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

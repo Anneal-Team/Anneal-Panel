@@ -1,0 +1,16 @@
+[Unit]
+Description=Anneal Caddy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/caddy run --config /etc/anneal/Caddyfile --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/anneal/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

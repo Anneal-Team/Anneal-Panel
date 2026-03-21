@@ -1,0 +1,65 @@
+# Build output
+/target/
+/dist/
+/build/
+/web/dist/
+/web/dist-ssr/
+/coverage/
+
+# Dependencies
+node_modules/
+/web/node_modules/
+jspm_packages/
+web_modules/
+
+# Logs & temp files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+*.tsbuildinfo
+/.tmp/
+/tmp/
+/.codex-tmp/
+*.pid
+*.seed
+*.stackdump
+
+# Environment / Secrets
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+!.env.*.example
+*.pem
+*.crt
+*.key
+
+# Databases
+*.sqlite
+*.sqlite3
+*.db
+*.leveldb
+
+# IDE & OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+

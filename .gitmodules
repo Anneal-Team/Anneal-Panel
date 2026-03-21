@@ -1,0 +1,6 @@
+[submodule "vendor/cores/hiddify-core"]
+	path = vendor/cores/hiddify-core
+	url = https://github.com/hiddify/hiddify-core.git
+[submodule "vendor/cores/xray-core"]
+	path = vendor/cores/xray-core
+	url = https://github.com/XTLS/Xray-core.git

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 155 34">
+  <rect x="1"  y="22" width="5" height="10" rx="1.5" fill="#a3d96a" opacity=".25"/>
+  <rect x="8"  y="16" width="5" height="16" rx="1.5" fill="#a3d96a" opacity=".5"/>
+  <rect x="15" y="10" width="5" height="22" rx="1.5" fill="#a3d96a" opacity=".78"/>
+  <rect x="22" y="4"  width="5" height="28" rx="1.5" fill="#a3d96a"/>
+  <text x="36" y="24" font-family="'Plus Jakarta Sans','DM Sans',system-ui,sans-serif" font-size="18" font-weight="700" letter-spacing="-0.4">
+    <tspan fill="#dde8d0">Ann</tspan><tspan fill="#a3d96a">eal</tspan>
+  </text>
+</svg>

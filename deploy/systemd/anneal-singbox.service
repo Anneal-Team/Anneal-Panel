@@ -1,0 +1,16 @@
+[Unit]
+Description=Anneal Hiddify Core Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anneal
+Group=anneal
+WorkingDirectory=/var/lib/anneal
+ExecStart=/opt/anneal/bin/hiddify-core run -c /var/lib/anneal/singbox/config.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

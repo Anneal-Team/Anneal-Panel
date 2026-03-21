@@ -1,0 +1,17 @@
+[Unit]
+Description=Anneal API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anneal
+Group=anneal
+EnvironmentFile=/etc/anneal/anneal.env
+WorkingDirectory=/opt/anneal
+ExecStart=/opt/anneal/bin/api
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

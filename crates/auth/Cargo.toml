@@ -1,0 +1,27 @@
+[package]
+name = "anneal-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+anneal-core.workspace = true
+anneal-rbac.workspace = true
+anneal-users.workspace = true
+argon2.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+chrono.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+serde.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+totp-rs.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
