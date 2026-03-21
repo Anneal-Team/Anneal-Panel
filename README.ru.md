@@ -1,0 +1,87 @@
+<p align="right">
+  <a href="./README.md"><img src="https://img.shields.io/badge/🇬🇧-English-4f46e5?style=flat-square&labelColor=1e1b4b" alt="English" /></a>
+  &nbsp;
+  <a href="./README.ru.md"><img src="https://img.shields.io/badge/🇷🇺-Русский-4f46e5?style=flat-square&labelColor=1e1b4b" alt="Русский" /></a>
+</p>
+
+<p align="center">
+  <img src="./anneal-github-banner.svg" alt="Anneal" width="860" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-2024-CE422B?style=for-the-badge&logo=rust&logoColor=white&labelColor=1a1a2e" alt="Rust 2024" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=0d1117&labelColor=1a1a2e" alt="React 19" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/PostgreSQL-16-336791?style=for-the-badge&logo=postgresql&logoColor=white&labelColor=1a1a2e" alt="PostgreSQL 16" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white&labelColor=1a1a2e" alt="Docker ready" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-a855f7?style=for-the-badge&labelColor=1a1a2e" alt="AGPL-3.0" />
+</p>
+
+<p align="center">
+  <b>Управление серверными группами &nbsp;·&nbsp; Доменные правила &nbsp;·&nbsp; Доставка подписок &nbsp;·&nbsp; Клиентские конфиги</b>
+</p>
+
+---
+
+## 🔥 Что такое Anneal
+
+Anneal — это панель управления, которая объединяет всё необходимое для эксплуатации прокси-инфраструктуры в масштабе: runtime-агенты, правила маршрутизации по доменам, автоматическая генерация точек входа, управление подписками и выдача клиентских конфигов.
+
+Разработана для мультитенантных сред, где разные команды, реселлеры и пользователи нуждаются в изолированном контроле над своей частью инфраструктуры.
+
+---
+
+## ⚡ Возможности
+
+```
+🏢  Мультиарендность     —  роли superadmin / admin / reseller / user
+🖥️  Web-интерфейс        —  ноды, пользователи, подписки, доменные правила
+🦀  API на Rust          —  миграции, аудит, TOTP, usage, уведомления
+🤖  Агент сервера        —  регистрация runtime, heartbeat, rollout-задачи
+🌐  Генерация endpoint   —  direct / legacy_direct / cdn / auto_cdn / relay / worker / reality / fake
+📦  Подписки             —  конфиги xray и sing-box, ссылки, лимиты на устройство
+```
+
+---
+
+## 📁 Состав репозитория
+
+| Путь | Назначение |
+|------|-----------|
+| `apps/api` | 🔌 HTTP API, авторизация, Swagger UI, transport-слой |
+| `apps/node-agent` | 🤖 Агент сервера — регистрация, heartbeat, rollout |
+| `apps/worker` | ⚙️ Фоновые задачи и обработка очередей |
+| `crates/nodes` | 🗂️ Серверные группы, домены, endpoint-ы, rollout orchestration |
+| `crates/subscriptions` | 📋 Подписки, ссылки выдачи, устройства |
+| `crates/users` | 👥 Пользователи, реселлеры, tenant-ы |
+| `crates/config-engine` | 🔧 Генерация клиентских конфигов и bundle-форматов |
+| `web` | 🎨 Фронтенд — React / Vite |
+| `deploy/docker` | 🐳 Docker-образы и конфиги окружения |
+| `migrations` | 🗄️ SQL-миграции PostgreSQL |
+
+---
+
+## 📦 Установка
+
+> [!WARNING]
+> **Инструкция по установке находится в разработке.**
+> Документация по деплою, описание переменных окружения и руководство по продакшн-настройке готовятся и будут опубликованы здесь в ближайшее время.
+
+---
+
+## 🎯 Ключевые сценарии
+
+- 🏗️ Создание серверной группы и подключение runtime-агентов
+- 🌍 Настройка доменных правил и автоматическая генерация точек входа
+- 📬 Выпуск и редактирование подписок с лимитами и сроками
+- 📱 Выдача клиентских ссылок и конфигов по устройствам
+- 📊 Контроль rollout-ов, состояния нод, usage и уведомлений
+
+---
+
+## 💜 Благодарности
+
+Отдельное спасибо команде **[Hiddify](https://github.com/hiddify)** за вклад в экосистему и сильные идеи вокруг удобной настройки доменов, структуры клиентских конфигов и механизмов доставки.
