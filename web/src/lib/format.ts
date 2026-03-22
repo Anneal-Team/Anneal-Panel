@@ -64,6 +64,29 @@ export function formatNodeStatus(value: string) {
   }
 }
 
+export function formatNodeName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+  return trimmed
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+export function formatNotificationBody(kind: string, value: string) {
+  if (kind !== "node_offline") {
+    return value;
+  }
+  const match = /^Node (.+) is offline$/.exec(value.trim());
+  if (!match) {
+    return value;
+  }
+  return `Node ${formatNodeName(match[1])} is offline`;
+}
+
 export function formatDeploymentStatus(value: string) {
   switch (value) {
     case "queued":

@@ -26,6 +26,7 @@ import { LoginPage } from "@/routes/login";
 import { NodeEndpointsPage } from "@/routes/node-endpoints";
 import { NodesPage } from "@/routes/nodes";
 import { NotificationsPage } from "@/routes/notifications";
+import { PublicSubscriptionPage } from "@/routes/public-subscription";
 import { RolloutsPage } from "@/routes/rollouts";
 import { SubscriptionsPage } from "@/routes/subscriptions";
 import { UsersPage } from "@/routes/users";
@@ -59,6 +60,7 @@ function Shell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const hasAccessSession = Boolean(api.readSession().accessToken);
   const isLoginPage = pathname === "/login";
+  const isPublicImportPage = pathname.startsWith("/import/");
   const { t } = useTranslation();
 
   async function handleLogout() {
@@ -69,10 +71,10 @@ function Shell() {
   return (
     <div className="min-h-screen bg-[#f8f5f0] text-foreground">
       <div className="mx-auto flex min-h-screen w-full flex-col px-4 py-4 md:flex-row md:items-stretch md:gap-6 xl:px-8 xl:py-6">
-        {!isLoginPage ? (
+        {!isLoginPage && !isPublicImportPage ? (
           <aside className="mb-4 flex flex-col rounded-[24px] bg-[#141813] text-[#aebda4] py-8 px-4 shadow-panel md:sticky md:top-6 md:mb-0 md:h-[calc(100vh-3rem)] md:w-72 md:shrink-0 md:overflow-y-auto">
             <div className="mb-8 flex items-center justify-center">
-              <img src="/anneal-sidebar.svg" alt="Anneal Logo" className="h-[52px]" />
+              <img src="/anneal-sidebar.svg" alt="Anneal Logo" className="block h-[52px] w-auto object-contain" />
             </div>
 
             <nav className="flex-1 space-y-8">
@@ -145,6 +147,12 @@ const dashboardRoute = createRoute({
   component: DashboardPage,
 });
 
+const publicSubscriptionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/import/$token",
+  component: PublicSubscriptionPage,
+});
+
 const usersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/users",
@@ -190,6 +198,7 @@ const notificationsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   loginRoute,
   dashboardRoute,
+  publicSubscriptionRoute,
   usersRoute,
   devicesRoute,
   nodesRoute,

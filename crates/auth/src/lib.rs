@@ -7,7 +7,8 @@ pub use application::{
     TotpService,
 };
 pub use domain::{
-    AccessClaims, LoginResult, RefreshSession, SessionContext, SessionTokens, TotpSetup,
+    AccessClaims, LoginResult, PreAuthChallenge, PreAuthPurpose, RefreshSession, SessionContext,
+    SessionTokens, TotpSetup,
 };
 pub use infrastructure::{
     ArgonPasswordService, JwtService, OtpAuthTotpService, PgSessionRepository,

@@ -13,24 +13,17 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   api,
   type Node,
+  type NodeDomain,
   type NodeEndpoint,
-  type NodeGroup,
-  type NodeGroupDomain,
-  type NodeGroupDomainMode,
+  type NodeDomainMode,
+  type NodeRuntime,
   type ProxyEngine,
 } from "@/lib/api";
-import { formatDate, formatNodeStatus } from "@/lib/format";
-
-type ServerNode = {
-  id: string;
-  tenant_id: string;
-  name: string;
-  runtimes: Partial<Record<ProxyEngine, Node>>;
-};
+import { formatDate, formatNodeName, formatNodeStatus } from "@/lib/format";
 
 type DomainDraft = {
   id: string;
-  mode: NodeGroupDomainMode;
+  mode: NodeDomainMode;
   domain: string;
   alias: string;
   server_names_text: string;
@@ -39,7 +32,7 @@ type DomainDraft = {
 
 type GeneratedPreviewItem = {
   engine: ProxyEngine;
-  node_id: string;
+  runtime_id: string;
   tenant_id: string;
   endpoint: NodeEndpoint;
 };
@@ -54,7 +47,7 @@ type ModeMeta = {
   hostHeaderHint: string;
 };
 
-const modeOrder: NodeGroupDomainMode[] = [
+const modeOrder: NodeDomainMode[] = [
   "direct",
   "legacy_direct",
   "cdn",
@@ -65,88 +58,93 @@ const modeOrder: NodeGroupDomainMode[] = [
   "fake",
 ];
 
-const modeMeta: Record<NodeGroupDomainMode, ModeMeta> = {
-  direct: {
-    title: "На прямую",
-    description:
-      "Выбирай этот режим, если домен смотрит прямо на сервер и работает без CDN или прокси.",
-    generated: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2", "gRPC"],
-    domainHint: "Укажи домен, который уже направлен на сервер в режиме DNS only.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если оставить пустым, Host будет равен домену.",
-  },
-  legacy_direct: {
-    title: "Старый direct",
-    description:
-      "Прямое подключение без gRPC. Используй, если нужен только классический набор без gRPC-вариантов.",
-    generated: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2"],
-    domainHint: "Укажи домен, который смотрит прямо на сервер без прокси.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если оставить пустым, Host будет равен домену.",
-  },
-  cdn: {
-    title: "CDN",
-    description:
-      "Используй для домена за CDN или любым прокси-режимом. Панель подготовит набор TLS-вариантов.",
-    generated: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "gRPC"],
-    domainHint: "Укажи домен, который выдаётся пользователям и работает через прокси или CDN.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если оставить пустым, Host будет равен домену.",
-  },
-  auto_cdn: {
-    title: "Auto CDN",
-    description:
-      "Работает как CDN-режим, но публичный адрес будет определяться автоматически через DNS домена.",
-    generated: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "gRPC", "авто IP"],
-    domainHint: "Укажи домен, по которому можно получить актуальный IP через DNS.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если оставить пустым, Host будет равен домену.",
-  },
-  relay: {
-    title: "Relay",
-    description:
-      "Подходит для схемы с промежуточным сервером. Панель соберёт обычный набор точек входа с relay-доменом.",
-    generated: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2", "gRPC"],
-    domainHint: "Укажи внешний домен, через который пользователи заходят на relay-схему.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если оставить пустым, Host будет равен домену.",
-  },
-  worker: {
-    title: "Worker",
-    description:
-      "Готовит worker-схему для WS и HTTP Upgrade. Удобно, когда нужен внешний Host и отдельные SNI.",
-    generated: ["VLESS WS", "VLESS HTTP Upgrade", "Trojan WS", "VMess WS"],
-    domainHint: "Укажи домен, через который будет заходить трафик worker-схемы.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если строк меньше, панель подставит первый Host для остальных вариантов.",
-  },
-  reality: {
-    title: "Reality",
-    description:
-      "Для каждого SNI из списка создаётся отдельная точка входа с ключами Reality. Ключи генерируются автоматически.",
-    generated: ["VLESS Reality", "отдельный endpoint на каждый SNI"],
-    domainHint: "Укажи домен, который будет публичным адресом для Reality-подключения.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Каждая строка создаёт отдельный Reality endpoint.",
-    hostHeaderHint: "Для Reality не используется и может быть пустым.",
-  },
-  fake: {
-    title: "Поддельный сайт",
-    description:
-      "Используй, если нужен маскирующий домен и отдельный SNI для обходных схем.",
-    generated: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2", "gRPC"],
-    domainHint: "Укажи внешний домен, который будет отдаваться клиентам как публичный адрес.",
-    aliasHint: "Короткое имя для панели и конфигов. Можно оставить пустым.",
-    serverNameHint: "По строкам. Если оставить пустым, панель возьмёт сам домен.",
-    hostHeaderHint: "По строкам. Если оставить пустым, Host будет равен домену.",
-  },
+const modeGenerated: Record<NodeDomainMode, string[]> = {
+  direct: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2", "gRPC"],
+  legacy_direct: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2"],
+  cdn: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "gRPC"],
+  auto_cdn: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "gRPC"],
+  relay: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2", "gRPC"],
+  worker: ["VLESS WS", "VLESS HTTP Upgrade", "Trojan WS", "VMess WS"],
+  reality: ["VLESS Reality"],
+  fake: ["VLESS", "Trojan", "VMess", "Shadowsocks 2022", "TUIC", "Hysteria2", "gRPC"],
 };
+
+function buildModeMeta(t: (key: string) => string): Record<NodeDomainMode, ModeMeta> {
+  return {
+    direct: {
+      title: t("node_endpoints.modes.direct.title"),
+      description: t("node_endpoints.modes.direct.description"),
+      generated: modeGenerated.direct,
+      domainHint: t("node_endpoints.modes.direct.domain_hint"),
+      aliasHint: t("node_endpoints.modes.direct.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.direct.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.direct.host_header_hint"),
+    },
+    legacy_direct: {
+      title: t("node_endpoints.modes.legacy_direct.title"),
+      description: t("node_endpoints.modes.legacy_direct.description"),
+      generated: modeGenerated.legacy_direct,
+      domainHint: t("node_endpoints.modes.legacy_direct.domain_hint"),
+      aliasHint: t("node_endpoints.modes.legacy_direct.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.legacy_direct.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.legacy_direct.host_header_hint"),
+    },
+    cdn: {
+      title: t("node_endpoints.modes.cdn.title"),
+      description: t("node_endpoints.modes.cdn.description"),
+      generated: modeGenerated.cdn,
+      domainHint: t("node_endpoints.modes.cdn.domain_hint"),
+      aliasHint: t("node_endpoints.modes.cdn.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.cdn.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.cdn.host_header_hint"),
+    },
+    auto_cdn: {
+      title: t("node_endpoints.modes.auto_cdn.title"),
+      description: t("node_endpoints.modes.auto_cdn.description"),
+      generated: [...modeGenerated.auto_cdn, t("node_endpoints.modes.auto_cdn.generated_auto_ip")],
+      domainHint: t("node_endpoints.modes.auto_cdn.domain_hint"),
+      aliasHint: t("node_endpoints.modes.auto_cdn.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.auto_cdn.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.auto_cdn.host_header_hint"),
+    },
+    relay: {
+      title: t("node_endpoints.modes.relay.title"),
+      description: t("node_endpoints.modes.relay.description"),
+      generated: modeGenerated.relay,
+      domainHint: t("node_endpoints.modes.relay.domain_hint"),
+      aliasHint: t("node_endpoints.modes.relay.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.relay.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.relay.host_header_hint"),
+    },
+    worker: {
+      title: t("node_endpoints.modes.worker.title"),
+      description: t("node_endpoints.modes.worker.description"),
+      generated: modeGenerated.worker,
+      domainHint: t("node_endpoints.modes.worker.domain_hint"),
+      aliasHint: t("node_endpoints.modes.worker.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.worker.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.worker.host_header_hint"),
+    },
+    reality: {
+      title: t("node_endpoints.modes.reality.title"),
+      description: t("node_endpoints.modes.reality.description"),
+      generated: [...modeGenerated.reality, t("node_endpoints.modes.reality.generated_per_sni")],
+      domainHint: t("node_endpoints.modes.reality.domain_hint"),
+      aliasHint: t("node_endpoints.modes.reality.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.reality.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.reality.host_header_hint"),
+    },
+    fake: {
+      title: t("node_endpoints.modes.fake.title"),
+      description: t("node_endpoints.modes.fake.description"),
+      generated: modeGenerated.fake,
+      domainHint: t("node_endpoints.modes.fake.domain_hint"),
+      aliasHint: t("node_endpoints.modes.fake.alias_hint"),
+      serverNameHint: t("node_endpoints.modes.fake.server_name_hint"),
+      hostHeaderHint: t("node_endpoints.modes.fake.host_header_hint"),
+    },
+  };
+}
 
 const protocolTitle: Record<NodeEndpoint["protocol"], string> = {
   vless_reality: "VLESS",
@@ -168,7 +166,7 @@ function draftId() {
   return globalThis.crypto.randomUUID();
 }
 
-function createDraft(mode: NodeGroupDomainMode = "direct"): DomainDraft {
+function createDraft(mode: NodeDomainMode = "direct"): DomainDraft {
   return {
     id: draftId(),
     mode,
@@ -183,7 +181,7 @@ function createStarterPack(): DomainDraft[] {
   return modeOrder.map((mode) => createDraft(mode));
 }
 
-function draftFromDomain(domain: NodeGroupDomain): DomainDraft {
+function draftFromDomain(domain: NodeDomain): DomainDraft {
   return {
     id: domain.id,
     mode: domain.mode,
@@ -194,7 +192,7 @@ function draftFromDomain(domain: NodeGroupDomain): DomainDraft {
   };
 }
 
-function formFromDomains(domains: NodeGroupDomain[] | undefined) {
+function formFromDomains(domains: NodeDomain[] | undefined) {
   if (!domains || domains.length === 0) {
     return createStarterPack();
   }
@@ -209,69 +207,68 @@ function splitLines(value: string) {
   return normalized.filter((item, index) => normalized.indexOf(item) === index);
 }
 
-function groupServers(nodeGroups: NodeGroup[] | undefined, nodes: Node[] | undefined) {
-  const servers = new Map<string, ServerNode>();
-  for (const group of nodeGroups ?? []) {
-    servers.set(group.id, {
-      id: group.id,
-      tenant_id: group.tenant_id,
-      name: group.name,
-      runtimes: {},
-    });
-  }
-  for (const node of nodes ?? []) {
-    const current = servers.get(node.node_group_id) ?? {
-      id: node.node_group_id,
-      tenant_id: node.tenant_id,
-      name: node.name,
-      runtimes: {},
-    };
-    current.runtimes[node.engine] = node;
-    servers.set(node.node_group_id, current);
-  }
-  return Array.from(servers.values()).sort((left, right) => left.name.localeCompare(right.name));
+function runtimeByEngine(node: Node, engine: ProxyEngine) {
+  return node.runtimes.find((runtime) => runtime.engine === engine);
 }
 
-function runtimeTone(node: Node | undefined) {
-  if (!node) {
+function runtimeTone(runtime: NodeRuntime | undefined) {
+  if (!runtime) {
     return "muted" as const;
   }
-  if (node.status === "online") {
+  if (runtime.status === "online") {
     return "success" as const;
   }
-  if (node.status === "pending") {
+  if (runtime.status === "pending") {
     return "warning" as const;
   }
   return "danger" as const;
 }
 
-function runtimeLabel(node: Node | undefined) {
-  if (!node) {
-    return "Не зарегистрирован";
+function runtimeLabel(runtime: NodeRuntime | undefined, missingLabel: string) {
+  if (!runtime) {
+    return missingLabel;
   }
-  return formatNodeStatus(node.status);
+  return formatNodeStatus(runtime.status);
 }
 
 function endpointInput(endpoint: NodeEndpoint) {
-  const { id: _id, node_id: _nodeId, created_at: _createdAt, updated_at: _updatedAt, ...rest } = endpoint;
-  return rest;
+  return {
+    protocol: endpoint.protocol,
+    listen_host: endpoint.listen_host,
+    listen_port: endpoint.listen_port,
+    public_host: endpoint.public_host,
+    public_port: endpoint.public_port,
+    transport: endpoint.transport,
+    security: endpoint.security,
+    server_name: endpoint.server_name,
+    host_header: endpoint.host_header,
+    path: endpoint.path,
+    service_name: endpoint.service_name,
+    flow: endpoint.flow,
+    fingerprint: endpoint.fingerprint,
+    alpn: endpoint.alpn,
+    cipher: endpoint.cipher,
+    tls_certificate_path: endpoint.tls_certificate_path,
+    tls_key_path: endpoint.tls_key_path,
+    enabled: endpoint.enabled,
+  };
 }
 
 function endpointCaption(item: GeneratedPreviewItem) {
   return `${protocolTitle[item.endpoint.protocol]} / ${item.engine} / ${transportTitle[item.endpoint.transport]}`;
 }
 
-function ruleTitle(draft: DomainDraft) {
+function ruleTitle(draft: DomainDraft, fallback: string) {
   if (draft.domain.trim()) {
     return draft.domain.trim();
   }
   if (draft.alias.trim()) {
     return draft.alias.trim();
   }
-  return "Новое правило";
+  return fallback;
 }
 
-function ruleSubtitle(draft: DomainDraft) {
+function ruleSubtitle(draft: DomainDraft, modeMeta: Record<NodeDomainMode, ModeMeta>) {
   const parts = [modeMeta[draft.mode].title];
   if (draft.alias.trim()) {
     parts.push(draft.alias.trim());
@@ -283,6 +280,7 @@ export function NodeEndpointsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const session = api.readSession();
+  const modeMeta = useMemo(() => buildModeMeta(t), [t]);
   const [selectedServerId, setSelectedServerId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [form, setForm] = useState<DomainDraft[]>(createStarterPack);
@@ -290,11 +288,6 @@ export function NodeEndpointsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const nodeGroupsQuery = useQuery({
-    queryKey: ["node-groups"],
-    queryFn: api.listNodeGroups,
-    enabled: Boolean(session.accessToken),
-  });
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
     queryFn: api.listNodes,
@@ -302,8 +295,8 @@ export function NodeEndpointsPage() {
   });
 
   const servers = useMemo(
-    () => groupServers(nodeGroupsQuery.data, nodesQuery.data),
-    [nodeGroupsQuery.data, nodesQuery.data],
+    () => [...(nodesQuery.data ?? [])].sort((left, right) => left.name.localeCompare(right.name)),
+    [nodesQuery.data],
   );
 
   const selectedServer = useMemo(
@@ -329,17 +322,17 @@ export function NodeEndpointsPage() {
   }, [form, selectedDraftId]);
 
   const domainsQuery = useQuery({
-    queryKey: ["node-group-domains", selectedServer?.id],
+    queryKey: ["node-domains", selectedServer?.id],
     enabled: Boolean(session.accessToken && selectedServer),
-    queryFn: () => api.listNodeGroupDomains(selectedServer!.id, selectedServer!.tenant_id),
+    queryFn: () => api.listNodeDomains(selectedServer!.id, selectedServer!.tenant_id),
   });
 
   const endpointsQuery = useQuery({
     queryKey: [
       "server-endpoints",
       selectedServer?.id,
-      selectedServer?.runtimes.xray?.id,
-      selectedServer?.runtimes.singbox?.id,
+      selectedServer ? runtimeByEngine(selectedServer, "xray")?.id : null,
+      selectedServer ? runtimeByEngine(selectedServer, "singbox")?.id : null,
     ],
     enabled: Boolean(session.accessToken && selectedServer),
     queryFn: async () => {
@@ -348,10 +341,10 @@ export function NodeEndpointsPage() {
       }
       const entries = await Promise.all(
         (["xray", "singbox"] as const)
-          .filter((engine) => selectedServer.runtimes[engine])
+          .filter((engine) => runtimeByEngine(selectedServer, engine))
           .map(async (engine) => {
-            const node = selectedServer.runtimes[engine]!;
-            const endpoints = await api.listNodeEndpoints(node.id, node.tenant_id);
+            const runtime = runtimeByEngine(selectedServer, engine)!;
+            const endpoints = await api.listNodeRuntimeEndpoints(runtime.id, runtime.tenant_id);
             return [engine, endpoints] as const;
           }),
       );
@@ -368,7 +361,7 @@ export function NodeEndpointsPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!selectedServer) {
-        throw new Error("Сначала выбери серверную ноду.");
+        throw new Error(t("node_endpoints.error.server_required"));
       }
       const domains = form
         .filter((draft) => draft.domain.trim())
@@ -379,17 +372,17 @@ export function NodeEndpointsPage() {
           server_names: splitLines(draft.server_names_text),
           host_headers: splitLines(draft.host_headers_text),
         }));
-      return api.replaceNodeGroupDomains(selectedServer.id, {
+      return api.replaceNodeDomains(selectedServer.id, {
         tenant_id: selectedServer.tenant_id,
         domains,
       });
     },
     onSuccess: async (domains) => {
       setError(null);
-      setMessage(`Доменные правила сохранены: ${domains.length}. Точки входа пересобраны автоматически.`);
+      setMessage(t("node_endpoints.saved", { count: domains.length }));
       setSettingsOpen(false);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["node-group-domains"] }),
+        queryClient.invalidateQueries({ queryKey: ["node-domains"] }),
         queryClient.invalidateQueries({ queryKey: ["server-endpoints"] }),
         queryClient.invalidateQueries({ queryKey: ["rollouts"] }),
       ]);
@@ -402,21 +395,21 @@ export function NodeEndpointsPage() {
 
   const toggleEndpointMutation = useMutation({
     mutationFn: async ({
-      nodeId,
+      runtimeId,
       tenantId,
       endpoints,
     }: {
-      nodeId: string;
+      runtimeId: string;
       tenantId: string;
       endpoints: NodeEndpoint[];
     }) =>
-      api.replaceNodeEndpoints(nodeId, {
+      api.replaceNodeRuntimeEndpoints(runtimeId, {
         tenant_id: tenantId,
         endpoints: endpoints.map(endpointInput),
-      }),
+    }),
     onSuccess: async () => {
       setError(null);
-      setMessage("Состояние точки входа обновлено.");
+      setMessage(t("node_endpoints.toggled"));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["server-endpoints"] }),
         queryClient.invalidateQueries({ queryKey: ["rollouts"] }),
@@ -431,14 +424,14 @@ export function NodeEndpointsPage() {
   const generatedPreview = useMemo(() => {
     const items: GeneratedPreviewItem[] = [];
     for (const engine of ["xray", "singbox"] as const) {
-      const runtime = selectedServer?.runtimes[engine];
+      const runtime = selectedServer ? runtimeByEngine(selectedServer, engine) : undefined;
       if (!runtime) {
         continue;
       }
       for (const endpoint of endpointsQuery.data?.[engine] ?? []) {
         items.push({
           engine,
-          node_id: runtime.id,
+          runtime_id: runtime.id,
           tenant_id: runtime.tenant_id,
           endpoint,
         });
@@ -455,7 +448,7 @@ export function NodeEndpointsPage() {
     setForm((current) => current.map((draft) => (draft.id === id ? { ...draft, [key]: value } : draft)));
   }
 
-  function addDraft(mode: NodeGroupDomainMode = selectedDraft?.mode ?? "direct") {
+  function addDraft(mode: NodeDomainMode = selectedDraft?.mode ?? "direct") {
     const next = createDraft(mode);
     setForm((current) => [...current, next]);
     setSelectedDraftId(next.id);
@@ -477,14 +470,14 @@ export function NodeEndpointsPage() {
       endpoint.id === item.endpoint.id ? { ...endpoint, enabled: !endpoint.enabled } : endpoint,
     );
     toggleEndpointMutation.mutate({
-      nodeId: item.node_id,
+      runtimeId: item.runtime_id,
       tenantId: item.tenant_id,
       endpoints: next,
     });
   }
 
   if (!session.accessToken) {
-    return <AuthRequired title="Раздел точек входа недоступен без авторизации" />;
+    return <AuthRequired title={t("node_endpoints.unauthorized")} />;
   }
 
   return (
@@ -493,11 +486,8 @@ export function NodeEndpointsPage() {
         <div className="inline-block rounded-md bg-[#e2efca] px-3 py-1 text-xs font-bold uppercase tracking-widest text-[#384733]">
           {t("nav_group.infrastructure")}
         </div>
-        <h1 className="mt-4 text-4xl font-bold text-[#1d271a]">Домены и точки входа</h1>
-        <p className="mt-3 max-w-4xl text-base text-[#485644]">
-          Здесь настраиваются домены, режимы, SNI и Host для выбранного сервера. После сохранения панель сама
-          пересобирает полный набор точек входа.
-        </p>
+        <h1 className="mt-4 text-4xl font-bold text-[#1d271a]">{t("node_endpoints.title")}</h1>
+        <p className="mt-3 max-w-4xl text-base text-[#485644]">{t("node_endpoints.subtitle")}</p>
       </div>
 
       {message ? <div className="text-sm text-emerald-700">{message}</div> : null}
@@ -506,33 +496,37 @@ export function NodeEndpointsPage() {
       <Card className="space-y-5 shadow-sm">
         <div className="grid gap-3 xl:grid-cols-[1.1fr_auto]">
           <Select value={selectedServerId} onChange={(event) => setSelectedServerId(event.target.value)}>
-            <option value="">Выберите сервер</option>
+            <option value="">{t("node_endpoints.select_server")}</option>
             {servers.map((server) => (
               <option key={server.id} value={server.id}>
-                {server.name} / {server.tenant_id}
+                {formatNodeName(server.name)} / {server.tenant_id}
               </option>
             ))}
           </Select>
           <Button type="button" disabled={!selectedServer} onClick={() => setSettingsOpen(true)}>
-            Настроить домены
+            {t("node_endpoints.configure")}
           </Button>
         </div>
 
         {selectedServer ? (
           <div className="grid gap-3 md:grid-cols-2">
             {(["xray", "singbox"] as const).map((engine) => {
-              const runtime = selectedServer.runtimes[engine];
+              const runtime = runtimeByEngine(selectedServer, engine);
               return (
                 <div key={engine} className="rounded-[22px] border border-border bg-[#f8f5f0] px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold">{engine}</div>
-                    <Badge tone={runtimeTone(runtime)}>{runtimeLabel(runtime)}</Badge>
+                    <Badge tone={runtimeTone(runtime)}>
+                      {runtimeLabel(runtime, t("node_endpoints.runtime_missing"))}
+                    </Badge>
                   </div>
                   <div className="mt-2 text-sm text-foreground/80">
-                    {runtime ? `Версия ${runtime.version}` : "Рантайм ещё не зарегистрирован"}
+                    {runtime
+                      ? t("node_endpoints.runtime_version", { version: runtime.version })
+                      : t("node_endpoints.runtime_missing")}
                   </div>
                   <div className="mt-2 text-xs text-foreground/90">
-                    Последний сигнал: {formatDate(runtime?.last_seen_at ?? null)}
+                    {t("node_endpoints.runtime_last_seen")}: {formatDate(runtime?.last_seen_at ?? null)}
                   </div>
                 </div>
               );
@@ -551,12 +545,12 @@ export function NodeEndpointsPage() {
             </div>
           ) : (
             <div className="rounded-[24px] border border-dashed border-border bg-[#f8f5f0] px-5 py-6 text-sm text-foreground/80">
-              Доменов ещё нет. Открой настройки и заполни нужные режимы в одном окне.
+              {t("node_endpoints.domains_empty")}
             </div>
           )
         ) : (
           <div className="rounded-[24px] border border-dashed border-border bg-[#f8f5f0] px-5 py-6 text-sm text-foreground/80">
-            Сначала выбери сервер.
+            {t("node_endpoints.server_required")}
           </div>
         )}
       </Card>
@@ -564,9 +558,11 @@ export function NodeEndpointsPage() {
       <Card className="space-y-4 shadow-sm">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <h2 className="mt-2 text-xl font-bold text-[#1d271a]">Сгенерированные точки входа</h2>
+            <h2 className="mt-2 text-xl font-bold text-[#1d271a]">{t("node_endpoints.generated_title")}</h2>
           </div>
-          <div className="text-sm text-foreground/80">Всего: {generatedPreview.length}</div>
+          <div className="text-sm text-foreground/80">
+            {t("common.total")}: {generatedPreview.length}
+          </div>
         </div>
 
         {generatedPreview.length > 0 ? (
@@ -582,7 +578,7 @@ export function NodeEndpointsPage() {
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge tone={item.endpoint.enabled ? "success" : "muted"}>
-                      {item.endpoint.enabled ? "Включена" : "Выключена"}
+                      {item.endpoint.enabled ? t("common.enabled") : t("common.disabled")}
                     </Badge>
                     <Button
                       type="button"
@@ -590,28 +586,31 @@ export function NodeEndpointsPage() {
                       disabled={toggleEndpointMutation.isPending}
                       onClick={() => toggleEndpoint(item)}
                     >
-                      {item.endpoint.enabled ? "Выключить" : "Включить"}
+                      {item.endpoint.enabled ? t("common.turn_off") : t("common.turn_on")}
                     </Button>
                   </div>
                 </div>
 
                 <div className="mt-4 grid gap-2 text-sm text-foreground/90">
-                  <div>Безопасность: {item.endpoint.security}</div>
-                  <div>SNI: {item.endpoint.server_name ?? "—"}</div>
-                  <div>Host: {item.endpoint.host_header ?? "—"}</div>
-                  <div>Path: {item.endpoint.path ?? "—"}</div>
-                  <div>Service: {item.endpoint.service_name ?? "—"}</div>
-                  <div>ALPN: {item.endpoint.alpn.join(", ") || "—"}</div>
-                  <div>Reality ключ: {item.endpoint.reality_public_key ? "готов" : "не нужен"}</div>
+                  <div>{t("node_endpoints.endpoint_security")}: {item.endpoint.security}</div>
+                  <div>SNI: {item.endpoint.server_name ?? "вЂ”"}</div>
+                  <div>Host: {item.endpoint.host_header ?? "вЂ”"}</div>
+                  <div>Path: {item.endpoint.path ?? "вЂ”"}</div>
+                  <div>{t("node_endpoints.service_name")}: {item.endpoint.service_name ?? "вЂ”"}</div>
+                  <div>ALPN: {item.endpoint.alpn.join(", ") || "вЂ”"}</div>
+                  <div>
+                    {t("node_endpoints.endpoint_reality_key")}:{" "}
+                    {item.endpoint.reality_public_key
+                      ? t("node_endpoints.endpoint_reality_ready")
+                      : t("node_endpoints.endpoint_reality_unused")}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
           <div className="rounded-[24px] border border-dashed border-border bg-[#f8f5f0] px-5 py-8 text-sm text-foreground/80">
-            {selectedServer
-              ? "Сохрани домены, и панель сразу соберёт точки входа для выбранного сервера."
-              : "Сначала выбери сервер."}
+            {selectedServer ? t("node_endpoints.generated_empty") : t("node_endpoints.server_required")}
           </div>
         )}
       </Card>
@@ -619,23 +618,29 @@ export function NodeEndpointsPage() {
       <Dialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        title={selectedServer ? `Домены сервера ${selectedServer.name}` : "Настройка доменов"}
-        description="Все режимы, SNI и Host настраиваются в одном окне. После сохранения панель сама пересоберёт точки входа."
+        title={
+          selectedServer
+            ? t("node_endpoints.dialog.title", { name: formatNodeName(selectedServer.name) })
+            : t("node_endpoints.dialog.title_empty")
+        }
+        description={t("node_endpoints.dialog.description")}
         className="max-w-6xl"
       >
         <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
           <div className="space-y-4">
             <div className="flex gap-3">
               <Button className="flex-1" type="button" variant="secondary" onClick={() => addDraft()}>
-                Добавить правило
+                {t("node_endpoints.dialog.add_rule")}
               </Button>
               <Button className="flex-1" type="button" variant="secondary" onClick={resetPreset}>
-                Стартовый набор
+                {t("node_endpoints.dialog.reset_preset")}
               </Button>
             </div>
 
             <div className="rounded-[28px] border border-border bg-[#f8f5f0] p-3">
-              <div className="px-2 pb-3 text-xs uppercase tracking-[0.24em] text-foreground/80">Правила</div>
+              <div className="px-2 pb-3 text-xs uppercase tracking-[0.24em] text-foreground/80">
+                {t("node_endpoints.dialog.rules")}
+              </div>
               <div className="max-h-[58vh] space-y-2 overflow-y-auto pr-1">
                 {form.map((draft, index) => {
                   const active = selectedDraft?.id === draft.id;
@@ -651,8 +656,10 @@ export function NodeEndpointsPage() {
                       }`}
                     >
                       <div className="text-xs uppercase tracking-[0.2em] text-foreground/80">#{index + 1}</div>
-                      <div className="mt-2 text-sm font-semibold">{ruleTitle(draft)}</div>
-                      <div className="mt-1 text-xs text-foreground/80">{ruleSubtitle(draft)}</div>
+                      <div className="mt-2 text-sm font-semibold">
+                        {ruleTitle(draft, t("node_endpoints.rule_new"))}
+                      </div>
+                      <div className="mt-1 text-xs text-foreground/80">{ruleSubtitle(draft, modeMeta)}</div>
                     </button>
                   );
                 })}
@@ -663,12 +670,14 @@ export function NodeEndpointsPage() {
           {selectedDraft ? (
             <div className="space-y-5">
               <div className="rounded-[28px] border border-border bg-[#f8f5f0] p-5">
-                <div className="text-xs uppercase tracking-[0.24em] text-foreground/80">Режим</div>
+                <div className="text-xs uppercase tracking-[0.24em] text-foreground/80">
+                  {t("node_endpoints.dialog.mode")}
+                </div>
                 <Select
                   className="mt-3"
                   value={selectedDraft.mode}
                   onChange={(event) =>
-                    updateDraft(selectedDraft.id, "mode", event.target.value as NodeGroupDomainMode)
+                    updateDraft(selectedDraft.id, "mode", event.target.value as NodeDomainMode)
                   }
                 >
                   {modeOrder.map((mode) => (
@@ -708,7 +717,7 @@ export function NodeEndpointsPage() {
 
               <div className="grid gap-4 xl:grid-cols-2">
                 <div className="space-y-2">
-                  <div className="text-sm font-semibold">Домен</div>
+                  <div className="text-sm font-semibold">{t("node_endpoints.domain")}</div>
                   <Input
                     placeholder="example.com"
                     value={selectedDraft.domain}
@@ -718,7 +727,7 @@ export function NodeEndpointsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-sm font-semibold">Псевдоним</div>
+                  <div className="text-sm font-semibold">{t("node_endpoints.alias")}</div>
                   <Input
                     placeholder="main"
                     value={selectedDraft.alias}
@@ -730,7 +739,7 @@ export function NodeEndpointsPage() {
 
               <div className="grid gap-4 xl:grid-cols-2">
                 <div className="space-y-2">
-                  <div className="text-sm font-semibold">SNI / server_name</div>
+                  <div className="text-sm font-semibold">{t("node_endpoints.server_names")}</div>
                   <Textarea
                     className="min-h-40"
                     placeholder={"example.com\ncdn.example.com"}
@@ -753,32 +762,29 @@ export function NodeEndpointsPage() {
               </div>
 
               <div className="flex items-center justify-between gap-3 rounded-[24px] border border-dashed border-border bg-[#f8f5f0] px-4 py-4">
-                <div className="text-sm text-foreground/80">
-                  Пустые поля SNI и Host не ломают правило. Если их не заполнять, панель автоматически подставит сам
-                  домен.
-                </div>
+                <div className="text-sm text-foreground/80">{t("node_endpoints.rule_help")}</div>
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={() => removeDraft(selectedDraft.id)}
                   disabled={form.length === 0}
                 >
-                  Удалить правило
+                  {t("node_endpoints.rule_delete")}
                 </Button>
               </div>
 
               <div className="flex justify-end gap-3">
                 <Button type="button" variant="secondary" onClick={() => setSettingsOpen(false)}>
-                  Отмена
+                  {t("common.cancel")}
                 </Button>
                 <Button type="button" disabled={saveMutation.isPending || !selectedServer} onClick={() => saveMutation.mutate()}>
-                  {saveMutation.isPending ? "Сохраняю..." : "Сохранить"}
+                  {saveMutation.isPending ? t("node_endpoints.saving") : t("common.save")}
                 </Button>
               </div>
             </div>
           ) : (
             <div className="rounded-[28px] border border-dashed border-border bg-[#f8f5f0] px-5 py-12 text-sm text-foreground/80">
-              Правило не выбрано. Добавь новое или заполни стартовый набор.
+              {t("node_endpoints.rule_empty")}
             </div>
           )}
         </div>
@@ -786,3 +792,4 @@ export function NodeEndpointsPage() {
     </div>
   );
 }
+
