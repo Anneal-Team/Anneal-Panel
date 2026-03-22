@@ -66,9 +66,43 @@ Designed for multi-tenant environments where different teams, resellers and user
 
 ## 📦 Installation
 
-> [!WARNING]
-> **Installation instructions are currently under development.**
-> Deployment documentation, environment reference and production setup guides are being prepared and will be published here soon.
+Anneal ships with an interactive installer that downloads ready-made release packages from GitHub and guides setup in TUI mode.
+
+- Installer file: [`scripts/install.sh`](./scripts/install.sh)
+- Direct link: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
+
+Quick start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
+```
+
+The installer:
+- asks for installer language: `Русский` or `English`
+- lets you choose server role: `Panel` or `Node`
+- lets you choose deployment type: `Linux` or `Docker`
+- downloads ready-made release artifacts instead of building the project on the server
+- generates passwords, tokens and internal secrets automatically
+- shows a final admin summary after installation
+- installs a post-login management menu with status, update, restart and removal actions
+
+Panel server:
+- installs the control plane: panel UI, API, worker, database and edge services
+
+Node server:
+- installs a separate VPS/VDS node server
+- this is not an Xray or Sing-box core itself, but a separate Anneal-managed server
+- downloads runtime packages and runs them in native or Docker mode
+
+Role-specific examples:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role control-plane
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role node
+```
 
 ---
 

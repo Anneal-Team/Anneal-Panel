@@ -66,9 +66,43 @@ Anneal — это панель управления, которая объеди
 
 ## 📦 Установка
 
-> [!WARNING]
-> **Инструкция по установке находится в разработке.**
-> Документация по деплою, описание переменных окружения и руководство по продакшн-настройке готовятся и будут опубликованы здесь в ближайшее время.
+В Anneal есть интерактивный установщик, который скачивает готовые release-пакеты с GitHub и проводит установку через TUI-интерфейс.
+
+- Файл установщика: [`scripts/install.sh`](./scripts/install.sh)
+- Прямая ссылка: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
+
+Быстрый запуск:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
+```
+
+Установщик:
+- спрашивает язык интерфейса: `Русский` или `English`
+- предлагает выбрать роль сервера: `Panel` или `Node`
+- предлагает выбрать тип установки: `Linux` или `Docker`
+- скачивает готовые release-артефакты вместо сборки проекта на сервере
+- автоматически генерирует пароли, токены и внутренние секреты
+- после установки показывает сводку для администратора
+- ставит login-menu с действиями status, update, restart и remove
+
+Сервер панели:
+- устанавливает control-plane: web-панель, API, worker, базу и edge-сервисы
+
+Сервер ноды:
+- устанавливает отдельный VPS/VDS node server
+- это не ядро Xray или Sing-box, а отдельный сервер под управлением Anneal
+- скачивает runtime-пакеты и запускает их в native или Docker режиме
+
+Примеры запуска по роли:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role control-plane
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role node
+```
 
 ---
 
