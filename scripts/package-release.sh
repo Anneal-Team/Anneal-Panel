@@ -6,13 +6,66 @@ DIST_DIR="${ROOT_DIR}/dist"
 TMP_DIR="${DIST_DIR}/tmp"
 TARGET_TRIPLE="${TARGET_TRIPLE:-linux-amd64}"
 XRAY_RELEASE_URL="${XRAY_RELEASE_URL:-https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip}"
+XRAY_RELEASE_FALLBACK_URL="${XRAY_RELEASE_FALLBACK_URL:-https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip}"
 SINGBOX_RELEASE_URL="${SINGBOX_RELEASE_URL:-https://github.com/hiddify/hiddify-core/releases/download/v4.0.4/hiddify-core-linux-amd64.tar.gz}"
+SINGBOX_RELEASE_FALLBACK_URL="${SINGBOX_RELEASE_FALLBACK_URL:-https://github.com/hiddify/hiddify-core/releases/latest/download/hiddify-core-linux-amd64.tar.gz}"
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "missing required tool: $1" >&2
     exit 1
   }
+}
+
+download_asset() {
+  local url="$1"
+  local destination="$2"
+  curl \
+    --retry 5 \
+    --retry-all-errors \
+    --location \
+    --silent \
+    --show-error \
+    --user-agent "Anneal-Packager/1.0" \
+    "${url}" \
+    -o "${destination}"
+}
+
+validate_zip() {
+  local archive="$1"
+  unzip -tq "${archive}" >/dev/null
+}
+
+validate_tar_gz() {
+  local archive="$1"
+  tar -tzf "${archive}" >/dev/null
+}
+
+download_validated_asset() {
+  local primary_url="$1"
+  local fallback_url="$2"
+  local destination="$3"
+  local validator="$4"
+
+  rm -f "${destination}"
+  download_asset "${primary_url}" "${destination}"
+  if "${validator}" "${destination}"; then
+    return
+  fi
+
+  if [[ -n "${fallback_url}" ]]; then
+    echo "primary asset download is invalid, retrying with fallback URL: ${primary_url}" >&2
+    rm -f "${destination}"
+    download_asset "${fallback_url}" "${destination}"
+    "${validator}" "${destination}" || {
+      echo "fallback asset download is invalid: ${fallback_url}" >&2
+      exit 1
+    }
+    return
+  fi
+
+  echo "downloaded asset is invalid: ${primary_url}" >&2
+  exit 1
 }
 
 prepare_workspace() {
@@ -61,14 +114,18 @@ package_runtime_bundle() {
   rm -rf "${xray_dir}" "${singbox_dir}"
   mkdir -p "${xray_dir}" "${singbox_dir}"
 
-  curl --retry 5 --retry-all-errors --location --silent --show-error \
+  download_validated_asset \
     "${XRAY_RELEASE_URL}" \
-    -o "${TMP_DIR}/xray-runtime.zip"
+    "${XRAY_RELEASE_FALLBACK_URL}" \
+    "${TMP_DIR}/xray-runtime.zip" \
+    validate_zip
   unzip -oq "${TMP_DIR}/xray-runtime.zip" -d "${xray_dir}"
 
-  curl --retry 5 --retry-all-errors --location --silent --show-error \
+  download_validated_asset \
     "${SINGBOX_RELEASE_URL}" \
-    -o "${TMP_DIR}/singbox-runtime.tar.gz"
+    "${SINGBOX_RELEASE_FALLBACK_URL}" \
+    "${TMP_DIR}/singbox-runtime.tar.gz" \
+    validate_tar_gz
   tar -xzf "${TMP_DIR}/singbox-runtime.tar.gz" -C "${singbox_dir}"
 
   install -m 0755 "${xray_dir}/xray" "${TMP_DIR}/runtime-bundle/xray"

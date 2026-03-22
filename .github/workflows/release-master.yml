@@ -31,7 +31,10 @@ jobs:
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: dist/*
+          artifacts: |
+            dist/*.tar.gz
+            dist/*.json
+            dist/SHA256SUMS
           name: Anneal Rolling
           omitBodyDuringUpdate: true
           prerelease: false
