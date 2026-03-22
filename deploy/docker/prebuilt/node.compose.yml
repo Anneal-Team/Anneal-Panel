@@ -1,0 +1,14 @@
+services:
+  node:
+    build:
+      context: .
+      dockerfile: node-agent.Dockerfile
+      args:
+        RELEASE_BASE_URL: ${ANNEAL_RELEASE_BASE_URL}
+        TARGET_TRIPLE: ${ANNEAL_TARGET_TRIPLE}
+    env_file:
+      - .env
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./data:/var/lib/anneal

@@ -9,7 +9,7 @@ use anneal_nodes::{DeliveryNodeEndpoint, NodeEndpointCatalog};
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use chrono::Utc;
-use rand::{Rng, distributions::Alphanumeric};
+use rand::{Rng, distr::Alphanumeric};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -624,7 +624,7 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
 }
 
 pub fn generate_token() -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(48)
         .map(char::from)

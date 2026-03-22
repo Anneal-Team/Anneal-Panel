@@ -9,7 +9,7 @@ use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use rand::{Rng, distributions::Alphanumeric, rngs::OsRng};
+use rand::{Rng, distr::Alphanumeric};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -1115,7 +1115,7 @@ impl NodeRepository for InMemoryNodeRepository {
 }
 
 pub fn generate_token() -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(48)
         .map(char::from)
@@ -1183,7 +1183,7 @@ fn is_blank_option(value: &Option<String>) -> bool {
 }
 
 fn generate_reality_key_pair() -> (String, String) {
-    let private_key = StaticSecret::random_from_rng(OsRng);
+    let private_key = StaticSecret::from(rand::random::<[u8; 32]>());
     let public_key = PublicKey::from(&private_key);
     (
         URL_SAFE_NO_PAD.encode(public_key.as_bytes()),
@@ -1193,7 +1193,7 @@ fn generate_reality_key_pair() -> (String, String) {
 
 fn generate_reality_short_id() -> String {
     let mut bytes = [0_u8; 8];
-    rand::thread_rng().fill(&mut bytes);
+    rand::rng().fill(&mut bytes);
     bytes
         .iter()
         .map(|byte| format!("{byte:02x}"))
