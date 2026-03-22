@@ -11,17 +11,40 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
       - name: Validate shell scripts
         run: |
           find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
             bash -n "$file"
           done
+      - name: Run ShellCheck
+        run: |
+          find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
+            shellcheck -x -e SC1091 "$file"
+          done
+
+  actions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest
 
   rust:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Run cargo tests
         run: cargo test --locked
 
@@ -38,6 +61,7 @@ jobs:
         working-directory: web
         run: |
           npm ci
+          npm run lint
           npm run build
 
   package:

@@ -18,7 +18,8 @@ pub trait UserRepository: Send + Sync {
     async fn get_user_by_email(&self, email: &str) -> ApplicationResult<Option<User>>;
     async fn get_user_by_id(&self, user_id: Uuid) -> ApplicationResult<Option<User>>;
     async fn get_tenant_by_id(&self, tenant_id: Uuid) -> ApplicationResult<Option<Tenant>>;
-    async fn get_tenant_by_owner_user_id(&self, user_id: Uuid) -> ApplicationResult<Option<Tenant>>;
+    async fn get_tenant_by_owner_user_id(&self, user_id: Uuid)
+    -> ApplicationResult<Option<Tenant>>;
     async fn count_superadmins(&self) -> ApplicationResult<i64>;
     async fn list_users_by_tenant(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<User>>;
     async fn list_resellers(&self) -> ApplicationResult<Vec<User>>;
@@ -61,7 +62,10 @@ where
         (*self).get_tenant_by_id(tenant_id).await
     }
 
-    async fn get_tenant_by_owner_user_id(&self, user_id: Uuid) -> ApplicationResult<Option<Tenant>> {
+    async fn get_tenant_by_owner_user_id(
+        &self,
+        user_id: Uuid,
+    ) -> ApplicationResult<Option<Tenant>> {
         (*self).get_tenant_by_owner_user_id(user_id).await
     }
 
@@ -342,10 +346,10 @@ where
                 "changing role to reseller is not supported here".into(),
             ));
         }
-        if let Some(existing) = self.repository.get_user_by_email(&command.email).await? {
-            if existing.id != user.id {
-                return Err(ApplicationError::Conflict("email already exists".into()));
-            }
+        if let Some(existing) = self.repository.get_user_by_email(&command.email).await?
+            && existing.id != user.id
+        {
+            return Err(ApplicationError::Conflict("email already exists".into()));
         }
         user.email = command.email;
         user.display_name = command.display_name;
@@ -414,12 +418,14 @@ where
             .await?
             .ok_or_else(|| ApplicationError::NotFound("reseller not found".into()))?;
         if user.role != UserRole::Reseller {
-            return Err(ApplicationError::Validation("account is not a reseller".into()));
+            return Err(ApplicationError::Validation(
+                "account is not a reseller".into(),
+            ));
         }
-        if let Some(existing) = self.repository.get_user_by_email(&command.email).await? {
-            if existing.id != user.id {
-                return Err(ApplicationError::Conflict("email already exists".into()));
-            }
+        if let Some(existing) = self.repository.get_user_by_email(&command.email).await?
+            && existing.id != user.id
+        {
+            return Err(ApplicationError::Conflict("email already exists".into()));
         }
         let tenant_id = user
             .tenant_id
@@ -456,9 +462,15 @@ where
             .await?
             .ok_or_else(|| ApplicationError::NotFound("reseller not found".into()))?;
         if user.role != UserRole::Reseller {
-            return Err(ApplicationError::Validation("account is not a reseller".into()));
+            return Err(ApplicationError::Validation(
+                "account is not a reseller".into(),
+            ));
         }
-        if let Some(tenant) = self.repository.get_tenant_by_owner_user_id(reseller_id).await? {
+        if let Some(tenant) = self
+            .repository
+            .get_tenant_by_owner_user_id(reseller_id)
+            .await?
+        {
             return self.repository.delete_tenant(tenant.id).await;
         }
         self.repository.delete_user(reseller_id).await
@@ -531,7 +543,10 @@ impl UserRepository for InMemoryUserRepository {
         Ok(self.tenants.read().expect("lock").get(&tenant_id).cloned())
     }
 
-    async fn get_tenant_by_owner_user_id(&self, user_id: Uuid) -> ApplicationResult<Option<Tenant>> {
+    async fn get_tenant_by_owner_user_id(
+        &self,
+        user_id: Uuid,
+    ) -> ApplicationResult<Option<Tenant>> {
         Ok(self
             .tenants
             .read()

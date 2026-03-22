@@ -341,7 +341,7 @@ async fn check_udp_target(port: u16) -> bool {
         .unwrap_or(false)
 }
 
-fn runtime_binary<'a>(settings: &'a RuntimeSettings, engine: ProxyEngine) -> &'a Path {
+fn runtime_binary(settings: &RuntimeSettings, engine: ProxyEngine) -> &Path {
     match engine {
         ProxyEngine::Xray => &settings.xray_binary,
         ProxyEngine::Singbox => &settings.singbox_binary,
@@ -390,7 +390,11 @@ mod tests {
 
     #[test]
     fn supervisor_running_status_is_detected() {
-        assert!(supervisor_service_is_running(b"xray                             RUNNING   pid 17, uptime 0:00:15\n"));
-        assert!(!supervisor_service_is_running(b"xray                             STOPPED   Not started\n"));
+        assert!(supervisor_service_is_running(
+            b"xray                             RUNNING   pid 17, uptime 0:00:15\n"
+        ));
+        assert!(!supervisor_service_is_running(
+            b"xray                             STOPPED   Not started\n"
+        ));
     }
 }

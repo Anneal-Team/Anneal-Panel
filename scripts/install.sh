@@ -60,7 +60,8 @@ print_banner() {
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "$(text "Запусти установщик от root." "Run the installer as root.")" >&2
+    text "Запусти установщик от root." "Run the installer as root." >&2
+    printf '\n' >&2
     exit 1
   fi
 }
@@ -257,12 +258,12 @@ build_node_enrollment_tokens() {
 
 control_plane_summary() {
   cat <<EOF
-$(text "Р РѕР»СЊ" "Role"): control-plane
-$(text "Р РµР¶РёРј" "Mode"): ${DEPLOYMENT_MODE}
-$(text "Р”РѕРјРµРЅ" "Domain"): ${ANNEAL_DOMAIN}
+$(text "Роль" "Role"): control-plane
+$(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
+$(text "Домен" "Domain"): ${ANNEAL_DOMAIN}
 panel_url: ${ANNEAL_PUBLIC_BASE_URL}
-$(text "Email СЃСѓРїРµСЂР°РґРјРёРЅР°" "Superadmin email"): ${ANNEAL_SUPERADMIN_EMAIL}
-$(text "Р’РµСЂСЃРёСЏ РєР°РЅР°Р»Р°" "Release channel"): ${ANNEAL_RELEASE_TAG}
+$(text "Email суперадмина" "Superadmin email"): ${ANNEAL_SUPERADMIN_EMAIL}
+$(text "Версия канала" "Release channel"): ${ANNEAL_RELEASE_TAG}
 EOF
 }
 
@@ -734,14 +735,14 @@ load_install_state() {
     show_error "$(text "Файл состояния установки не найден." "Install state file was not found.")"
     exit 1
   }
-  source "${META_FILE}"
+  source /etc/anneal/install.meta
   ROLE="${ANNEAL_INSTALL_ROLE}"
   DEPLOYMENT_MODE="${ANNEAL_DEPLOYMENT_MODE}"
   ANNEAL_INSTALLER_LANG="${ANNEAL_INSTALLER_LANG:-ru}"
 }
 
 load_admin_summary() {
-  [[ -f "${SUMMARY_FILE}" ]] && source "${SUMMARY_FILE}"
+  [[ -f "${SUMMARY_FILE}" ]] && source /etc/anneal/admin-summary.env
 }
 
 install_control_utility() {
