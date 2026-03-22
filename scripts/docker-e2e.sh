@@ -17,7 +17,6 @@ USER_EMAIL="${E2E_USER_EMAIL:-user-e2e@anneal.test}"
 USER_DISPLAY_NAME="${E2E_USER_DISPLAY_NAME:-E2E User}"
 USER_PASSWORD="${E2E_USER_PASSWORD:-UserPass_123}"
 NODE_GROUP_NAME="${E2E_NODE_GROUP_NAME:-edge-main}"
-NODE_NAME="${E2E_NODE_NAME:-node-e2e}"
 SUBSCRIPTION_NAME="${E2E_SUBSCRIPTION_NAME:-bundle-main}"
 QUOTA_BYTES="${E2E_QUOTA_BYTES:-1048576}"
 BOOTSTRAP_TOKEN="${E2E_BOOTSTRAP_TOKEN:-test-bootstrap-token}"
@@ -428,4 +427,3 @@ fi
 
 wait_for_file "${AGENT_STATE_FILE}"
 echo "docker e2e completed successfully"
-
