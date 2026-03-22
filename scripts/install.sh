@@ -33,19 +33,56 @@ setup_locale() {
 }
 
 setup_palette() {
-  export NEWT_COLORS="${NEWT_COLORS:-root=black,green window=black,white border=green,white title=lightgreen,white roottext=lightgreen,green textbox=black,white entry=black,white button=black,green actbutton=white,green compactbutton=black,green checkbox=black,white actcheckbox=black,green label=black,white listbox=black,white actlistbox=white,green}"
+  export NEWT_COLORS="${NEWT_COLORS:-root=black,black window=black,black border=lightgreen,black title=white,black roottext=lightgreen,black textbox=white,black entry=black,white button=black,lightgreen actbutton=white,green compactbutton=black,lightgreen checkbox=white,black actcheckbox=black,lightgreen label=white,black listbox=white,black actlistbox=black,lightgreen shadow=black,black}"
+}
+
+installer_backtitle() {
+  text "Anneal • Установка" "Anneal • Installer"
+}
+
+dialog_select_label() {
+  text "Выбрать" "Select"
+}
+
+dialog_back_label() {
+  text "Назад" "Back"
+}
+
+dialog_confirm_label() {
+  text "Подтвердить" "Confirm"
+}
+
+dialog_close_label() {
+  text "Закрыть" "Close"
+}
+
+menu_hint() {
+  text "↑↓ выбрать • Enter подтвердить • Tab кнопки" "↑↓ move • Enter confirm • Tab buttons"
+}
+
+checklist_hint() {
+  text "↑↓ выбрать • Space переключить • Enter подтвердить" "↑↓ move • Space toggle • Enter confirm"
+}
+
+input_hint() {
+  text "Введи значение • Enter сохранить • Tab кнопки" "Enter value • Enter save • Tab buttons"
+}
+
+confirm_hint() {
+  text "←→ выбор • Enter подтвердить" "←→ choose • Enter confirm"
 }
 
 logo_block() {
-  cat <<'EOF'
-      ▂
-    ▂▄
-  ▂▄▆█  Anneal
-EOF
+  printf '%s' '▁▃▆█ Anneal'
 }
 
 brand_text() {
   local body="$1"
+  local hint="${2:-}"
+  if [[ -n "${hint}" ]]; then
+    printf '%s\n\n%s\n\n%s' "$(logo_block)" "${body}" "${hint}"
+    return
+  fi
   printf '%s\n\n%s' "$(logo_block)" "${body}"
 }
 
@@ -90,14 +127,24 @@ prompt_text() {
   local title="$1"
   local prompt="$2"
   local default_value="${3:-}"
-  whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --inputbox "$(brand_text "${prompt}")" 18 88 "${default_value}" 3>&1 1>&2 2>&3
+  whiptail \
+    --backtitle "$(installer_backtitle)" \
+    --title "${title}" \
+    --ok-button "$(dialog_select_label)" \
+    --cancel-button "$(dialog_back_label)" \
+    --inputbox "$(brand_text "${prompt}" "$(input_hint)")" 18 92 "${default_value}" 3>&1 1>&2 2>&3
 }
 
 prompt_menu() {
   local title="$1"
   local prompt="$2"
   shift 2
-  whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --menu "$(brand_text "${prompt}")" 22 88 8 "$@" 3>&1 1>&2 2>&3
+  whiptail \
+    --backtitle "$(installer_backtitle)" \
+    --title "${title}" \
+    --ok-button "$(dialog_select_label)" \
+    --cancel-button "$(dialog_back_label)" \
+    --menu "$(brand_text "${prompt}" "$(menu_hint)")" 22 92 8 "$@" 3>&1 1>&2 2>&3
 }
 
 prompt_checklist() {
@@ -105,21 +152,35 @@ prompt_checklist() {
   local prompt="$2"
   shift 2
   local result
-  result="$(whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --checklist "$(brand_text "${prompt}")" 24 88 10 "$@" 3>&1 1>&2 2>&3)"
+  result="$(whiptail \
+    --backtitle "$(installer_backtitle)" \
+    --title "${title}" \
+    --ok-button "$(dialog_select_label)" \
+    --cancel-button "$(dialog_back_label)" \
+    --checklist "$(brand_text "${prompt}" "$(checklist_hint)")" 24 92 10 "$@" 3>&1 1>&2 2>&3)"
   echo "${result}" | tr -d '"' | xargs | tr ' ' ','
 }
 
 prompt_confirm() {
   local title="$1"
   local prompt="$2"
-  whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --yesno "$(brand_text "${prompt}")" 24 88
+  whiptail \
+    --backtitle "$(installer_backtitle)" \
+    --title "${title}" \
+    --yes-button "$(dialog_confirm_label)" \
+    --no-button "$(dialog_back_label)" \
+    --yesno "$(brand_text "${prompt}" "$(confirm_hint)")" 20 92
 }
 
 show_info() {
   local title="$1"
   local message="$2"
   if use_tui; then
-    whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --msgbox "$(brand_text "${message}")" 24 100
+    whiptail \
+      --backtitle "$(installer_backtitle)" \
+      --title "${title}" \
+      --ok-button "$(dialog_close_label)" \
+      --msgbox "$(brand_text "${message}")" 20 92
     return
   fi
   printf '%s\n' "${message}"
@@ -128,7 +189,11 @@ show_info() {
 show_error() {
   local message="$1"
   if use_tui; then
-    whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "$(text "Ошибка" "Error")" --msgbox "$(brand_text "${message}")" 20 88
+    whiptail \
+      --backtitle "$(installer_backtitle)" \
+      --title "$(text "Ошибка" "Error")" \
+      --ok-button "$(dialog_close_label)" \
+      --msgbox "$(brand_text "${message}")" 20 92
     return
   fi
   printf '%s\n' "${message}" >&2
@@ -166,6 +231,7 @@ parse_args() {
 }
 
 choose_language() {
+  local choice
   if [[ -n "${ANNEAL_INSTALLER_LANG:-}" && ( "${ANNEAL_INSTALLER_LANG}" == "ru" || "${ANNEAL_INSTALLER_LANG}" == "en" ) ]]; then
     return
   fi
@@ -174,31 +240,45 @@ choose_language() {
     return
   fi
   ensure_whiptail
-  ANNEAL_INSTALLER_LANG="$(prompt_menu "Anneal" "Language / Язык" \
-    "ru" "Русский" \
-    "en" "English")"
+  choice="$(prompt_menu "Anneal" "Language / Язык" \
+    "Русский" "Интерфейс на русском" \
+    "English" "English interface")"
+  case "${choice}" in
+    Русский) ANNEAL_INSTALLER_LANG="ru" ;;
+    English) ANNEAL_INSTALLER_LANG="en" ;;
+  esac
 }
 
 choose_role() {
+  local choice
   if [[ -n "${ROLE}" ]]; then
     return
   fi
-  ROLE="$(prompt_menu \
+  choice="$(prompt_menu \
     "$(text "Anneal • Роль" "Anneal • Role")" \
     "$(text "Выбери, что устанавливается на этот сервер." "Choose what will be installed on this server.")" \
-    "control-plane" "$(text "Control Plane" "Control Plane")" \
-    "node" "$(text "Node Server" "Node Server")")"
+    "$(text "Панель" "Panel")" "$(text "UI, API, worker и база" "UI, API, worker and database")" \
+    "$(text "Нода" "Node")" "$(text "Отдельный VPS/VDS сервер для runtime-пакетов" "Separate VPS/VDS server for runtime packages")")"
+  case "${choice}" in
+    Панель|Panel) ROLE="control-plane" ;;
+    Нода|Node) ROLE="node" ;;
+  esac
 }
 
 choose_deployment_mode() {
+  local choice
   if [[ -n "${DEPLOYMENT_MODE}" ]]; then
     return
   fi
-  DEPLOYMENT_MODE="$(prompt_menu \
+  choice="$(prompt_menu \
     "$(text "Anneal • Режим" "Anneal • Mode")" \
     "$(text "Выбери способ установки." "Choose the deployment mode.")" \
-    "native" "$(text "Native Linux" "Native Linux")" \
-    "docker" "Docker")"
+    "Linux" "$(text "Нативная установка в систему" "Native installation into the system")" \
+    "Docker" "$(text "Запуск готовых пакетов в контейнере" "Run prebuilt packages in a container")")"
+  case "${choice}" in
+    Linux) DEPLOYMENT_MODE="native" ;;
+    Docker) DEPLOYMENT_MODE="docker" ;;
+  esac
 }
 
 selected_engine() {
@@ -315,8 +395,8 @@ configure_node_tui() {
   ANNEAL_AGENT_ENGINES="$(prompt_checklist \
     "$(text "Anneal • Runtime-пакеты" "Anneal • Runtime packages")" \
     "$(text "Выбери runtime-пакеты для этой ноды." "Choose runtime packages for this node server.")" \
-    "xray" "Xray" "ON" \
-    "singbox" "Sing-box" "ON")"
+    "xray" "$(text "Xray • vless/vmess/trojan/ss2022" "Xray • vless/vmess/trojan/ss2022")" "ON" \
+    "singbox" "$(text "Sing-box • tuic/hysteria2 + classic" "Sing-box • tuic/hysteria2 + classic")" "ON")"
   if selected_engine xray; then
     ANNEAL_AGENT_XRAY_TOKEN="$(prompt_text \
       "$(text "Anneal • Xray Token" "Anneal • Xray Token")" \
@@ -651,7 +731,7 @@ render_native_caddyfile() {
 }
 
 wait_for_api() {
-  local url="${1:-http://127.0.0.1:8080/api/v1/health}"
+  local url="http://127.0.0.1:8080/api/v1/health"
   for _ in $(seq 1 120); do
     if curl --silent --show-error --fail "${url}" >/dev/null 2>&1; then
       return 0
@@ -1028,52 +1108,52 @@ management_menu() {
   while true; do
     clear
     print_banner
-    local title prompt status_label update_label restart_label details_label remove_label shell_label exit_label choice
+    local title prompt status_key update_key restart_key details_key remove_key shell_key exit_key choice
     title="$(text "Anneal • Управление" "Anneal • Management")"
     prompt="$(text "Выбери действие для установленного сервера." "Choose an action for the installed server.")"
-    status_label="$(text "Статус" "Status")"
-    update_label="$(text "Обновить" "Update")"
-    restart_label="$(text "Перезапуск" "Restart")"
-    details_label="$(text "Показать данные" "Show details")"
-    remove_label="$(text "Удалить" "Remove")"
-    shell_label="$(text "Открыть shell" "Open shell")"
-    exit_label="$(text "Выход" "Exit")"
+    status_key="$(text "Статус" "Status")"
+    update_key="$(text "Обновить" "Update")"
+    restart_key="$(text "Перезапуск" "Restart")"
+    details_key="$(text "Данные" "Details")"
+    remove_key="$(text "Удалить" "Remove")"
+    shell_key="$(text "Shell" "Shell")"
+    exit_key="$(text "Выход" "Exit")"
     choice="$(prompt_menu \
       "${title}" \
       "${prompt}" \
-      "status" "${status_label}" \
-      "update" "${update_label}" \
-      "restart" "${restart_label}" \
-      "details" "${details_label}" \
-      "remove" "${remove_label}" \
-      "shell" "${shell_label}" \
-      "exit" "${exit_label}")"
+      "${status_key}" "$(text "Сервисы, health и версия" "Services, health and version")" \
+      "${update_key}" "$(text "Скачать и применить свежий релиз" "Download and apply the latest release")" \
+      "${restart_key}" "$(text "Перезапустить сервисы Anneal" "Restart Anneal services")" \
+      "${details_key}" "$(text "Показать доступы и ссылки" "Show access data and links")" \
+      "${remove_key}" "$(text "Полностью удалить Anneal" "Completely remove Anneal")" \
+      "${shell_key}" "$(text "Выйти в обычную консоль" "Leave to the regular shell")" \
+      "${exit_key}" "$(text "Закрыть меню" "Close the menu")")"
     case "${choice}" in
-      status)
+      "${status_key}")
         show_status_dialog
         ;;
-      update)
+      "${update_key}")
         update_current_install
         show_info "$(text "Обновление" "Update")" "$(text "Обновление завершено." "Update completed.")"
         ;;
-      restart)
+      "${restart_key}")
         restart_current_install
         show_info "$(text "Перезапуск" "Restart")" "$(text "Перезапуск завершён." "Restart completed.")"
         ;;
-      details)
+      "${details_key}")
         show_admin_details
         ;;
-      remove)
+      "${remove_key}")
         if prompt_confirm "$(text "Подтверждение удаления" "Uninstall confirmation")" "$(text "Удалить Anneal с этого сервера?" "Remove Anneal from this server?")"; then
           uninstall_current_install
           show_info "$(text "Удаление" "Uninstall")" "$(text "Anneal удалён с сервера." "Anneal was removed from the server.")"
           exit 0
         fi
         ;;
-      shell)
+      "${shell_key}")
         return
         ;;
-      exit)
+      "${exit_key}")
         if [[ "${LOGIN_SHELL}" -eq 1 ]]; then
           exit 0
         fi
