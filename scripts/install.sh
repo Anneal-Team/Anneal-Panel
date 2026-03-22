@@ -23,19 +23,44 @@ text() {
   printf '%s' "${en}"
 }
 
+setup_locale() {
+  if [[ "${LANG:-}" != *UTF-8* && "${LANG:-}" != *utf8* ]]; then
+    export LANG=C.UTF-8
+  fi
+  if [[ "${LC_ALL:-}" != *UTF-8* && "${LC_ALL:-}" != *utf8* ]]; then
+    export LC_ALL="${LANG}"
+  fi
+}
+
+setup_palette() {
+  export NEWT_COLORS="${NEWT_COLORS:-root=black,green window=black,white border=green,white title=lightgreen,white roottext=lightgreen,green textbox=black,white entry=black,white button=black,green actbutton=white,green compactbutton=black,green checkbox=black,white actcheckbox=black,green label=black,white listbox=black,white actlistbox=white,green}"
+}
+
+logo_block() {
+  cat <<'EOF'
+      ▂
+    ▂▄
+  ▂▄▆█  Anneal
+EOF
+}
+
+brand_text() {
+  local body="$1"
+  printf '%s\n\n%s' "$(logo_block)" "${body}"
+}
+
 print_banner() {
   printf '\033[38;5;150m'
-  printf '        в–„в–€\n'
-  printf '      в–„в–€в–€в–€\n'
-  printf '    в–„в–€в–€в–€в–€в–€  '
+  printf '      ▂\n'
+  printf '    ▂▄\n'
+  printf '  ▂▄▆█  '
   printf '\033[38;5;194mAnn\033[38;5;150meal\033[0m\n'
-  printf '\033[38;5;150m  в–„в–€в–€в–€в–€в–€в–€в–€\033[0m\n'
   printf '\n'
 }
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "$(text "Р—Р°РїСѓСЃС‚Рё СѓСЃС‚Р°РЅРѕРІС‰РёРє РѕС‚ root." "Run the installer as root.")" >&2
+    echo "$(text "Запусти установщик от root." "Run the installer as root.")" >&2
     exit 1
   fi
 }
@@ -51,6 +76,7 @@ use_tui() {
 }
 
 ensure_whiptail() {
+  setup_palette
   if command_exists whiptail; then
     return
   fi
@@ -63,14 +89,14 @@ prompt_text() {
   local title="$1"
   local prompt="$2"
   local default_value="${3:-}"
-  whiptail --title "${title}" --inputbox "${prompt}" 12 88 "${default_value}" 3>&1 1>&2 2>&3
+  whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --inputbox "$(brand_text "${prompt}")" 18 88 "${default_value}" 3>&1 1>&2 2>&3
 }
 
 prompt_menu() {
   local title="$1"
   local prompt="$2"
   shift 2
-  whiptail --title "${title}" --menu "${prompt}" 18 88 8 "$@" 3>&1 1>&2 2>&3
+  whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --menu "$(brand_text "${prompt}")" 22 88 8 "$@" 3>&1 1>&2 2>&3
 }
 
 prompt_checklist() {
@@ -78,21 +104,21 @@ prompt_checklist() {
   local prompt="$2"
   shift 2
   local result
-  result="$(whiptail --title "${title}" --checklist "${prompt}" 20 88 10 "$@" 3>&1 1>&2 2>&3)"
+  result="$(whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --checklist "$(brand_text "${prompt}")" 24 88 10 "$@" 3>&1 1>&2 2>&3)"
   echo "${result}" | tr -d '"' | xargs | tr ' ' ','
 }
 
 prompt_confirm() {
   local title="$1"
   local prompt="$2"
-  whiptail --title "${title}" --yesno "${prompt}" 20 88
+  whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --yesno "$(brand_text "${prompt}")" 24 88
 }
 
 show_info() {
   local title="$1"
   local message="$2"
   if use_tui; then
-    whiptail --title "${title}" --msgbox "${message}" 22 100
+    whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "${title}" --msgbox "$(brand_text "${message}")" 24 100
     return
   fi
   printf '%s\n' "${message}"
@@ -101,7 +127,7 @@ show_info() {
 show_error() {
   local message="$1"
   if use_tui; then
-    whiptail --title "$(text "РћС€РёР±РєР°" "Error")" --msgbox "${message}" 18 88
+    whiptail --backtitle "$(text "Anneal • Установка" "Anneal • Installer")" --title "$(text "Ошибка" "Error")" --msgbox "$(brand_text "${message}")" 20 88
     return
   fi
   printf '%s\n' "${message}" >&2
@@ -131,7 +157,7 @@ parse_args() {
         shift
         ;;
       *)
-        show_error "$(text "РќРµРёР·РІРµСЃС‚РЅС‹Р№ Р°СЂРіСѓРјРµРЅС‚: $1" "Unknown argument: $1")"
+        show_error "$(text "Неизвестный аргумент: $1" "Unknown argument: $1")"
         exit 1
         ;;
     esac
@@ -147,8 +173,8 @@ choose_language() {
     return
   fi
   ensure_whiptail
-  ANNEAL_INSTALLER_LANG="$(prompt_menu "Anneal" "Language / РЇР·С‹Рє" \
-    "ru" "Р СѓСЃСЃРєРёР№" \
+  ANNEAL_INSTALLER_LANG="$(prompt_menu "Anneal" "Language / Язык" \
+    "ru" "Русский" \
     "en" "English")"
 }
 
@@ -157,8 +183,8 @@ choose_role() {
     return
   fi
   ROLE="$(prompt_menu \
-    "$(text "Anneal вЂў Р РѕР»СЊ" "Anneal вЂў Role")" \
-    "$(text "Р’С‹Р±РµСЂРё, С‡С‚Рѕ СѓСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РЅР° СЌС‚РѕС‚ СЃРµСЂРІРµСЂ." "Choose what will be installed on this server.")" \
+    "$(text "Anneal • Роль" "Anneal • Role")" \
+    "$(text "Выбери, что устанавливается на этот сервер." "Choose what will be installed on this server.")" \
     "control-plane" "$(text "Control Plane" "Control Plane")" \
     "node" "$(text "Node Server" "Node Server")")"
 }
@@ -168,8 +194,8 @@ choose_deployment_mode() {
     return
   fi
   DEPLOYMENT_MODE="$(prompt_menu \
-    "$(text "Anneal вЂў Р РµР¶РёРј" "Anneal вЂў Mode")" \
-    "$(text "Р’С‹Р±РµСЂРё СЃРїРѕСЃРѕР± СѓСЃС‚Р°РЅРѕРІРєРё." "Choose the deployment mode.")" \
+    "$(text "Anneal • Режим" "Anneal • Mode")" \
+    "$(text "Выбери способ установки." "Choose the deployment mode.")" \
     "native" "$(text "Native Linux" "Native Linux")" \
     "docker" "Docker")"
 }
@@ -210,20 +236,20 @@ build_node_enrollment_tokens() {
   local pairs=()
   if selected_engine xray; then
     if [[ -z "${ANNEAL_AGENT_XRAY_TOKEN}" ]]; then
-      show_error "$(text "Р”Р»СЏ runtime Xray РЅСѓР¶РµРЅ enrollment token." "Xray runtime requires an enrollment token.")"
+      show_error "$(text "Для runtime Xray нужен enrollment token." "Xray runtime requires an enrollment token.")"
       exit 1
     fi
     pairs+=("xray:${ANNEAL_AGENT_XRAY_TOKEN}")
   fi
   if selected_engine singbox; then
     if [[ -z "${ANNEAL_AGENT_SINGBOX_TOKEN}" ]]; then
-      show_error "$(text "Р”Р»СЏ runtime Sing-box РЅСѓР¶РµРЅ enrollment token." "Sing-box runtime requires an enrollment token.")"
+      show_error "$(text "Для runtime Sing-box нужен enrollment token." "Sing-box runtime requires an enrollment token.")"
       exit 1
     fi
     pairs+=("singbox:${ANNEAL_AGENT_SINGBOX_TOKEN}")
   fi
   if [[ "${#pairs[@]}" -eq 0 ]]; then
-    show_error "$(text "Р’С‹Р±РµСЂРё С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ runtime РґР»СЏ РЅРѕРґС‹." "Select at least one runtime for the node server.")"
+    show_error "$(text "Выбери хотя бы один runtime для ноды." "Select at least one runtime for the node server.")"
     exit 1
   fi
   ANNEAL_AGENT_ENROLLMENT_TOKENS="$(IFS=,; echo "${pairs[*]}")"
@@ -1128,6 +1154,7 @@ DEPLOY_TEMP_DIR=""
 
 trap cleanup_temp_dir EXIT
 
+setup_locale
 parse_args "$@"
 require_root
 
