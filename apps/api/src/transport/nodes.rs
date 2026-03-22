@@ -8,13 +8,107 @@ use serde_json::json;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use anneal_core::{DeploymentStatus, ProtocolKind, ProxyEngine};
+use anneal_core::{ProtocolKind, ProxyEngine};
 use anneal_nodes::{NodeEndpointDraft, NodeGroupDomainDraft, NodeRegistration};
 
 use crate::{
     app_state::AppState, error::ApiError, extractors::authenticated_actor,
     transport::rollout_sync::queue_tenant_rollouts_for_current_state,
 };
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NodeEndpointResponse {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub protocol: ProtocolKind,
+    pub listen_host: String,
+    pub listen_port: i32,
+    pub public_host: String,
+    pub public_port: i32,
+    pub transport: anneal_config_engine::TransportKind,
+    pub security: anneal_config_engine::SecurityKind,
+    pub server_name: Option<String>,
+    pub host_header: Option<String>,
+    pub path: Option<String>,
+    pub service_name: Option<String>,
+    pub flow: Option<String>,
+    pub reality_public_key: Option<String>,
+    pub reality_short_id: Option<String>,
+    pub fingerprint: Option<String>,
+    pub alpn: Vec<String>,
+    pub cipher: Option<String>,
+    pub tls_certificate_path: Option<String>,
+    pub tls_key_path: Option<String>,
+    pub enabled: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<anneal_nodes::NodeEndpoint> for NodeEndpointResponse {
+    fn from(endpoint: anneal_nodes::NodeEndpoint) -> Self {
+        Self {
+            id: endpoint.id,
+            node_id: endpoint.node_id,
+            protocol: endpoint.protocol,
+            listen_host: endpoint.listen_host,
+            listen_port: endpoint.listen_port,
+            public_host: endpoint.public_host,
+            public_port: endpoint.public_port,
+            transport: endpoint.transport,
+            security: endpoint.security,
+            server_name: endpoint.server_name,
+            host_header: endpoint.host_header,
+            path: endpoint.path,
+            service_name: endpoint.service_name,
+            flow: endpoint.flow,
+            reality_public_key: endpoint.reality_public_key,
+            reality_short_id: endpoint.reality_short_id,
+            fingerprint: endpoint.fingerprint,
+            alpn: endpoint.alpn,
+            cipher: endpoint.cipher,
+            tls_certificate_path: endpoint.tls_certificate_path,
+            tls_key_path: endpoint.tls_key_path,
+            enabled: endpoint.enabled,
+            created_at: endpoint.created_at,
+            updated_at: endpoint.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeploymentRolloutResponse {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub node_id: Uuid,
+    pub config_revision_id: Uuid,
+    pub engine: ProxyEngine,
+    pub revision_name: String,
+    pub target_path: String,
+    pub status: anneal_core::DeploymentStatus,
+    pub failure_reason: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub applied_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl From<anneal_nodes::DeploymentRollout> for DeploymentRolloutResponse {
+    fn from(rollout: anneal_nodes::DeploymentRollout) -> Self {
+        Self {
+            id: rollout.id,
+            tenant_id: rollout.tenant_id,
+            node_id: rollout.node_id,
+            config_revision_id: rollout.config_revision_id,
+            engine: rollout.engine,
+            revision_name: rollout.revision_name,
+            target_path: rollout.target_path,
+            status: rollout.status,
+            failure_reason: rollout.failure_reason,
+            created_at: rollout.created_at,
+            updated_at: rollout.updated_at,
+            applied_at: rollout.applied_at,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateNodeGroupRequest {
@@ -62,18 +156,21 @@ pub struct RegisterNodeRequest {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct HeartbeatRequest {
     pub node_id: Uuid,
+    pub node_token: String,
     pub version: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct PullRolloutsRequest {
     pub node_id: Uuid,
+    pub node_token: String,
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct AckRolloutRequest {
     pub node_id: Uuid,
+    pub node_token: String,
     pub success: bool,
     pub failure_reason: Option<String>,
 }
@@ -98,9 +195,6 @@ pub struct NodeEndpointRequest {
     pub path: Option<String>,
     pub service_name: Option<String>,
     pub flow: Option<String>,
-    pub reality_public_key: Option<String>,
-    pub reality_private_key: Option<String>,
-    pub reality_short_id: Option<String>,
     pub fingerprint: Option<String>,
     pub alpn: Vec<String>,
     pub cipher: Option<String>,
@@ -337,7 +431,7 @@ pub async fn replace_node_endpoints(
     headers: HeaderMap,
     Path(node_id): Path<Uuid>,
     Json(request): Json<ReplaceNodeEndpointsRequest>,
-) -> Result<Json<Vec<anneal_nodes::NodeEndpoint>>, ApiError> {
+) -> Result<Json<Vec<NodeEndpointResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let tenant_id = request.tenant_id;
     let endpoints = state
@@ -346,33 +440,7 @@ pub async fn replace_node_endpoints(
             &actor,
             tenant_id,
             node_id,
-            request
-                .endpoints
-                .into_iter()
-                .map(|endpoint| NodeEndpointDraft {
-                    protocol: endpoint.protocol,
-                    listen_host: endpoint.listen_host,
-                    listen_port: endpoint.listen_port,
-                    public_host: endpoint.public_host,
-                    public_port: endpoint.public_port,
-                    transport: endpoint.transport,
-                    security: endpoint.security,
-                    server_name: endpoint.server_name,
-                    host_header: endpoint.host_header,
-                    path: endpoint.path,
-                    service_name: endpoint.service_name,
-                    flow: endpoint.flow,
-                    reality_public_key: endpoint.reality_public_key,
-                    reality_private_key: endpoint.reality_private_key,
-                    reality_short_id: endpoint.reality_short_id,
-                    fingerprint: endpoint.fingerprint,
-                    alpn: endpoint.alpn,
-                    cipher: endpoint.cipher,
-                    tls_certificate_path: endpoint.tls_certificate_path,
-                    tls_key_path: endpoint.tls_key_path,
-                    enabled: endpoint.enabled,
-                })
-                .collect(),
+            build_node_endpoint_drafts(request.endpoints),
         )
         .await
         .map_err(ApiError)?;
@@ -391,7 +459,12 @@ pub async fn replace_node_endpoints(
     queue_tenant_rollouts_for_current_state(&state, tenant_id, "endpoints-sync")
         .await
         .map_err(ApiError)?;
-    Ok(Json(endpoints))
+    Ok(Json(
+        endpoints
+            .into_iter()
+            .map(NodeEndpointResponse::from)
+            .collect(),
+    ))
 }
 
 #[utoipa::path(get, path = "/api/v1/nodes/{id}/endpoints")]
@@ -400,7 +473,7 @@ pub async fn list_node_endpoints(
     headers: HeaderMap,
     Path(node_id): Path<Uuid>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<Vec<anneal_nodes::NodeEndpoint>>, ApiError> {
+) -> Result<Json<Vec<NodeEndpointResponse>>, ApiError> {
     let tenant_id = params
         .get("tenant_id")
         .and_then(|value| Uuid::parse_str(value).ok())
@@ -415,29 +488,38 @@ pub async fn list_node_endpoints(
         .list_node_endpoints(&actor, tenant_id, node_id)
         .await
         .map_err(ApiError)?;
-    Ok(Json(endpoints))
+    Ok(Json(
+        endpoints
+            .into_iter()
+            .map(NodeEndpointResponse::from)
+            .collect(),
+    ))
 }
 
 #[utoipa::path(get, path = "/api/v1/rollouts")]
 pub async fn list_rollouts(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<anneal_nodes::DeploymentRollout>>, ApiError> {
+) -> Result<Json<Vec<DeploymentRolloutResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let rows = state
         .node_service()
         .list_rollouts(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(rows))
+    Ok(Json(
+        rows.into_iter()
+            .map(DeploymentRolloutResponse::from)
+            .collect(),
+    ))
 }
 
 #[utoipa::path(post, path = "/api/v1/agent/register", request_body = RegisterNodeRequest)]
 pub async fn register_agent(
     State(state): State<AppState>,
     Json(request): Json<RegisterNodeRequest>,
-) -> Result<Json<anneal_nodes::Node>, ApiError> {
-    let node = state
+) -> Result<Json<anneal_nodes::domain::NodeRegistrationGrant>, ApiError> {
+    let grant = state
         .node_service()
         .register_node(
             &request.enrollment_token,
@@ -450,6 +532,7 @@ pub async fn register_agent(
         )
         .await
         .map_err(ApiError)?;
+    let node = &grant.node;
     state
         .audit_service()
         .write(
@@ -458,11 +541,11 @@ pub async fn register_agent(
             "nodes.register",
             "node",
             Some(node.id),
-            json!({ "engine": node.engine, "name": node.name }),
+            json!({ "engine": node.engine, "name": node.name.clone() }),
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(node))
+    Ok(Json(grant))
 }
 
 #[utoipa::path(post, path = "/api/v1/agent/heartbeat", request_body = HeartbeatRequest)]
@@ -472,7 +555,7 @@ pub async fn heartbeat(
 ) -> Result<Json<anneal_nodes::Node>, ApiError> {
     let node = state
         .node_service()
-        .heartbeat(request.node_id, &request.version)
+        .heartbeat(request.node_id, &request.node_token, &request.version)
         .await
         .map_err(ApiError)?;
     Ok(Json(node))
@@ -485,7 +568,7 @@ pub async fn pull_rollouts(
 ) -> Result<Json<Vec<anneal_nodes::DeploymentRollout>>, ApiError> {
     let rollouts = state
         .node_service()
-        .pull_rollouts(request.node_id, request.limit.unwrap_or(10))
+        .pull_rollouts(request.node_id, &request.node_token, request.limit.unwrap_or(10))
         .await
         .map_err(ApiError)?;
     Ok(Json(rollouts))
@@ -498,52 +581,64 @@ pub async fn ack_rollout(
     Json(request): Json<AckRolloutRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let failure_reason = request.failure_reason.clone();
-    state
+    let rollout = state
         .node_service()
         .acknowledge_rollout(
             request.node_id,
+            &request.node_token,
             rollout_id,
             request.success,
             failure_reason.clone(),
         )
         .await
         .map_err(ApiError)?;
-    let rollout_status = if request.success {
-        DeploymentStatus::Applied
-    } else {
-        DeploymentStatus::Failed
-    };
-    let rollout = state
-        .node_service()
-        .list_rollouts(&anneal_core::Actor {
-            user_id: Uuid::nil(),
-            tenant_id: None,
-            role: anneal_core::UserRole::Superadmin,
-        })
+    state
+        .audit_service()
+        .write(
+            None,
+            Some(rollout.tenant_id),
+            if request.success {
+                "nodes.rollout.applied"
+            } else {
+                "nodes.rollout.failed"
+            },
+            "rollout",
+            Some(rollout_id),
+            json!({ "node_id": request.node_id, "failure_reason": failure_reason }),
+        )
         .await
-        .map_err(ApiError)?
-        .into_iter()
-        .find(|item| item.id == rollout_id);
-    if let Some(rollout) = rollout {
-        state
-            .audit_service()
-            .write(
-                None,
-                Some(rollout.tenant_id),
-                if request.success {
-                    "nodes.rollout.applied"
-                } else {
-                    "nodes.rollout.failed"
-                },
-                "rollout",
-                Some(rollout_id),
-                json!({ "node_id": request.node_id, "failure_reason": failure_reason }),
-            )
-            .await
-            .map_err(ApiError)?;
-    }
+        .map_err(ApiError)?;
     Ok(Json(serde_json::json!({
         "ok": true,
-        "status": rollout_status
+        "status": rollout.status
     })))
+}
+
+fn build_node_endpoint_drafts(endpoints: Vec<NodeEndpointRequest>) -> Vec<NodeEndpointDraft> {
+    endpoints
+        .into_iter()
+        .map(|endpoint| NodeEndpointDraft {
+            protocol: endpoint.protocol,
+            listen_host: endpoint.listen_host,
+            listen_port: endpoint.listen_port,
+            public_host: endpoint.public_host,
+            public_port: endpoint.public_port,
+            transport: endpoint.transport,
+            security: endpoint.security,
+            server_name: endpoint.server_name,
+            host_header: endpoint.host_header,
+            path: endpoint.path,
+            service_name: endpoint.service_name,
+            flow: endpoint.flow,
+            reality_public_key: None,
+            reality_private_key: None,
+            reality_short_id: None,
+            fingerprint: endpoint.fingerprint,
+            alpn: endpoint.alpn,
+            cipher: endpoint.cipher,
+            tls_certificate_path: endpoint.tls_certificate_path,
+            tls_key_path: endpoint.tls_key_path,
+            enabled: endpoint.enabled,
+        })
+        .collect()
 }

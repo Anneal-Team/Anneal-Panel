@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use anneal_core::{ApplicationError, ApplicationResult, DeploymentStatus, NodeStatus};
+use anneal_core::{ApplicationError, ApplicationResult, DeploymentStatus, NodeStatus, SecretBox};
 
 use crate::{
     application::NodeRepository,
@@ -15,11 +15,37 @@ use crate::{
 #[derive(Clone)]
 pub struct PgNodeRepository {
     pool: PgPool,
+    secret_box: SecretBox,
 }
 
 impl PgNodeRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, secret_box: SecretBox) -> Self {
+        Self { pool, secret_box }
+    }
+
+    fn decrypt_endpoint(&self, mut endpoint: NodeEndpoint) -> ApplicationResult<NodeEndpoint> {
+        endpoint.reality_private_key = self
+            .secret_box
+            .decrypt_option(endpoint.reality_private_key.as_deref())?;
+        Ok(endpoint)
+    }
+
+    fn decrypt_delivery_endpoint(
+        &self,
+        mut endpoint: DeliveryNodeEndpoint,
+    ) -> ApplicationResult<DeliveryNodeEndpoint> {
+        endpoint.reality_private_key = self
+            .secret_box
+            .decrypt_option(endpoint.reality_private_key.as_deref())?;
+        Ok(endpoint)
+    }
+
+    fn decrypt_rollout(
+        &self,
+        mut rollout: DeploymentRollout,
+    ) -> ApplicationResult<DeploymentRollout> {
+        rollout.rendered_config = self.secret_box.decrypt(&rollout.rendered_config)?;
+        Ok(rollout)
     }
 }
 
@@ -227,8 +253,8 @@ impl NodeRepository for PgNodeRepository {
         sqlx::query(
             r#"
             insert into nodes (
-                id, tenant_id, node_group_id, name, engine, version, status, last_seen_at, created_at, updated_at
-            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                id, tenant_id, node_group_id, name, engine, version, status, last_seen_at, node_token_hash, created_at, updated_at
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             "#,
         )
         .bind(node.id)
@@ -239,6 +265,7 @@ impl NodeRepository for PgNodeRepository {
         .bind(&node.version)
         .bind(node.status)
         .bind(node.last_seen_at)
+        .bind(&node.node_token_hash)
         .bind(node.created_at)
         .bind(node.updated_at)
         .execute(&mut *transaction)
@@ -262,6 +289,17 @@ impl NodeRepository for PgNodeRepository {
     async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>> {
         sqlx::query_as::<_, Node>("select * from nodes where id = $1")
             .bind(node_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+    }
+
+    async fn find_node_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<Node>> {
+        sqlx::query_as::<_, Node>("select * from nodes where node_token_hash = $1")
+            .bind(token_hash)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
@@ -333,6 +371,9 @@ impl NodeRepository for PgNodeRepository {
             .await
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         for endpoint in endpoints {
+            let encrypted_reality_private_key = self
+                .secret_box
+                .encrypt_option(endpoint.reality_private_key.as_deref())?;
             sqlx::query(
                 r#"
                 insert into node_endpoints (
@@ -361,7 +402,7 @@ impl NodeRepository for PgNodeRepository {
             .bind(&endpoint.service_name)
             .bind(&endpoint.flow)
             .bind(&endpoint.reality_public_key)
-            .bind(&endpoint.reality_private_key)
+            .bind(&encrypted_reality_private_key)
             .bind(&endpoint.reality_short_id)
             .bind(&endpoint.fingerprint)
             .bind(&endpoint.alpn)
@@ -383,20 +424,23 @@ impl NodeRepository for PgNodeRepository {
     }
 
     async fn list_node_endpoints(&self, node_id: Uuid) -> ApplicationResult<Vec<NodeEndpoint>> {
-        sqlx::query_as::<_, NodeEndpoint>(
+        let rows = sqlx::query_as::<_, NodeEndpoint>(
             "select * from node_endpoints where node_id = $1 order by protocol::text asc, public_port asc",
         )
         .bind(node_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        rows.into_iter()
+            .map(|endpoint| self.decrypt_endpoint(endpoint))
+            .collect()
     }
 
     async fn list_delivery_endpoints(
         &self,
         tenant_id: Uuid,
     ) -> ApplicationResult<Vec<DeliveryNodeEndpoint>> {
-        sqlx::query_as::<_, DeliveryNodeEndpoint>(
+        let rows = sqlx::query_as::<_, DeliveryNodeEndpoint>(
             r#"
             select
                 n.id as node_id,
@@ -431,13 +475,17 @@ impl NodeRepository for PgNodeRepository {
         .bind(tenant_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        rows.into_iter()
+            .map(|endpoint| self.decrypt_delivery_endpoint(endpoint))
+            .collect()
     }
 
     async fn create_config_revision(
         &self,
         revision: ConfigRevision,
     ) -> ApplicationResult<ConfigRevision> {
+        let encrypted_rendered_config = self.secret_box.encrypt(&revision.rendered_config)?;
         sqlx::query(
             r#"
             insert into config_revisions (
@@ -450,7 +498,7 @@ impl NodeRepository for PgNodeRepository {
         .bind(revision.node_id)
         .bind(&revision.name)
         .bind(revision.engine)
-        .bind(&revision.rendered_config)
+        .bind(&encrypted_rendered_config)
         .bind(revision.created_by)
         .bind(revision.created_at)
         .execute(&self.pool)
@@ -463,6 +511,7 @@ impl NodeRepository for PgNodeRepository {
         &self,
         rollout: DeploymentRollout,
     ) -> ApplicationResult<DeploymentRollout> {
+        let encrypted_rendered_config = self.secret_box.encrypt(&rollout.rendered_config)?;
         sqlx::query(
             r#"
             insert into deployment_rollouts (
@@ -476,7 +525,7 @@ impl NodeRepository for PgNodeRepository {
         .bind(rollout.config_revision_id)
         .bind(rollout.engine)
         .bind(&rollout.revision_name)
-        .bind(&rollout.rendered_config)
+        .bind(&encrypted_rendered_config)
         .bind(&rollout.target_path)
         .bind(rollout.status)
         .bind(&rollout.failure_reason)
@@ -487,6 +536,18 @@ impl NodeRepository for PgNodeRepository {
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         Ok(rollout)
+    }
+
+    async fn find_rollout(&self, rollout_id: Uuid) -> ApplicationResult<Option<DeploymentRollout>> {
+        let rollout =
+            sqlx::query_as::<_, DeploymentRollout>("select * from deployment_rollouts where id = $1")
+            .bind(rollout_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        rollout
+            .map(|rollout| self.decrypt_rollout(rollout))
+            .transpose()
     }
 
     async fn list_rollouts(
@@ -508,7 +569,9 @@ impl NodeRepository for PgNodeRepository {
             .await
         }
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        Ok(rows)
+        rows.into_iter()
+            .map(|rollout| self.decrypt_rollout(rollout))
+            .collect()
     }
 
     async fn list_ready_rollouts(
@@ -516,7 +579,7 @@ impl NodeRepository for PgNodeRepository {
         node_id: Uuid,
         limit: i64,
     ) -> ApplicationResult<Vec<DeploymentRollout>> {
-        sqlx::query_as::<_, DeploymentRollout>(
+        let rows = sqlx::query_as::<_, DeploymentRollout>(
             r#"
             select * from deployment_rollouts
             where node_id = $1 and status in ('queued', 'ready')
@@ -528,7 +591,10 @@ impl NodeRepository for PgNodeRepository {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        rows.into_iter()
+            .map(|rollout| self.decrypt_rollout(rollout))
+            .collect()
     }
 
     async fn update_rollout_state(

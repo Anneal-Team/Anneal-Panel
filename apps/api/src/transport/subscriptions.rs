@@ -16,6 +16,68 @@ use crate::{
     transport::rollout_sync::queue_tenant_rollouts_for_current_state,
 };
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeviceResponse {
+    pub id: uuid::Uuid,
+    pub tenant_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub name: String,
+    pub suspended: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<anneal_subscriptions::Device> for DeviceResponse {
+    fn from(device: anneal_subscriptions::Device) -> Self {
+        Self {
+            id: device.id,
+            tenant_id: device.tenant_id,
+            user_id: device.user_id,
+            name: device.name,
+            suspended: device.suspended,
+            created_at: device.created_at,
+            updated_at: device.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SubscriptionResponse {
+    pub id: uuid::Uuid,
+    pub tenant_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub device_id: uuid::Uuid,
+    pub name: String,
+    pub note: Option<String>,
+    pub traffic_limit_bytes: i64,
+    pub used_bytes: i64,
+    pub quota_state: anneal_core::QuotaState,
+    pub suspended: bool,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<anneal_subscriptions::Subscription> for SubscriptionResponse {
+    fn from(subscription: anneal_subscriptions::Subscription) -> Self {
+        Self {
+            id: subscription.id,
+            tenant_id: subscription.tenant_id,
+            user_id: subscription.user_id,
+            device_id: subscription.device_id,
+            name: subscription.name,
+            note: subscription.note,
+            traffic_limit_bytes: subscription.traffic_limit_bytes,
+            used_bytes: subscription.used_bytes,
+            quota_state: subscription.quota_state,
+            suspended: subscription.suspended,
+            expires_at: subscription.expires_at,
+            created_at: subscription.created_at,
+            updated_at: subscription.updated_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateSubscriptionRequest {
     pub tenant_id: uuid::Uuid,
@@ -37,8 +99,12 @@ pub struct UpdateSubscriptionRequest {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CreateSubscriptionResponse {
-    pub subscription: anneal_subscriptions::Subscription,
-    pub link: anneal_subscriptions::SubscriptionLink,
+    pub subscription: SubscriptionResponse,
+    pub delivery_url: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RotateSubscriptionLinkResponse {
     pub delivery_url: String,
 }
 
@@ -88,9 +154,8 @@ pub async fn create_subscription(
         .await
         .map_err(ApiError)?;
     Ok(Json(CreateSubscriptionResponse {
-        delivery_url: format!("{}/s/{}", state.settings.public_base_url, link.token),
-        subscription,
-        link,
+        delivery_url: format_delivery_url(&state.settings.public_base_url, &link.token),
+        subscription: subscription.into(),
     }))
 }
 
@@ -98,28 +163,33 @@ pub async fn create_subscription(
 pub async fn list_devices(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<anneal_subscriptions::Device>>, ApiError> {
+) -> Result<Json<Vec<DeviceResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let devices = state
         .subscription_service()
         .list_devices(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(devices))
+    Ok(Json(devices.into_iter().map(DeviceResponse::from).collect()))
 }
 
 #[utoipa::path(get, path = "/api/v1/subscriptions")]
 pub async fn list_subscriptions(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<anneal_subscriptions::Subscription>>, ApiError> {
+) -> Result<Json<Vec<SubscriptionResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let subscriptions = state
         .subscription_service()
         .list_subscriptions(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(subscriptions))
+    Ok(Json(
+        subscriptions
+            .into_iter()
+            .map(SubscriptionResponse::from)
+            .collect(),
+    ))
 }
 
 #[utoipa::path(patch, path = "/api/v1/subscriptions/{id}", request_body = UpdateSubscriptionRequest)]
@@ -128,7 +198,7 @@ pub async fn update_subscription(
     headers: HeaderMap,
     Path(subscription_id): Path<uuid::Uuid>,
     Json(request): Json<UpdateSubscriptionRequest>,
-) -> Result<Json<anneal_subscriptions::Subscription>, ApiError> {
+) -> Result<Json<SubscriptionResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let subscription = state
         .subscription_service()
@@ -164,7 +234,7 @@ pub async fn update_subscription(
     queue_tenant_rollouts_for_current_state(&state, subscription.tenant_id, "subscription-sync")
         .await
         .map_err(ApiError)?;
-    Ok(Json(subscription))
+    Ok(Json(subscription.into()))
 }
 
 #[utoipa::path(delete, path = "/api/v1/subscriptions/{id}")]
@@ -213,7 +283,7 @@ pub async fn rotate_subscription_link(
     headers: HeaderMap,
     Path(subscription_id): Path<uuid::Uuid>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<anneal_subscriptions::SubscriptionLink>, ApiError> {
+) -> Result<Json<RotateSubscriptionLinkResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let tenant_id = params
         .get("tenant_id")
@@ -241,7 +311,9 @@ pub async fn rotate_subscription_link(
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(link))
+    Ok(Json(RotateSubscriptionLinkResponse {
+        delivery_url: format_delivery_url(&state.settings.public_base_url, &link.token),
+    }))
 }
 
 #[utoipa::path(get, path = "/s/{token}")]
@@ -309,4 +381,8 @@ fn detect_subscription_format(headers: &HeaderMap) -> SubscriptionDocumentFormat
     } else {
         SubscriptionDocumentFormat::Base64
     }
+}
+
+fn format_delivery_url(base_url: &str, token: &str) -> String {
+    format!("{base_url}/s/{token}")
 }

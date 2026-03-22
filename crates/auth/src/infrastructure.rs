@@ -211,6 +211,49 @@ impl SessionRepository for PgSessionRepository {
         Ok(session)
     }
 
+    async fn consume_active_session_by_hash(
+        &self,
+        refresh_token_hash: &str,
+    ) -> ApplicationResult<Option<RefreshSession>> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let session = sqlx::query_as::<_, RefreshSession>(
+            r#"
+            select * from refresh_sessions
+            where refresh_token_hash = $1
+              and revoked_at is null
+              and expires_at > now() at time zone 'utc'
+            order by created_at desc
+            limit 1
+            for update
+            "#,
+        )
+        .bind(refresh_token_hash)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        if let Some(session) = &session {
+            sqlx::query(
+                "update refresh_sessions set revoked_at = now() at time zone 'utc' where id = $1",
+            )
+            .bind(session.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(session.map(|mut session| {
+            session.revoked_at = Some(Utc::now());
+            session
+        }))
+    }
+
     async fn find_active_session_by_hash(
         &self,
         refresh_token_hash: &str,

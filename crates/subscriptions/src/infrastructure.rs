@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use sqlx::PgPool;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use anneal_core::{ApplicationError, ApplicationResult};
+use anneal_core::{ApplicationError, ApplicationResult, SecretBox};
 
 use crate::{
     application::SubscriptionRepository,
@@ -12,17 +13,63 @@ use crate::{
 #[derive(Clone)]
 pub struct PgSubscriptionRepository {
     pool: PgPool,
+    secret_box: SecretBox,
 }
 
 impl PgSubscriptionRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, secret_box: SecretBox) -> Self {
+        Self { pool, secret_box }
+    }
+
+    fn decrypt_device(&self, mut device: Device) -> ApplicationResult<Device> {
+        device.device_token = self.secret_box.decrypt(&device.device_token)?;
+        Ok(device)
+    }
+
+    fn decrypt_subscription(&self, mut subscription: Subscription) -> ApplicationResult<Subscription> {
+        subscription.access_key = self.secret_box.decrypt(&subscription.access_key)?;
+        subscription.current_token = self
+            .secret_box
+            .decrypt_option(subscription.current_token.as_deref())?;
+        Ok(subscription)
+    }
+
+    fn decrypt_link(&self, mut link: SubscriptionLink) -> ApplicationResult<SubscriptionLink> {
+        link.token = self.secret_box.decrypt(&link.token)?;
+        Ok(link)
     }
 }
 
 #[async_trait]
 impl SubscriptionRepository for PgSubscriptionRepository {
+    async fn tenant_owns_user(&self, tenant_id: Uuid, user_id: Uuid) -> ApplicationResult<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from users where id = $1 and tenant_id = $2)",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+    }
+
+    async fn tenant_owns_device(
+        &self,
+        tenant_id: Uuid,
+        device_id: Uuid,
+    ) -> ApplicationResult<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from devices where id = $1 and tenant_id = $2)",
+        )
+        .bind(device_id)
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+    }
+
     async fn create_device(&self, device: Device) -> ApplicationResult<Device> {
+        let encrypted_device_token = self.secret_box.encrypt(&device.device_token)?;
         sqlx::query(
             "insert into devices (id, tenant_id, user_id, name, device_token, suspended, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8)",
         )
@@ -30,7 +77,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(device.tenant_id)
         .bind(device.user_id)
         .bind(&device.name)
-        .bind(&device.device_token)
+        .bind(&encrypted_device_token)
         .bind(device.suspended)
         .bind(device.created_at)
         .bind(device.updated_at)
@@ -46,6 +93,9 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         subscription: Subscription,
         link: SubscriptionLink,
     ) -> ApplicationResult<(Subscription, SubscriptionLink)> {
+        let encrypted_device_token = self.secret_box.encrypt(&device.device_token)?;
+        let encrypted_access_key = self.secret_box.encrypt(&subscription.access_key)?;
+        let encrypted_link_token = self.secret_box.encrypt(&link.token)?;
         let mut transaction = self
             .pool
             .begin()
@@ -58,7 +108,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(device.tenant_id)
         .bind(device.user_id)
         .bind(&device.name)
-        .bind(&device.device_token)
+        .bind(&encrypted_device_token)
         .bind(device.suspended)
         .bind(device.created_at)
         .bind(device.updated_at)
@@ -78,7 +128,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(subscription.device_id)
         .bind(&subscription.name)
         .bind(&subscription.note)
-        .bind(&subscription.access_key)
+        .bind(&encrypted_access_key)
         .bind(subscription.traffic_limit_bytes)
         .bind(subscription.used_bytes)
         .bind(subscription.quota_state)
@@ -90,11 +140,12 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         sqlx::query(
-            "insert into subscription_links (id, subscription_id, token, revoked_at, created_at) values ($1,$2,$3,$4,$5)",
+            "insert into subscription_links (id, subscription_id, token, token_hash, revoked_at, created_at) values ($1,$2,$3,$4,$5,$6)",
         )
         .bind(link.id)
         .bind(link.subscription_id)
-        .bind(&link.token)
+        .bind(&encrypted_link_token)
+        .bind(&link.token_hash)
         .bind(link.revoked_at)
         .bind(link.created_at)
         .execute(&mut *transaction)
@@ -121,7 +172,9 @@ impl SubscriptionRepository for PgSubscriptionRepository {
                 .await
         }
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        Ok(rows)
+        rows.into_iter()
+            .map(|device| self.decrypt_device(device))
+            .collect()
     }
 
     async fn list_subscriptions(
@@ -170,14 +223,16 @@ impl SubscriptionRepository for PgSubscriptionRepository {
             .await
         }
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        Ok(rows)
+        rows.into_iter()
+            .map(|subscription| self.decrypt_subscription(subscription))
+            .collect()
     }
 
     async fn get_subscription(
         &self,
         subscription_id: Uuid,
     ) -> ApplicationResult<Option<Subscription>> {
-        sqlx::query_as::<_, Subscription>(
+        let subscription = sqlx::query_as::<_, Subscription>(
             r#"
             select
                 s.*,
@@ -196,23 +251,28 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(subscription_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        subscription
+            .map(|subscription| self.decrypt_subscription(subscription))
+            .transpose()
     }
 
     async fn update_subscription(
         &self,
         subscription: Subscription,
     ) -> ApplicationResult<Subscription> {
+        let encrypted_access_key = self.secret_box.encrypt(&subscription.access_key)?;
         sqlx::query(
             r#"
             update subscriptions
-            set name = $2, note = $3, traffic_limit_bytes = $4, used_bytes = $5, quota_state = $6, suspended = $7, expires_at = $8, updated_at = $9
+            set name = $2, note = $3, access_key = $4, traffic_limit_bytes = $5, used_bytes = $6, quota_state = $7, suspended = $8, expires_at = $9, updated_at = $10
             where id = $1
             "#,
         )
         .bind(subscription.id)
         .bind(&subscription.name)
         .bind(&subscription.note)
+        .bind(&encrypted_access_key)
         .bind(subscription.traffic_limit_bytes)
         .bind(subscription.used_bytes)
         .bind(subscription.quota_state)
@@ -269,11 +329,12 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         device_id: Uuid,
         device_token: &str,
     ) -> ApplicationResult<()> {
+        let encrypted_device_token = self.secret_box.encrypt(device_token)?;
         sqlx::query(
             "update devices set device_token = $2, updated_at = now() at time zone 'utc' where id = $1",
         )
         .bind(device_id)
-        .bind(device_token)
+        .bind(encrypted_device_token)
         .execute(&self.pool)
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
@@ -285,6 +346,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         subscription_id: Uuid,
         token: &str,
     ) -> ApplicationResult<SubscriptionLink> {
+        let encrypted_token = self.secret_box.encrypt(token)?;
         let mut transaction = self
             .pool
             .begin()
@@ -301,15 +363,17 @@ impl SubscriptionRepository for PgSubscriptionRepository {
             id: Uuid::new_v4(),
             subscription_id,
             token: token.into(),
+            token_hash: hash_token(token),
             revoked_at: None,
             created_at: chrono::Utc::now(),
         };
         sqlx::query(
-            "insert into subscription_links (id, subscription_id, token, revoked_at, created_at) values ($1,$2,$3,$4,$5)",
+            "insert into subscription_links (id, subscription_id, token, token_hash, revoked_at, created_at) values ($1,$2,$3,$4,$5,$6)",
         )
         .bind(link.id)
         .bind(link.subscription_id)
-        .bind(&link.token)
+        .bind(&encrypted_token)
+        .bind(&link.token_hash)
         .bind(link.revoked_at)
         .bind(link.created_at)
         .execute(&mut *transaction)
@@ -327,9 +391,9 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         token: &str,
     ) -> ApplicationResult<Option<ResolvedSubscriptionContext>> {
         let link = sqlx::query_as::<_, SubscriptionLink>(
-            "select * from subscription_links where token = $1 and revoked_at is null limit 1",
+            "select * from subscription_links where token_hash = $1 and revoked_at is null limit 1",
         )
-        .bind(token)
+        .bind(hash_token(token))
         .fetch_optional(&self.pool)
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
@@ -342,6 +406,16 @@ impl SubscriptionRepository for PgSubscriptionRepository {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let link = self.decrypt_link(link)?;
+        let subscription = subscription
+            .map(|subscription| self.decrypt_subscription(subscription))
+            .transpose()?;
         Ok(subscription.map(|subscription| ResolvedSubscriptionContext { subscription, link }))
     }
+}
+
+fn hash_token(token: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(token.as_bytes());
+    format!("{:x}", digest.finalize())
 }

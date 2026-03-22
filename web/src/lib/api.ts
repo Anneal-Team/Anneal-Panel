@@ -54,8 +54,6 @@ export interface User {
   display_name: string;
   role: UserRole;
   status: UserStatus;
-  password_hash: string;
-  totp_secret: string | null;
   totp_confirmed: boolean;
   created_at: string;
   updated_at: string;
@@ -66,7 +64,6 @@ export interface Device {
   tenant_id: string;
   user_id: string;
   name: string;
-  device_token: string;
   suspended: boolean;
   created_at: string;
   updated_at: string;
@@ -79,7 +76,6 @@ export interface Subscription {
   device_id: string;
   name: string;
   note: string | null;
-  access_key: string;
   traffic_limit_bytes: number;
   used_bytes: number;
   quota_state: QuotaState;
@@ -87,20 +83,14 @@ export interface Subscription {
   expires_at: string;
   created_at: string;
   updated_at: string;
-  current_token: string | null;
-}
-
-export interface SubscriptionLink {
-  id: string;
-  subscription_id: string;
-  token: string;
-  revoked_at: string | null;
-  created_at: string;
 }
 
 export interface CreateSubscriptionResponse {
   subscription: Subscription;
-  link: SubscriptionLink;
+  delivery_url: string;
+}
+
+export interface RotateSubscriptionLinkResponse {
   delivery_url: string;
 }
 
@@ -153,7 +143,6 @@ export interface NodeEndpoint {
   service_name: string | null;
   flow: string | null;
   reality_public_key: string | null;
-  reality_private_key: string | null;
   reality_short_id: string | null;
   fingerprint: string | null;
   alpn: string[];
@@ -163,6 +152,27 @@ export interface NodeEndpoint {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface NodeEndpointInput {
+  protocol: ProtocolKind;
+  listen_host: string;
+  listen_port: number;
+  public_host: string;
+  public_port: number;
+  transport: TransportKind;
+  security: SecurityKind;
+  server_name: string | null;
+  host_header: string | null;
+  path: string | null;
+  service_name: string | null;
+  flow: string | null;
+  fingerprint: string | null;
+  alpn: string[];
+  cipher: string | null;
+  tls_certificate_path: string | null;
+  tls_key_path: string | null;
+  enabled: boolean;
 }
 
 export interface EnrollmentGrant {
@@ -186,7 +196,6 @@ export interface DeploymentRollout {
   config_revision_id: string;
   engine: ProxyEngine;
   revision_name: string;
-  rendered_config: string;
   target_path: string;
   status: DeploymentStatus;
   failure_reason: string | null;
@@ -529,7 +538,7 @@ export const api = {
     );
   },
   rotateSubscriptionLink(subscriptionId: string, tenantId: string) {
-    return apiFetch<SubscriptionLink>(
+    return apiFetch<RotateSubscriptionLinkResponse>(
       `/subscriptions/${subscriptionId}/rotate-link?tenant_id=${tenantId}`,
       { method: "POST" },
     );
@@ -577,7 +586,7 @@ export const api = {
   },
   replaceNodeEndpoints(
     nodeId: string,
-    input: { tenant_id: string; endpoints: Omit<NodeEndpoint, "id" | "node_id" | "created_at" | "updated_at">[] },
+    input: { tenant_id: string; endpoints: NodeEndpointInput[] },
   ) {
     return apiFetch<NodeEndpoint[]>(`/nodes/${nodeId}/endpoints`, {
       method: "POST",

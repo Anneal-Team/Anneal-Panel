@@ -13,6 +13,7 @@ use crate::domain::{
 
 #[async_trait]
 pub trait UserRepository: Send + Sync {
+    async fn bootstrap_superadmin(&self, user: User) -> ApplicationResult<User>;
     async fn create_user(&self, user: User) -> ApplicationResult<User>;
     async fn create_reseller_bundle(&self, tenant: Tenant, user: User) -> ApplicationResult<User>;
     async fn get_user_by_email(&self, email: &str) -> ApplicationResult<Option<User>>;
@@ -42,6 +43,10 @@ impl<T> UserRepository for &T
 where
     T: UserRepository + Send + Sync,
 {
+    async fn bootstrap_superadmin(&self, user: User) -> ApplicationResult<User> {
+        (*self).bootstrap_superadmin(user).await
+    }
+
     async fn create_user(&self, user: User) -> ApplicationResult<User> {
         (*self).create_user(user).await
     }
@@ -143,16 +148,6 @@ where
         display_name: String,
         password_hash: String,
     ) -> ApplicationResult<User> {
-        if self.repository.count_superadmins().await? > 0 {
-            return Err(ApplicationError::Conflict(
-                "bootstrap already completed".into(),
-            ));
-        }
-        if self.repository.get_user_by_email(&email).await?.is_some() {
-            return Err(ApplicationError::Conflict(
-                "superadmin already exists".into(),
-            ));
-        }
         let now = Utc::now();
         let user = User {
             id: Uuid::new_v4(),
@@ -168,7 +163,7 @@ where
             created_at: now,
             updated_at: now,
         };
-        self.repository.create_user(user).await
+        self.repository.bootstrap_superadmin(user).await
     }
 
     pub async fn create_reseller(
@@ -505,6 +500,23 @@ pub struct InMemoryUserRepository {
 
 #[async_trait]
 impl UserRepository for InMemoryUserRepository {
+    async fn bootstrap_superadmin(&self, user: User) -> ApplicationResult<User> {
+        let mut users = self.users.write().expect("lock");
+        if users.values().any(|item| item.role == UserRole::Superadmin) {
+            return Err(ApplicationError::Conflict(
+                "bootstrap already completed".into(),
+            ));
+        }
+        if users
+            .values()
+            .any(|item| item.email.eq_ignore_ascii_case(&user.email))
+        {
+            return Err(ApplicationError::Conflict("email already exists".into()));
+        }
+        users.insert(user.id, user.clone());
+        Ok(user)
+    }
+
     async fn create_user(&self, user: User) -> ApplicationResult<User> {
         self.users
             .write()
@@ -672,6 +684,7 @@ impl UserRepository for InMemoryUserRepository {
 
 #[cfg(test)]
 mod tests {
+    use anneal_core::ApplicationError;
     use anneal_core::{Actor, UserRole};
     use anneal_rbac::RbacService;
     use uuid::Uuid;
@@ -733,5 +746,23 @@ mod tests {
         assert_eq!(created.role, UserRole::Reseller);
         assert!(created.tenant_id.is_some());
         assert_eq!(created.tenant_name.as_deref(), Some("North"));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_is_single_use() {
+        let repository = InMemoryUserRepository::default();
+        let service = UserService::new(repository, RbacService);
+
+        service
+            .bootstrap_superadmin("admin@test.local".into(), "Admin".into(), "hash".into())
+            .await
+            .expect("first bootstrap");
+
+        let error = service
+            .bootstrap_superadmin("admin2@test.local".into(), "Admin 2".into(), "hash".into())
+            .await
+            .expect_err("second bootstrap must fail");
+
+        assert!(matches!(error, ApplicationError::Conflict(_)));
     }
 }

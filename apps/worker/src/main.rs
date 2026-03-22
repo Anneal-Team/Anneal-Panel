@@ -1,7 +1,9 @@
 use anneal_audit::PgAuditRepository;
+use anneal_core::SecretBox;
 use anneal_notifications::{NotificationService, PgNotificationRepository, TelegramNotifier};
 use anneal_platform::{
-    DeploymentJob, NotificationJob, Settings, connect_pool, init_telemetry, run_migrations,
+    DeploymentJob, NotificationJob, Settings, backfill_protected_data, connect_pool,
+    init_telemetry, run_migrations,
 };
 use apalis::prelude::{Data, TaskSink, WorkerBuilder};
 use apalis_postgres::{Config, PostgresStorage};
@@ -11,9 +13,11 @@ use sqlx::PgPool;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let settings = Settings::from_env()?;
+    let secret_box = SecretBox::new(&settings.data_encryption_key)?;
     init_telemetry("anneal-worker", &settings)?;
     let pool = connect_pool(&settings.database_url).await?;
     run_migrations(&pool, &settings.migrations_dir).await?;
+    backfill_protected_data(&pool, &secret_box).await?;
 
     let deployment_storage =
         PostgresStorage::new_with_notify(&pool, &Config::new("deployment_jobs"));
@@ -23,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let deployment_worker = WorkerBuilder::new("anneal-deployment-worker")
         .backend(deployment_storage)
         .data(pool.clone())
+        .data(secret_box.clone())
         .build(process_deployment);
     let notification_worker = WorkerBuilder::new("anneal-notification-worker")
         .backend(notification_storage)
@@ -41,7 +46,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn process_deployment(job: DeploymentJob, pool: Data<PgPool>) -> anyhow::Result<()> {
+async fn process_deployment(
+    job: DeploymentJob,
+    pool: Data<PgPool>,
+    secret_box: Data<SecretBox>,
+) -> anyhow::Result<()> {
     sqlx::query(
         "update deployment_rollouts set status = 'rendering', updated_at = now() at time zone 'utc' where id = $1",
     )
@@ -62,8 +71,9 @@ async fn process_deployment(job: DeploymentJob, pool: Data<PgPool>) -> anyhow::R
     .bind(job.rollout_id)
     .fetch_one(&*pool)
     .await?;
+    let rendered_config = secret_box.decrypt(&rollout.0)?;
 
-    let validation = serde_json::from_str::<serde_json::Value>(&rollout.0);
+    let validation = serde_json::from_str::<serde_json::Value>(&rendered_config);
     match validation {
         Ok(_) => {
             sqlx::query(

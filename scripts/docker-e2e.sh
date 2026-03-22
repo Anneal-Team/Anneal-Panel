@@ -20,6 +20,8 @@ XRAY_NODE_NAME="${E2E_XRAY_NODE_NAME:-node-e2e-xray}"
 SINGBOX_NODE_NAME="${E2E_SINGBOX_NODE_NAME:-node-e2e-singbox}"
 SUBSCRIPTION_NAME="${E2E_SUBSCRIPTION_NAME:-bundle-main}"
 QUOTA_BYTES="${E2E_QUOTA_BYTES:-1048576}"
+BOOTSTRAP_TOKEN="${E2E_BOOTSTRAP_TOKEN:-test-bootstrap-token}"
+DATA_ENCRYPTION_KEY="${E2E_DATA_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
 
 mkdir -p "${SHARED_DIR}"
 
@@ -213,6 +215,7 @@ BOOTSTRAP_STATUS="$(
   curl -sS -o /tmp/bootstrap.json -w '%{http_code}' \
     "${API_URL}/api/v1/bootstrap" \
     -H 'content-type: application/json' \
+    -H "x-bootstrap-token: ${BOOTSTRAP_TOKEN}" \
     --data "$(jq -nc --arg email "${SUPERADMIN_EMAIL}" --arg display_name "${SUPERADMIN_DISPLAY_NAME}" --arg password "${SUPERADMIN_PASSWORD}" '{email:$email, display_name:$display_name, password:$password}')"
 )"
 if [[ "${BOOTSTRAP_STATUS}" != "200" && "${BOOTSTRAP_STATUS}" != "409" ]]; then

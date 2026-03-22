@@ -253,8 +253,26 @@ function runtimeLabel(node: Node | undefined) {
 }
 
 function endpointInput(endpoint: NodeEndpoint) {
-  const { id: _id, node_id: _nodeId, created_at: _createdAt, updated_at: _updatedAt, ...rest } = endpoint;
-  return rest;
+  return {
+    protocol: endpoint.protocol,
+    listen_host: endpoint.listen_host,
+    listen_port: endpoint.listen_port,
+    public_host: endpoint.public_host,
+    public_port: endpoint.public_port,
+    transport: endpoint.transport,
+    security: endpoint.security,
+    server_name: endpoint.server_name,
+    host_header: endpoint.host_header,
+    path: endpoint.path,
+    service_name: endpoint.service_name,
+    flow: endpoint.flow,
+    fingerprint: endpoint.fingerprint,
+    alpn: endpoint.alpn,
+    cipher: endpoint.cipher,
+    tls_certificate_path: endpoint.tls_certificate_path,
+    tls_key_path: endpoint.tls_key_path,
+    enabled: endpoint.enabled,
+  };
 }
 
 function endpointCaption(item: GeneratedPreviewItem) {

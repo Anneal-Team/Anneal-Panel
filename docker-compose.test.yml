@@ -28,6 +28,8 @@ services:
     environment:
       ANNEAL_BIND_ADDRESS: 0.0.0.0:8080
       ANNEAL_DATABASE_URL: postgres://anneal:anneal@postgres:5432/anneal
+      ANNEAL_BOOTSTRAP_TOKEN: test-bootstrap-token
+      ANNEAL_DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       ANNEAL_ACCESS_JWT_SECRET: test-access-secret
       ANNEAL_PRE_AUTH_JWT_SECRET: test-preauth-secret
       ANNEAL_PUBLIC_BASE_URL: http://web
@@ -45,6 +47,7 @@ services:
       dockerfile: deploy/docker/worker.Dockerfile
     environment:
       ANNEAL_DATABASE_URL: postgres://anneal:anneal@postgres:5432/anneal
+      ANNEAL_DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       ANNEAL_ACCESS_JWT_SECRET: test-access-secret
       ANNEAL_PRE_AUTH_JWT_SECRET: test-preauth-secret
       ANNEAL_PUBLIC_BASE_URL: http://web
@@ -141,6 +144,7 @@ services:
       E2E_API_URL: http://api:8080
       E2E_WEB_URL: http://web
       E2E_SHARED_DIR: /e2e
+      E2E_BOOTSTRAP_TOKEN: test-bootstrap-token
     volumes:
       - anneal-e2e-shared:/e2e
     depends_on:

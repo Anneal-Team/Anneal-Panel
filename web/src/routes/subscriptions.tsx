@@ -67,13 +67,6 @@ function fromDateTimeLocalValue(value: string) {
   return parsed.toISOString();
 }
 
-function deliveryUrlFor(subscription: { current_token: string | null }) {
-  if (!subscription.current_token) {
-    return null;
-  }
-  return `${window.location.origin}/s/${subscription.current_token}`;
-}
-
 function createInitialForm(): CreateSubscriptionForm {
   return {
     tenant_id: "",
@@ -216,20 +209,17 @@ export function SubscriptionsPage() {
   });
 
   const rotateLinkMutation = useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       subscriptionId,
       tenantId,
     }: {
       subscriptionId: string;
       tenantId: string;
-    }) => {
-      const link = await api.rotateSubscriptionLink(subscriptionId, tenantId);
-      return `${window.location.origin}/s/${link.token}`;
-    },
-    onSuccess: async (url) => {
+    }) => api.rotateSubscriptionLink(subscriptionId, tenantId),
+    onSuccess: async (result) => {
       setError(null);
       setMessage("Ссылка подписки обновлена.");
-      setDeliveryUrl(url);
+      setDeliveryUrl(result.delivery_url);
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
     },
     onError: (mutationError) => {
@@ -299,7 +289,7 @@ export function SubscriptionsPage() {
                   ? Math.min(subscription.used_bytes / subscription.traffic_limit_bytes, 1)
                   : 1;
               const expiresSoon = new Date(subscription.expires_at).getTime() - now < 3 * 24 * 60 * 60 * 1000;
-              const currentDeliveryUrl = deliveryUrlFor(subscription);
+              const currentDeliveryUrl = "Ссылка показывается только после создания или ротации.";
 
               return (
                 <div key={subscription.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">

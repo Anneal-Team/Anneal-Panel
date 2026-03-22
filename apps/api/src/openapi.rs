@@ -7,14 +7,19 @@ use crate::transport::{
     },
     nodes::{
         AckRolloutRequest, CreateEnrollmentTokenRequest, CreateNodeGroupRequest, HeartbeatRequest,
-        NodeEndpointRequest, NodeGroupDomainRequest, PullRolloutsRequest, RegisterNodeRequest,
+        DeploymentRolloutResponse, NodeEndpointRequest, NodeEndpointResponse,
+        NodeGroupDomainRequest, PullRolloutsRequest, RegisterNodeRequest,
         ReplaceNodeEndpointsRequest, ReplaceNodeGroupDomainsRequest, UpdateNodeGroupRequest,
     },
     subscriptions::{
-        CreateSubscriptionRequest, CreateSubscriptionResponse, UpdateSubscriptionRequest,
+        CreateSubscriptionRequest, CreateSubscriptionResponse, DeviceResponse,
+        RotateSubscriptionLinkResponse, SubscriptionResponse, UpdateSubscriptionRequest,
     },
     usage::UsageBulkRequest,
-    users::{CreateResellerRequest, CreateUserRequest, UpdateResellerRequest, UpdateUserRequest},
+    users::{
+        CreateResellerRequest, CreateUserRequest, UpdateResellerRequest, UpdateUserRequest,
+        UserResponse,
+    },
 };
 
 #[derive(OpenApi)]
@@ -76,6 +81,7 @@ use crate::transport::{
         UpdateUserRequest,
         CreateResellerRequest,
         UpdateResellerRequest,
+        UserResponse,
         CreateNodeGroupRequest,
         UpdateNodeGroupRequest,
         ReplaceNodeGroupDomainsRequest,
@@ -87,9 +93,14 @@ use crate::transport::{
         AckRolloutRequest,
         ReplaceNodeEndpointsRequest,
         NodeEndpointRequest,
+        NodeEndpointResponse,
+        DeploymentRolloutResponse,
         CreateSubscriptionRequest,
         UpdateSubscriptionRequest,
         CreateSubscriptionResponse,
+        DeviceResponse,
+        SubscriptionResponse,
+        RotateSubscriptionLinkResponse,
         UsageBulkRequest
     ))
 )]

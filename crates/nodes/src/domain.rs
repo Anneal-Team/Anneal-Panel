@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::Type;
+use std::ops::Deref;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -58,6 +59,7 @@ pub struct NodeEnrollmentToken {
     pub id: Uuid,
     pub tenant_id: Uuid,
     pub node_group_id: Uuid,
+    #[serde(skip_serializing, default)]
     pub token_hash: String,
     pub engine: ProxyEngine,
     pub expires_at: DateTime<Utc>,
@@ -65,7 +67,7 @@ pub struct NodeEnrollmentToken {
     pub used_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct Node {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -75,6 +77,8 @@ pub struct Node {
     pub version: String,
     pub status: NodeStatus,
     pub last_seen_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing, default)]
+    pub node_token_hash: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -96,6 +100,7 @@ pub struct NodeEndpoint {
     pub service_name: Option<String>,
     pub flow: Option<String>,
     pub reality_public_key: Option<String>,
+    #[serde(skip_serializing, default)]
     pub reality_private_key: Option<String>,
     pub reality_short_id: Option<String>,
     pub fingerprint: Option<String>,
@@ -123,6 +128,7 @@ pub struct NodeEndpointDraft {
     pub service_name: Option<String>,
     pub flow: Option<String>,
     pub reality_public_key: Option<String>,
+    #[serde(skip_serializing, default)]
     pub reality_private_key: Option<String>,
     pub reality_short_id: Option<String>,
     pub fingerprint: Option<String>,
@@ -151,6 +157,7 @@ pub struct DeliveryNodeEndpoint {
     pub service_name: Option<String>,
     pub flow: Option<String>,
     pub reality_public_key: Option<String>,
+    #[serde(skip_serializing, default)]
     pub reality_private_key: Option<String>,
     pub reality_short_id: Option<String>,
     pub fingerprint: Option<String>,
@@ -201,6 +208,20 @@ pub struct NodeRegistration {
 pub struct EnrollmentGrant {
     pub token: String,
     pub record: NodeEnrollmentToken,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NodeRegistrationGrant {
+    pub node: Node,
+    pub node_token: String,
+}
+
+impl Deref for NodeRegistrationGrant {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

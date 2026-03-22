@@ -25,6 +25,7 @@ authors = ["Miroshka"]
 publish = false
 
 [workspace.dependencies]
+aes-gcm-siv = "0.11.1"
 anneal-audit = { path = "crates/audit" }
 anneal-auth = { path = "crates/auth" }
 anneal-config-engine = { path = "crates/config-engine" }

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::RwLock,
+};
 
 use anneal_config_engine::{
     ClientCredential, InboundProfile, RenderedShareLink, ShareLinkRenderer, ShareLinkStrategy,
@@ -10,6 +13,7 @@ use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use chrono::Utc;
 use rand::{Rng, distr::Alphanumeric};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -19,6 +23,12 @@ use crate::domain::{
 
 #[async_trait]
 pub trait SubscriptionRepository: Send + Sync {
+    async fn tenant_owns_user(&self, tenant_id: Uuid, user_id: Uuid) -> ApplicationResult<bool>;
+    async fn tenant_owns_device(
+        &self,
+        tenant_id: Uuid,
+        device_id: Uuid,
+    ) -> ApplicationResult<bool>;
     async fn create_device(&self, device: Device) -> ApplicationResult<Device>;
     async fn create_subscription(
         &self,
@@ -61,6 +71,18 @@ impl<T> SubscriptionRepository for &T
 where
     T: SubscriptionRepository + Send + Sync,
 {
+    async fn tenant_owns_user(&self, tenant_id: Uuid, user_id: Uuid) -> ApplicationResult<bool> {
+        (*self).tenant_owns_user(tenant_id, user_id).await
+    }
+
+    async fn tenant_owns_device(
+        &self,
+        tenant_id: Uuid,
+        device_id: Uuid,
+    ) -> ApplicationResult<bool> {
+        (*self).tenant_owns_device(tenant_id, device_id).await
+    }
+
     async fn create_device(&self, device: Device) -> ApplicationResult<Device> {
         (*self).create_device(device).await
     }
@@ -158,6 +180,13 @@ where
                 target_tenant_id: Some(command.tenant_id),
             },
         )?;
+        if !self
+            .repository
+            .tenant_owns_user(command.tenant_id, command.user_id)
+            .await?
+        {
+            return Err(ApplicationError::Forbidden);
+        }
         let now = Utc::now();
         self.repository
             .create_device(Device {
@@ -185,6 +214,13 @@ where
                 target_tenant_id: Some(command.tenant_id),
             },
         )?;
+        if !self
+            .repository
+            .tenant_owns_user(command.tenant_id, command.user_id)
+            .await?
+        {
+            return Err(ApplicationError::Forbidden);
+        }
         let now = Utc::now();
         let device = Device {
             id: Uuid::new_v4(),
@@ -217,9 +253,12 @@ where
             id: Uuid::new_v4(),
             subscription_id: subscription.id,
             token: generate_token(),
+            token_hash: String::new(),
             revoked_at: None,
             created_at: now,
         };
+        let mut link = link;
+        link.token_hash = hash_token(&link.token);
         let mut subscription = subscription;
         subscription.current_token = Some(link.token.clone());
         self.repository
@@ -325,6 +364,9 @@ where
                 target_tenant_id: Some(tenant_id),
             },
         )?;
+        if !self.repository.tenant_owns_device(tenant_id, device_id).await? {
+            return Err(ApplicationError::Forbidden);
+        }
         let token = generate_token();
         self.repository
             .rotate_device_token(device_id, &token)
@@ -345,6 +387,14 @@ where
                 target_tenant_id: Some(tenant_id),
             },
         )?;
+        let subscription = self
+            .repository
+            .get_subscription(subscription_id)
+            .await?
+            .ok_or_else(|| ApplicationError::NotFound("subscription not found".into()))?;
+        if subscription.tenant_id != tenant_id {
+            return Err(ApplicationError::Forbidden);
+        }
         self.repository
             .rotate_subscription_token(subscription_id, &generate_token())
             .await
@@ -454,11 +504,46 @@ pub struct InMemorySubscriptionRepository {
     devices: RwLock<HashMap<Uuid, Device>>,
     subscriptions: RwLock<HashMap<Uuid, Subscription>>,
     links: RwLock<HashMap<Uuid, SubscriptionLink>>,
+    tenant_users: RwLock<HashSet<(Uuid, Uuid)>>,
+}
+
+impl InMemorySubscriptionRepository {
+    pub fn allow_user(&self, tenant_id: Uuid, user_id: Uuid) {
+        self.tenant_users
+            .write()
+            .expect("lock")
+            .insert((tenant_id, user_id));
+    }
 }
 
 #[async_trait]
 impl SubscriptionRepository for InMemorySubscriptionRepository {
+    async fn tenant_owns_user(&self, tenant_id: Uuid, user_id: Uuid) -> ApplicationResult<bool> {
+        Ok(self
+            .tenant_users
+            .read()
+            .expect("lock")
+            .contains(&(tenant_id, user_id)))
+    }
+
+    async fn tenant_owns_device(
+        &self,
+        tenant_id: Uuid,
+        device_id: Uuid,
+    ) -> ApplicationResult<bool> {
+        Ok(self
+            .devices
+            .read()
+            .expect("lock")
+            .get(&device_id)
+            .is_some_and(|device| device.tenant_id == tenant_id))
+    }
+
     async fn create_device(&self, device: Device) -> ApplicationResult<Device> {
+        self.tenant_users
+            .write()
+            .expect("lock")
+            .insert((device.tenant_id, device.user_id));
         self.devices
             .write()
             .expect("lock")
@@ -472,6 +557,10 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
         subscription: Subscription,
         link: SubscriptionLink,
     ) -> ApplicationResult<(Subscription, SubscriptionLink)> {
+        self.tenant_users
+            .write()
+            .expect("lock")
+            .insert((device.tenant_id, device.user_id));
         self.devices
             .write()
             .expect("lock")
@@ -601,6 +690,7 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
             id: Uuid::new_v4(),
             subscription_id,
             token: token.into(),
+            token_hash: hash_token(token),
             revoked_at: None,
             created_at: Utc::now(),
         };
@@ -625,7 +715,7 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
         let subscriptions = self.subscriptions.read().expect("lock");
         let found = links
             .values()
-            .find(|link| link.token == token && link.revoked_at.is_none())
+            .find(|link| link.token_hash == hash_token(token) && link.revoked_at.is_none())
             .and_then(|link| {
                 subscriptions
                     .get(&link.subscription_id)
@@ -645,6 +735,12 @@ pub fn generate_token() -> String {
         .take(48)
         .map(char::from)
         .collect()
+}
+
+fn hash_token(token: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(token.as_bytes());
+    format!("{:x}", digest.finalize())
 }
 
 fn decide_quota_state(traffic_limit_bytes: i64, used_bytes: i64) -> QuotaState {
@@ -720,7 +816,7 @@ mod tests {
     use std::collections::HashSet;
 
     use anneal_config_engine::SubscriptionDocumentFormat;
-    use anneal_core::{Actor, ProtocolKind, UserRole};
+    use anneal_core::{Actor, ApplicationError, ProtocolKind, UserRole};
     use anneal_nodes::{InMemoryNodeRepository, NodeEndpointDraft, NodeService};
     use anneal_rbac::RbacService;
     use chrono::{Duration, Utc};
@@ -742,12 +838,15 @@ mod tests {
             tenant_id: Some(Uuid::new_v4()),
             role: UserRole::Reseller,
         };
+        service
+            .repository
+            .allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
         let (subscription, first_link) = service
             .create_subscription(
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: Uuid::new_v4(),
+                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1024,
@@ -775,6 +874,7 @@ mod tests {
             tenant_id: Some(Uuid::new_v4()),
             role: UserRole::Reseller,
         };
+        subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
 
         let group = node_service
             .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
@@ -863,7 +963,7 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: Uuid::new_v4(),
+                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
@@ -894,6 +994,7 @@ mod tests {
             tenant_id: Some(Uuid::new_v4()),
             role: UserRole::Reseller,
         };
+        subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
 
         let group = node_service
             .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
@@ -982,7 +1083,7 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: Uuid::new_v4(),
+                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
@@ -1012,5 +1113,33 @@ mod tests {
         assert_eq!(unique.len(), 2);
         assert!(unique.contains("main edge-1 vmess 24443"));
         assert!(unique.contains("main edge-1 vmess 24444"));
+    }
+
+    #[tokio::test]
+    async fn reseller_cannot_create_subscription_for_foreign_user() {
+        let repository = InMemorySubscriptionRepository::default();
+        let service = SubscriptionService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+
+        let error = service
+            .create_subscription(
+                &actor,
+                CreateSubscriptionCommand {
+                    tenant_id: actor.tenant_id.expect("tenant"),
+                    user_id: Uuid::new_v4(),
+                    name: "main".into(),
+                    note: None,
+                    traffic_limit_bytes: 1024,
+                    expires_at: Utc::now() + Duration::days(30),
+                },
+            )
+            .await
+            .expect_err("foreign user must be rejected");
+
+        assert!(matches!(error, ApplicationError::Forbidden));
     }
 }

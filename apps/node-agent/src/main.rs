@@ -15,7 +15,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use crate::{
-    client::{RegisterNodeRequest, ack_rollout, heartbeat, pull_rollouts, register},
+    client::{RegisterNodeRequest, ack_rollout, build_client, heartbeat, pull_rollouts, register},
     runtime::{
         RuntimeSettings, apply_rollout, parse_engine, parse_protocols, parse_runtime_controller,
     },
@@ -114,7 +114,7 @@ struct AgentState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = AgentArgs::parse();
-    let client = Client::new();
+    let client = build_client()?;
     let runtime = RuntimeSettings {
         config_root: args.config_root.clone(),
         xray_binary: args.xray_binary.clone(),

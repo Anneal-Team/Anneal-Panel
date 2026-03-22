@@ -7,7 +7,10 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+aes-gcm-siv.workspace = true
+base64.workspace = true
 chrono.workspace = true
+rand.workspace = true
 serde.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

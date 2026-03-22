@@ -3,8 +3,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use anneal_config_engine::{CanonicalConfig, ClientCredential, ConfigRenderer, InboundProfile};
-use anneal_nodes::{Node, NodeEndpoint};
+use anneal_core::DeploymentStatus;
+use anneal_nodes::{ConfigRevision, DeploymentRollout, Node, NodeEndpoint, NodeRepository};
 use anneal_platform::DeploymentJob;
+use anneal_subscriptions::SubscriptionRepository;
 use apalis::prelude::TaskSink;
 
 use crate::app_state::AppState;
@@ -26,28 +28,17 @@ pub async fn queue_tenant_rollouts_for_current_state(
         return Ok(());
     }
 
-    let credentials = sqlx::query_as::<_, (Uuid, String, String)>(
-        r#"
-        select s.id, s.name, s.access_key
-        from subscriptions s
-        where s.tenant_id = $1
-          and s.suspended = false
-          and s.expires_at > now() at time zone 'utc'
-        order by s.name asc
-        "#,
-    )
-    .bind(tenant_id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?
+    let credentials = state
+        .subscriptions
+        .list_subscriptions(Some(tenant_id))
+        .await?
     .into_iter()
-    .map(
-        |(subscription_id, subscription_name, access_key)| ClientCredential {
-            email: subscription_name,
-            uuid: subscription_id.to_string(),
-            password: Some(access_key),
-        },
-    )
+    .filter(|subscription| !subscription.suspended && subscription.expires_at > Utc::now())
+    .map(|subscription| ClientCredential {
+        email: subscription.name,
+        uuid: subscription.id.to_string(),
+        password: Some(subscription.access_key),
+    })
     .collect::<Vec<_>>();
 
     if credentials.is_empty() {
@@ -55,13 +46,13 @@ pub async fn queue_tenant_rollouts_for_current_state(
     }
 
     for node in nodes {
-        let endpoints = sqlx::query_as::<_, NodeEndpoint>(
-            "select * from node_endpoints where node_id = $1 and enabled = true order by public_port asc",
-        )
-        .bind(node.id)
-        .fetch_all(&state.pool)
-        .await
-        .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
+        let endpoints = state
+            .nodes
+            .list_node_endpoints(node.id)
+            .await?
+            .into_iter()
+            .filter(|endpoint| endpoint.enabled)
+            .collect::<Vec<NodeEndpoint>>();
 
         if endpoints.is_empty() {
             continue;
@@ -86,43 +77,37 @@ pub async fn queue_tenant_rollouts_for_current_state(
         let rollout_id = Uuid::new_v4();
         let now = Utc::now();
         let revision_name = format!("{reason}-{}", now.timestamp());
-        sqlx::query(
-            r#"
-            insert into config_revisions (id, tenant_id, node_id, name, engine, rendered_config, created_by, created_at)
-            values ($1,$2,$3,$4,$5,$6,$7,$8)
-            "#,
-        )
-        .bind(revision_id)
-        .bind(tenant_id)
-        .bind(node.id)
-        .bind(&revision_name)
-        .bind(node.engine)
-        .bind(&rendered_config)
-        .bind(Option::<Uuid>::None)
-        .bind(now)
-        .execute(&state.pool)
-        .await
-        .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
-        sqlx::query(
-            r#"
-            insert into deployment_rollouts (
-                id, tenant_id, node_id, config_revision_id, engine, revision_name, rendered_config, target_path, status, failure_reason, created_at, updated_at, applied_at
-            ) values ($1,$2,$3,$4,$5,$6,$7,$8,'queued',null,$9,$10,null)
-            "#,
-        )
-        .bind(rollout_id)
-        .bind(tenant_id)
-        .bind(node.id)
-        .bind(revision_id)
-        .bind(node.engine)
-        .bind(&revision_name)
-        .bind(&rendered_config)
-        .bind(default_target_path(node.engine))
-        .bind(now)
-        .bind(now)
-        .execute(&state.pool)
-        .await
-        .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
+        state
+            .nodes
+            .create_config_revision(ConfigRevision {
+                id: revision_id,
+                tenant_id,
+                node_id: Some(node.id),
+                name: revision_name.clone(),
+                engine: node.engine,
+                rendered_config: rendered_config.clone(),
+                created_by: None,
+                created_at: now,
+            })
+            .await?;
+        state
+            .nodes
+            .create_rollout(DeploymentRollout {
+                id: rollout_id,
+                tenant_id,
+                node_id: node.id,
+                config_revision_id: revision_id,
+                engine: node.engine,
+                revision_name: revision_name.clone(),
+                rendered_config,
+                target_path: default_target_path(node.engine).to_owned(),
+                status: DeploymentStatus::Queued,
+                failure_reason: None,
+                created_at: now,
+                updated_at: now,
+                applied_at: None,
+            })
+            .await?;
         state
             .deployment_queue
             .clone()

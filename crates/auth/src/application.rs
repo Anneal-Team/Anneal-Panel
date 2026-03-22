@@ -85,6 +85,10 @@ where
 #[async_trait]
 pub trait SessionRepository: Send + Sync {
     async fn create_session(&self, session: RefreshSession) -> ApplicationResult<RefreshSession>;
+    async fn consume_active_session_by_hash(
+        &self,
+        refresh_token_hash: &str,
+    ) -> ApplicationResult<Option<RefreshSession>>;
     async fn find_active_session_by_hash(
         &self,
         refresh_token_hash: &str,
@@ -101,6 +105,15 @@ where
 {
     async fn create_session(&self, session: RefreshSession) -> ApplicationResult<RefreshSession> {
         (*self).create_session(session).await
+    }
+
+    async fn consume_active_session_by_hash(
+        &self,
+        refresh_token_hash: &str,
+    ) -> ApplicationResult<Option<RefreshSession>> {
+        (*self)
+            .consume_active_session_by_hash(refresh_token_hash)
+            .await
     }
 
     async fn find_active_session_by_hash(
@@ -265,10 +278,10 @@ where
         let refresh_token_hash = crate::infrastructure::hash_refresh_token(refresh_token);
         let session = self
             .sessions
-            .find_active_session_by_hash(&refresh_token_hash)
+            .consume_active_session_by_hash(&refresh_token_hash)
             .await?
             .ok_or(ApplicationError::Unauthorized)?;
-        if session.expires_at <= Utc::now() || session.revoked_at.is_some() {
+        if session.expires_at <= Utc::now() {
             return Err(ApplicationError::Unauthorized);
         }
         let user = self
@@ -276,7 +289,6 @@ where
             .get_user_by_id(session.user_id)
             .await?
             .ok_or(ApplicationError::Unauthorized)?;
-        self.sessions.revoke_session(session.id).await?;
         self.issue_session(&user, session_context, Some(session.id))
             .await
     }
@@ -383,6 +395,27 @@ impl SessionRepository for InMemorySessionRepository {
             .expect("lock")
             .insert(session.id, session.clone());
         Ok(session)
+    }
+
+    async fn consume_active_session_by_hash(
+        &self,
+        refresh_token_hash: &str,
+    ) -> ApplicationResult<Option<RefreshSession>> {
+        let mut sessions = self.sessions.write().expect("lock");
+        let session_id = sessions.iter().find_map(|(session_id, session)| {
+            (session.refresh_token_hash == refresh_token_hash
+                && session.revoked_at.is_none()
+                && session.expires_at > Utc::now())
+            .then_some(*session_id)
+        });
+        let Some(session_id) = session_id else {
+            return Ok(None);
+        };
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| ApplicationError::NotFound("session not found".into()))?;
+        session.revoked_at = Some(Utc::now());
+        Ok(Some(session.clone()))
     }
 
     async fn find_active_session_by_hash(

@@ -28,9 +28,11 @@ use crate::app_state::AppState;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let settings = Settings::from_env()?;
+    let secret_box = anneal_core::SecretBox::new(&settings.data_encryption_key)?;
     init_telemetry("anneal-api", &settings)?;
     let pool = connect_pool(&settings.database_url).await?;
     run_migrations(&pool, &settings.migrations_dir).await?;
+    anneal_platform::backfill_protected_data(&pool, &secret_box).await?;
     let deployment_queue = PostgresStorage::new_with_config(&pool, &Config::new("deployment_jobs"));
     let notification_queue =
         PostgresStorage::new_with_config(&pool, &Config::new("notification_jobs"));
@@ -39,11 +41,11 @@ async fn main() -> anyhow::Result<()> {
         settings: settings.clone(),
         pool: pool.clone(),
         rbac: RbacService,
-        users: PgUserRepository::new(pool.clone()),
+        users: PgUserRepository::new(pool.clone(), secret_box.clone()),
         audit: PgAuditRepository::new(pool.clone()),
         sessions: PgSessionRepository::new(pool.clone()),
-        nodes: PgNodeRepository::new(pool.clone()),
-        subscriptions: PgSubscriptionRepository::new(pool.clone()),
+        nodes: PgNodeRepository::new(pool.clone(), secret_box.clone()),
+        subscriptions: PgSubscriptionRepository::new(pool.clone(), secret_box.clone()),
         usage: PgUsageRepository::new(pool.clone()),
         notifications: PgNotificationRepository::new(pool.clone()),
         password_service: ArgonPasswordService,

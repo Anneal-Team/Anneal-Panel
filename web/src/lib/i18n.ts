@@ -2,12 +2,9 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
 const baseRu = {
-  // Navigation
   "nav_group.overview": "Обзор",
   "nav_group.infrastructure": "Инфраструктура",
   "nav_group.system": "Система",
-
-  // Generic Dialog / UI
   "dialog.management": "Действие",
   "dialog.close": "Закрыть",
   "dialog.warning": "Это действие необратимо и требует подтверждения.",
@@ -24,11 +21,7 @@ const baseRu = {
   "nav.notifications": "Уведомления",
   "nav.logout": "Завершить сессию",
   "nav.login": "Войти",
-
-  // Layout / App / Shell
   "app.subtitle": "Мониторинг серверов и VPN туннелей",
-
-  // Dashboard
   "dashboard.title": "Дашборд",
   "dashboard.subtitle": "Состояние нод, подписки и история синхронизаций",
   "dashboard.label.users": "Пользователи",
@@ -54,8 +47,6 @@ const baseRu = {
   "dashboard.notifications.subtitle": "Системные сигналы",
   "dashboard.audit.title": "Аудит",
   "dashboard.audit.subtitle": "Журнал действий",
-  
-  // Dashboard Extra
   "ui.expand": "Развернуть",
   "ui.collapse": "Свернуть",
   "dashboard.attention.group": "Внимание",
@@ -75,14 +66,11 @@ const baseRu = {
   "dashboard.security.group": "Безопасность",
   "dashboard.security.access_title": "Доступ к аккаунту",
   "dashboard.security.sessions_empty": "Нет других активных сессий.",
-  
   "dashboard.stat.node_groups": "Серверных групп",
   "dashboard.stat.pending_runtimes": "Рантаймов в ожидании",
   "dashboard.stat.expiring_soon": "Скоро истекают (подписки)",
   "dashboard.stat.active_sessions": "Активных сеансов",
   "dashboard.stat.queued_rollouts": "В очереди применения",
-
-  // Devices
   "devices.title": "Устройства",
   "devices.subtitle": "Управление устройствами пользователей и ротацией токенов подписки.",
   "devices.create.title": "Новое устройство",
@@ -98,8 +86,6 @@ const baseRu = {
   "devices.status.suspended": "Заблокирован",
   "devices.status.active": "Активен",
   "devices.unauthorized": "Раздел Устройств недоступен без авторизации",
-
-  // Login
   "login.title": "С возвращением",
   "login.subtitle": "Введите данные для входа",
   "login.slogan": "Всё под контролем — серверы, клиенты и доступ в одном месте.",
@@ -123,8 +109,6 @@ const baseRu = {
   "login.otp_url": "Ссылка (OTPAuth URL)",
   "login.totp_verifying": "Подтверждаю...",
   "login.totp_verify": "Подтвердить TOTP",
-
-  // Nodes
   "nodes.title": "Узлы платформы",
   "nodes.subtitle": "Управление узлами VPN-инфраструктуры, генерация токенов и статус серверов.",
   "nodes.stat.total": "Всего",
@@ -148,8 +132,6 @@ const baseRu = {
   "nodes.groups.name": "Название группы",
   "nodes.groups.creating": "Создаю...",
   "nodes.unauthorized": "Раздел Узлов недоступен без авторизации",
-
-  // Node Endpoints
   "node_endpoints.title": "Настройка точек входа",
   "node_endpoints.subtitle": "Детальная конфигурация портов, протоколов и маскировки (Reality / TLS) для узла.",
   "node_endpoints.not_found": "Сначала выберите узел",
@@ -176,8 +158,6 @@ const baseRu = {
   "node_endpoints.fingerprint": "Fingerprint",
   "node_endpoints.alpn": "ALPN (через запятую)",
   "node_endpoints.cipher": "Спецификация шифрования (Cipher)",
-
-  // Rollouts
   "rollouts.title": "Оркестрация конфигураций",
   "rollouts.subtitle": "Сборка конфигураций из endpoints и применение на целевых узлах.",
   "rollouts.create.title": "Новое развертывание",
@@ -194,8 +174,6 @@ const baseRu = {
   "rollouts.error.node_required": "Сначала выбери ноду",
   "rollouts.error.no_endpoints": "У выбранной ноды нет включённых endpoint-ов",
   "rollouts.error.no_credentials": "Нет активных подписок/устройств для данной ноды",
-
-  // Subscriptions
   "subscriptions.title": "Подписки",
   "subscriptions.subtitle": "Управление подписками, лимитами трафика и ссылками для V2Ray / Sing-box клиентов.",
   "subscriptions.create.title": "Новая подписка",
@@ -210,8 +188,7 @@ const baseRu = {
   "subscriptions.list.quota_warning": "Предупреждение",
   "subscriptions.unauthorized": "Раздел Подписок недоступен без авторизации",
   "subscriptions.delivery_url": "Аварийная ссылка (Delivery URL)",
-
-  // Users
+  "subscriptions.success_link_label": "Готовая ссылка подписки",
   "users.title": "Пользователи",
   "users.subtitle": "Управление аккаунтами пользователей и реселлерами.",
   "users.create.title": "Новый пользователь",
@@ -235,16 +212,47 @@ const baseRu = {
   "users.table.status": "Статус",
   "users.table.totp": "TOTP Защита",
   "users.table.created": "Создан",
-
-  // Notifications
   "notifications.title": "Уведомления и Мониторинг",
   "notifications.subtitle": "Внутренний журнал событий, состояние трафика и аудит действий пользователей.",
   "notifications.unauthorized": "Раздел Уведомлений недоступен без авторизации",
   "notifications.events.title": "Системные события",
   "notifications.quota.title": "Статус использования трафика",
   "notifications.audit.title": "Последние действия (Audit)",
-
-  // General Status
+  "auth_required.subtitle": "Для продолжения нужно войти в систему под аккаунтом с доступом к панели.",
+  "auth_required.button": "Перейти ко входу",
+  "role.superadmin": "Суперадмин",
+  "role.admin": "Администратор",
+  "role.reseller": "Реселлер",
+  "role.user": "Пользователь",
+  "quota.normal": "Норма",
+  "quota.exhausted": "Исчерпана",
+  "deploy.queued": "В очереди",
+  "deploy.rendering": "Сборка",
+  "deploy.validating": "Проверка",
+  "deploy.ready": "Готово",
+  "deploy.applied": "Применено",
+  "deploy.rolled_back": "Откат",
+  "deploy.failed": "Ошибка",
+  "common.total": "Всего",
+  "common.actions.edit": "Редактировать",
+  "common.actions.delete": "Удалить",
+  "common.actions.create": "Создать",
+  "common.enabled": "Включена",
+  "common.disabled": "Выключена",
+  "common.turn_on": "Включить",
+  "common.turn_off": "Выключить",
+  "common.global": "Глобальный",
+  "common.not_applicable": "n/a",
+  "common.none": "—",
+  "common.select_user": "Выбери пользователя",
+  "common.cancel": "Отмена",
+  "common.save": "Сохранить",
+  "devices.badge.suspended": "заблокировано",
+  "devices.badge.active": "активно",
+  "devices.meta": "tenant {{tenantId}} · user {{userId}}",
+  "devices.empty": "Пока нет устройств.",
+  "notifications.delivery": "доставлено {{date}}",
+  "rollouts.revision_label": "revision {{value}}",
   "status.success": "Успех",
   "status.error": "Ошибка",
   "status.pending": "Ожидание",
@@ -469,6 +477,41 @@ const baseEn = {
   "notifications.events.title": "System Events",
   "notifications.quota.title": "Quota Monitor",
   "notifications.audit.title": "Audit Log",
+  "auth_required.subtitle": "Sign in with an account that has access to the control panel to continue.",
+  "auth_required.button": "Go to sign in",
+  "role.superadmin": "Superadmin",
+  "role.admin": "Administrator",
+  "role.reseller": "Reseller",
+  "role.user": "User",
+  "quota.normal": "Normal",
+  "quota.exhausted": "Exhausted",
+  "deploy.queued": "Queued",
+  "deploy.rendering": "Rendering",
+  "deploy.validating": "Validating",
+  "deploy.ready": "Ready",
+  "deploy.applied": "Applied",
+  "deploy.rolled_back": "Rolled back",
+  "deploy.failed": "Failed",
+  "common.total": "Total",
+  "common.actions.edit": "Edit",
+  "common.actions.delete": "Delete",
+  "common.actions.create": "Create",
+  "common.enabled": "Enabled",
+  "common.disabled": "Disabled",
+  "common.turn_on": "Enable",
+  "common.turn_off": "Disable",
+  "common.global": "Global",
+  "common.not_applicable": "n/a",
+  "common.none": "—",
+  "common.select_user": "Select user",
+  "common.cancel": "Cancel",
+  "common.save": "Save",
+  "devices.badge.suspended": "suspended",
+  "devices.badge.active": "active",
+  "devices.meta": "tenant {{tenantId}} · user {{userId}}",
+  "devices.empty": "No visible devices yet. After full auto-binding this section will only show system inventory without manual CRUD.",
+  "notifications.delivery": "delivered {{date}}",
+  "rollouts.revision_label": "revision {{value}}",
   "status.success": "Success",
   "status.error": "Error",
   "status.pending": "Pending",
@@ -484,7 +527,7 @@ i18n.use(initReactI18next).init({
   lng: "ru",
   fallbackLng: "en",
   interpolation: {
-    escapeValue: false, // react already escapes values
+    escapeValue: false,
   },
 });
 

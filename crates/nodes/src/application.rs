@@ -53,6 +53,10 @@ pub trait NodeRepository: Send + Sync {
         node: Node,
         protocols: &[NodeCapability],
     ) -> ApplicationResult<Node>;
+    async fn find_node_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<Node>>;
     async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>>;
     async fn update_node_heartbeat(
         &self,
@@ -81,6 +85,7 @@ pub trait NodeRepository: Send + Sync {
         &self,
         rollout: DeploymentRollout,
     ) -> ApplicationResult<DeploymentRollout>;
+    async fn find_rollout(&self, rollout_id: Uuid) -> ApplicationResult<Option<DeploymentRollout>>;
     async fn list_rollouts(
         &self,
         tenant_id: Option<Uuid>,
@@ -187,6 +192,13 @@ where
         (*self).create_node(node, protocols).await
     }
 
+    async fn find_node_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<Node>> {
+        (*self).find_node_by_token_hash(token_hash).await
+    }
+
     async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>> {
         (*self).find_node(node_id).await
     }
@@ -244,6 +256,10 @@ where
         rollout: DeploymentRollout,
     ) -> ApplicationResult<DeploymentRollout> {
         (*self).create_rollout(rollout).await
+    }
+
+    async fn find_rollout(&self, rollout_id: Uuid) -> ApplicationResult<Option<DeploymentRollout>> {
+        (*self).find_rollout(rollout_id).await
     }
 
     async fn list_rollouts(
@@ -383,6 +399,14 @@ where
                 target_tenant_id: Some(tenant_id),
             },
         )?;
+        let group = self
+            .repository
+            .find_node_group(node_group_id)
+            .await?
+            .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
+        if group.tenant_id != tenant_id {
+            return Err(ApplicationError::Forbidden);
+        }
         let token = generate_token();
         let now = Utc::now();
         let record = NodeEnrollmentToken {
@@ -403,7 +427,7 @@ where
         &self,
         token: &str,
         registration: NodeRegistration,
-    ) -> ApplicationResult<Node> {
+    ) -> ApplicationResult<crate::domain::NodeRegistrationGrant> {
         let record = self
             .repository
             .consume_enrollment_token(&hash_token(token))
@@ -419,6 +443,7 @@ where
         }
         validate_registered_protocols(registration.engine, &registration.protocols)?;
         let now = Utc::now();
+        let node_token = generate_token();
         let node = Node {
             id: Uuid::new_v4(),
             tenant_id: record.tenant_id,
@@ -428,6 +453,7 @@ where
             version: registration.version,
             status: NodeStatus::Online,
             last_seen_at: Some(now),
+            node_token_hash: hash_token(&node_token),
             created_at: now,
             updated_at: now,
         };
@@ -441,12 +467,18 @@ where
             .collect::<Vec<_>>();
         let node = self.repository.create_node(node, &protocols).await?;
         self.sync_node_group_endpoints(record.node_group_id).await?;
-        Ok(node)
+        Ok(crate::domain::NodeRegistrationGrant { node, node_token })
     }
 
-    pub async fn heartbeat(&self, node_id: Uuid, version: &str) -> ApplicationResult<Node> {
+    pub async fn heartbeat(
+        &self,
+        node_id: Uuid,
+        node_token: &str,
+        version: &str,
+    ) -> ApplicationResult<Node> {
+        let node = self.authenticate_node(node_id, node_token).await?;
         self.repository
-            .update_node_heartbeat(node_id, version, NodeStatus::Online)
+            .update_node_heartbeat(node.id, version, NodeStatus::Online)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("node not found".into()))
     }
@@ -561,11 +593,12 @@ where
         if node.tenant_id != tenant_id {
             return Err(ApplicationError::Forbidden);
         }
+        let existing_endpoints = self.repository.list_node_endpoints(node_id).await?;
         let capabilities = self.repository.list_node_capabilities(node_id).await?;
         let drafts = normalize_endpoint_drafts(drafts);
         validate_endpoint_drafts(node.engine, &capabilities, &drafts)?;
         let now = Utc::now();
-        let endpoints = drafts
+        let mut endpoints = drafts
             .into_iter()
             .map(|draft| NodeEndpoint {
                 id: Uuid::new_v4(),
@@ -595,6 +628,7 @@ where
                 updated_at: now,
             })
             .collect::<Vec<_>>();
+        reconcile_manual_endpoints(&existing_endpoints, &mut endpoints);
         self.repository
             .replace_node_endpoints(node_id, &endpoints)
             .await
@@ -700,18 +734,36 @@ where
     pub async fn pull_rollouts(
         &self,
         node_id: Uuid,
+        node_token: &str,
         limit: i64,
     ) -> ApplicationResult<Vec<DeploymentRollout>> {
-        self.repository.list_ready_rollouts(node_id, limit).await
+        let node = self.authenticate_node(node_id, node_token).await?;
+        self.repository.list_ready_rollouts(node.id, limit).await
     }
 
     pub async fn acknowledge_rollout(
         &self,
-        _node_id: Uuid,
+        node_id: Uuid,
+        node_token: &str,
         rollout_id: Uuid,
         success: bool,
         failure_reason: Option<String>,
-    ) -> ApplicationResult<()> {
+    ) -> ApplicationResult<DeploymentRollout> {
+        let node = self.authenticate_node(node_id, node_token).await?;
+        let mut rollout = self
+            .repository
+            .find_rollout(rollout_id)
+            .await?
+            .ok_or_else(|| ApplicationError::NotFound("rollout not found".into()))?;
+        if rollout.node_id != node.id {
+            return Err(ApplicationError::Forbidden);
+        }
+        let rollout_failure_reason = failure_reason.clone();
+        let applied_at = if success {
+            Some(Utc::now())
+        } else {
+            None
+        };
         let status = if success {
             DeploymentStatus::Applied
         } else {
@@ -719,7 +771,16 @@ where
         };
         self.repository
             .update_rollout_state(rollout_id, status, failure_reason)
-            .await
+            .await?;
+        rollout.status = status;
+        rollout.failure_reason = if success {
+            None
+        } else {
+            rollout_failure_reason
+        };
+        rollout.updated_at = Utc::now();
+        rollout.applied_at = applied_at;
+        Ok(rollout)
     }
 
     pub fn resolve_status(
@@ -732,6 +793,22 @@ where
         } else {
             NodeStatus::Offline
         }
+    }
+
+    async fn authenticate_node(&self, node_id: Uuid, node_token: &str) -> ApplicationResult<Node> {
+        let node_token = node_token.trim();
+        if node_token.is_empty() {
+            return Err(ApplicationError::Unauthorized);
+        }
+        let node = self
+            .repository
+            .find_node_by_token_hash(&hash_token(node_token))
+            .await?
+            .ok_or(ApplicationError::Unauthorized)?;
+        if node.id != node_id {
+            return Err(ApplicationError::Forbidden);
+        }
+        Ok(node)
     }
 
     async fn sync_node_group_endpoints(&self, node_group_id: Uuid) -> ApplicationResult<()> {
@@ -943,6 +1020,19 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(node)
     }
 
+    async fn find_node_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<Node>> {
+        Ok(self
+            .nodes
+            .read()
+            .expect("lock")
+            .values()
+            .find(|node| node.node_token_hash == token_hash)
+            .cloned())
+    }
+
     async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>> {
         Ok(self.nodes.read().expect("lock").get(&node_id).cloned())
     }
@@ -1074,6 +1164,10 @@ impl NodeRepository for InMemoryNodeRepository {
             .expect("lock")
             .insert(rollout.id, rollout.clone());
         Ok(rollout)
+    }
+
+    async fn find_rollout(&self, rollout_id: Uuid) -> ApplicationResult<Option<DeploymentRollout>> {
+        Ok(self.rollouts.read().expect("lock").get(&rollout_id).cloned())
     }
 
     async fn list_rollouts(
@@ -1302,6 +1396,25 @@ fn reconcile_generated_endpoints(previous: &[NodeEndpoint], generated: &mut [Nod
         };
         endpoint.id = existing.id;
         endpoint.enabled = existing.enabled;
+        endpoint.created_at = existing.created_at;
+        if endpoint.security == SecurityKind::Reality {
+            endpoint.reality_public_key = existing.reality_public_key.clone();
+            endpoint.reality_private_key = existing.reality_private_key.clone();
+            endpoint.reality_short_id = existing.reality_short_id.clone();
+        }
+    }
+}
+
+fn reconcile_manual_endpoints(previous: &[NodeEndpoint], updated: &mut [NodeEndpoint]) {
+    let previous_by_key = previous
+        .iter()
+        .map(|endpoint| (endpoint_state_key(endpoint), endpoint))
+        .collect::<HashMap<_, _>>();
+    for endpoint in updated {
+        let Some(existing) = previous_by_key.get(&endpoint_state_key(endpoint)) else {
+            continue;
+        };
+        endpoint.id = existing.id;
         endpoint.created_at = existing.created_at;
         if endpoint.security == SecurityKind::Reality {
             endpoint.reality_public_key = existing.reality_public_key.clone();
@@ -2751,5 +2864,183 @@ mod tests {
             now,
         );
         assert_eq!(status, NodeStatus::Offline);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_requires_matching_node_token() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let grant = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect("token");
+        let node = service
+            .register_node(
+                &grant.token,
+                NodeRegistration {
+                    name: "edge-1".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                },
+            )
+            .await
+            .expect("register");
+
+        let wrong = service
+            .heartbeat(node.id, "wrong-token", "1.0.1")
+            .await
+            .expect_err("unauthorized heartbeat");
+        assert!(matches!(wrong, anneal_core::ApplicationError::Unauthorized));
+
+        let updated = service
+            .heartbeat(node.id, &node.node_token, "1.0.1")
+            .await
+            .expect("heartbeat");
+        assert_eq!(updated.version, "1.0.1");
+    }
+
+    #[tokio::test]
+    async fn enrollment_token_requires_matching_tenant_group() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(repository, RbacService);
+        let owner = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let intruder = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_node_group(&owner, owner.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+
+        let error = service
+            .create_enrollment_token(
+                &intruder,
+                intruder.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect_err("foreign tenant must be rejected");
+        assert!(matches!(error, anneal_core::ApplicationError::Forbidden));
+    }
+
+    #[tokio::test]
+    async fn rollout_ack_requires_owner_node_token() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let first_grant = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect("first token");
+        let second_grant = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect("second token");
+        let first_node = service
+            .register_node(
+                &first_grant.token,
+                NodeRegistration {
+                    name: "edge-a".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                },
+            )
+            .await
+            .expect("register first");
+        let second_node = service
+            .register_node(
+                &second_grant.token,
+                NodeRegistration {
+                    name: "edge-b".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                },
+            )
+            .await
+            .expect("register second");
+        let rollout = service
+            .queue_rollout(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                first_node.id,
+                "main".into(),
+                "{}".into(),
+                "/etc/anneal/config.json".into(),
+            )
+            .await
+            .expect("queue rollout");
+
+        let pull_error = service
+            .pull_rollouts(first_node.id, &second_node.node_token, 10)
+            .await
+            .expect_err("pull must reject foreign token");
+        assert!(matches!(pull_error, anneal_core::ApplicationError::Forbidden));
+
+        let ack_error = service
+            .acknowledge_rollout(
+                first_node.id,
+                &second_node.node_token,
+                rollout.id,
+                true,
+                None,
+            )
+            .await
+            .expect_err("ack must reject foreign token");
+        assert!(matches!(ack_error, anneal_core::ApplicationError::Forbidden));
+
+        let acknowledged = service
+            .acknowledge_rollout(
+                first_node.id,
+                &first_node.node_token,
+                rollout.id,
+                true,
+                None,
+            )
+            .await
+            .expect("ack");
+        assert_eq!(acknowledged.id, rollout.id);
+        assert_eq!(acknowledged.node_id, first_node.id);
     }
 }
