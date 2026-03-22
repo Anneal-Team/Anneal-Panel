@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     application::{AccessTokenService, PasswordService, SessionRepository, TotpService},
-    domain::{AccessClaims, RefreshSession, TotpSetup},
+    domain::{AccessClaims, PreAuthChallenge, PreAuthPurpose, RefreshSession, TotpSetup},
 };
 
 #[derive(Clone)]
@@ -35,6 +35,8 @@ impl JwtService {
         &self,
         actor: &Actor,
         kind: &str,
+        challenge_id: Option<Uuid>,
+        purpose: Option<PreAuthPurpose>,
         ttl: Duration,
         secret: &str,
     ) -> ApplicationResult<(String, chrono::DateTime<Utc>)> {
@@ -45,6 +47,8 @@ impl JwtService {
             role: actor.role,
             tenant_id: actor.tenant_id,
             kind: kind.into(),
+            challenge_id,
+            purpose: purpose.map(|value| value.as_str().into()),
             exp: expires_at.timestamp() as usize,
             iat: issued_at.timestamp() as usize,
         };
@@ -63,13 +67,27 @@ impl AccessTokenService for JwtService {
         &self,
         actor: &Actor,
     ) -> ApplicationResult<(String, chrono::DateTime<Utc>)> {
-        self.issue(actor, "access", Duration::minutes(15), &self.access_secret)
+        self.issue(
+            actor,
+            "access",
+            None,
+            None,
+            Duration::minutes(15),
+            &self.access_secret,
+        )
     }
 
-    fn issue_pre_auth_token(&self, actor: &Actor) -> ApplicationResult<String> {
+    fn issue_pre_auth_token(
+        &self,
+        actor: &Actor,
+        challenge_id: Uuid,
+        purpose: PreAuthPurpose,
+    ) -> ApplicationResult<String> {
         self.issue(
             actor,
             "pre_auth",
+            Some(challenge_id),
+            Some(purpose),
             Duration::minutes(10),
             &self.pre_auth_secret,
         )
@@ -137,13 +155,21 @@ impl OtpAuthTotpService {
 impl TotpService for OtpAuthTotpService {
     fn generate(&self, email: &str) -> ApplicationResult<TotpSetup> {
         let secret = Secret::generate_secret();
-        let encoded = secret.to_encoded();
+        let Secret::Encoded(encoded) = secret.to_encoded() else {
+            return Err(ApplicationError::Infrastructure(
+                "failed to encode totp secret".into(),
+            ));
+        };
+        self.build(&encoded, email)
+    }
+
+    fn build(&self, secret: &str, email: &str) -> ApplicationResult<TotpSetup> {
         let totp = TOTP::new(
             TotpAlgorithm::SHA1,
             6,
             1,
             30,
-            secret
+            Secret::Encoded(secret.into())
                 .to_bytes()
                 .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?,
             Some(self.issuer.clone()),
@@ -151,7 +177,7 @@ impl TotpService for OtpAuthTotpService {
         )
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         Ok(TotpSetup {
-            secret: encoded.to_string(),
+            secret: secret.into(),
             otpauth_url: totp.get_url(),
         })
     }
@@ -302,6 +328,109 @@ impl SessionRepository for PgSessionRepository {
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         Ok(())
+    }
+
+    async fn create_pre_auth_challenge(
+        &self,
+        challenge: PreAuthChallenge,
+    ) -> ApplicationResult<PreAuthChallenge> {
+        sqlx::query(
+            r#"
+            insert into pre_auth_challenges (
+                id, user_id, purpose, pending_totp_secret, expires_at, used_at, created_at
+            ) values ($1,$2,$3,$4,$5,$6,$7)
+            "#,
+        )
+        .bind(challenge.id)
+        .bind(challenge.user_id)
+        .bind(&challenge.purpose)
+        .bind(&challenge.pending_totp_secret)
+        .bind(challenge.expires_at)
+        .bind(challenge.used_at)
+        .bind(challenge.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(challenge)
+    }
+
+    async fn find_active_pre_auth_challenge(
+        &self,
+        challenge_id: Uuid,
+    ) -> ApplicationResult<Option<PreAuthChallenge>> {
+        sqlx::query_as::<_, PreAuthChallenge>(
+            r#"
+            select * from pre_auth_challenges
+            where id = $1 and used_at is null and expires_at > now() at time zone 'utc'
+            "#,
+        )
+        .bind(challenge_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+    }
+
+    async fn update_pre_auth_challenge_secret(
+        &self,
+        challenge_id: Uuid,
+        pending_totp_secret: &str,
+    ) -> ApplicationResult<()> {
+        sqlx::query(
+            "update pre_auth_challenges set pending_totp_secret = $2 where id = $1 and used_at is null and expires_at > now() at time zone 'utc'",
+        )
+        .bind(challenge_id)
+        .bind(pending_totp_secret)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(())
+    }
+
+    async fn consume_pre_auth_challenge(
+        &self,
+        challenge_id: Uuid,
+        user_id: Uuid,
+        purpose: PreAuthPurpose,
+    ) -> ApplicationResult<Option<PreAuthChallenge>> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let challenge = sqlx::query_as::<_, PreAuthChallenge>(
+            r#"
+            select * from pre_auth_challenges
+            where id = $1
+              and user_id = $2
+              and purpose = $3
+              and used_at is null
+              and expires_at > now() at time zone 'utc'
+            for update
+            "#,
+        )
+        .bind(challenge_id)
+        .bind(user_id)
+        .bind(purpose.as_str())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        if let Some(challenge) = &challenge {
+            sqlx::query(
+                "update pre_auth_challenges set used_at = now() at time zone 'utc' where id = $1",
+            )
+            .bind(challenge.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(challenge.map(|mut challenge| {
+            challenge.used_at = Some(Utc::now());
+            challenge
+        }))
     }
 }
 

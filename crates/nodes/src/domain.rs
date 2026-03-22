@@ -10,7 +10,7 @@ use anneal_config_engine::{SecurityKind, TransportKind};
 use anneal_core::{DeploymentStatus, NodeStatus, ProtocolKind, ProxyEngine};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct NodeGroup {
+pub struct ServerNode {
     pub id: Uuid,
     pub tenant_id: Uuid,
     pub name: String,
@@ -21,7 +21,7 @@ pub struct NodeGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, ToSchema)]
 #[sqlx(type_name = "node_group_domain_mode", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
-pub enum NodeGroupDomainMode {
+pub enum NodeDomainMode {
     Direct,
     LegacyDirect,
     Cdn,
@@ -33,10 +33,11 @@ pub enum NodeGroupDomainMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
-pub struct NodeGroupDomain {
+pub struct NodeDomain {
     pub id: Uuid,
-    pub node_group_id: Uuid,
-    pub mode: NodeGroupDomainMode,
+    #[sqlx(rename = "node_group_id")]
+    pub server_node_id: Uuid,
+    pub mode: NodeDomainMode,
     pub domain: String,
     pub alias: Option<String>,
     pub server_names: Vec<String>,
@@ -46,8 +47,8 @@ pub struct NodeGroupDomain {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct NodeGroupDomainDraft {
-    pub mode: NodeGroupDomainMode,
+pub struct NodeDomainDraft {
+    pub mode: NodeDomainMode,
     pub domain: String,
     pub alias: Option<String>,
     pub server_names: Vec<String>,
@@ -58,7 +59,9 @@ pub struct NodeGroupDomainDraft {
 pub struct NodeEnrollmentToken {
     pub id: Uuid,
     pub tenant_id: Uuid,
-    pub node_group_id: Uuid,
+    #[serde(rename = "node_id")]
+    #[sqlx(rename = "node_group_id")]
+    pub server_node_id: Uuid,
     #[serde(skip_serializing, default)]
     pub token_hash: String,
     pub engine: ProxyEngine,
@@ -67,11 +70,27 @@ pub struct NodeEnrollmentToken {
     pub used_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
-pub struct Node {
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct NodeBootstrapSession {
     pub id: Uuid,
     pub tenant_id: Uuid,
-    pub node_group_id: Uuid,
+    #[sqlx(rename = "node_group_id")]
+    pub server_node_id: Uuid,
+    pub node_name: String,
+    pub engines: Vec<ProxyEngine>,
+    #[serde(skip_serializing, default)]
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
+pub struct NodeRuntime {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    #[sqlx(rename = "node_group_id")]
+    pub server_node_id: Uuid,
     pub name: String,
     pub engine: ProxyEngine,
     pub version: String,
@@ -196,8 +215,8 @@ pub struct ConfigRevision {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeRegistration {
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeRegistration {
     pub name: String,
     pub version: String,
     pub engine: ProxyEngine,
@@ -211,17 +230,40 @@ pub struct EnrollmentGrant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct NodeRegistrationGrant {
-    pub node: Node,
+pub struct NodeBootstrapGrant {
+    pub bootstrap_token: String,
+    pub tenant_id: Uuid,
+    pub node_id: Uuid,
+    pub node_name: String,
+    pub engines: Vec<ProxyEngine>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeRegistrationGrant {
+    pub runtime: NodeRuntime,
     pub node_token: String,
 }
 
-impl Deref for NodeRegistrationGrant {
-    type Target = Node;
+impl Deref for RuntimeRegistrationGrant {
+    type Target = NodeRuntime;
 
     fn deref(&self) -> &Self::Target {
-        &self.node
+        &self.runtime
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NodeBootstrapRuntimeGrant {
+    pub engine: ProxyEngine,
+    pub node_id: Uuid,
+    pub node_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NodeTokenRotationGrant {
+    pub node_id: Uuid,
+    pub node_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

@@ -6,7 +6,7 @@ import { ExpandableText } from "@/components/expandable-text";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import { formatBytes, formatDate, formatQuotaState } from "@/lib/format";
+import { formatBytes, formatDate, formatNotificationBody, formatQuotaState } from "@/lib/format";
 
 export function NotificationsPage() {
   const { t } = useTranslation();
@@ -57,7 +57,7 @@ export function NotificationsPage() {
                   </Badge>
                 </div>
                 <div className="mt-2 text-sm text-foreground/90">
-                  <ExpandableText text={event.body} />
+                  <ExpandableText text={formatNotificationBody(event.kind, event.body)} />
                 </div>
                 <div className="mt-2 text-xs text-foreground/90">
                   {formatDate(event.created_at)} · доставлено {formatDate(event.delivered_at)}

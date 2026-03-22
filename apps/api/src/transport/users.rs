@@ -7,6 +7,7 @@ use uuid::Uuid;
 use anneal_core::UserRole;
 use anneal_users::{
     CreateResellerCommand, CreateUserCommand, UpdateResellerCommand, UpdateUserCommand,
+    UserRepository,
 };
 
 use crate::{app_state::AppState, error::ApiError, extractors::authenticated_actor};
@@ -140,6 +141,12 @@ pub async fn update_user(
     Json(request): Json<UpdateUserRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let previous_status = state
+        .users
+        .get_user_by_id(user_id)
+        .await
+        .map_err(ApiError)?
+        .map(|user| user.status);
     let password_hash = match request.password {
         Some(password) if !password.trim().is_empty() => Some(
             state
@@ -165,6 +172,8 @@ pub async fn update_user(
         )
         .await
         .map_err(ApiError)?;
+    let sessions_revoked_on_suspend = matches!(previous_status, Some(anneal_core::UserStatus::Active))
+        && user.status != anneal_core::UserStatus::Active;
     state
         .audit_service()
         .write(
@@ -177,6 +186,20 @@ pub async fn update_user(
         )
         .await
         .map_err(ApiError)?;
+    if sessions_revoked_on_suspend {
+        state
+            .audit_service()
+            .write(
+                Some(actor.user_id),
+                user.tenant_id.or(actor.tenant_id),
+                "auth.session.revoked_on_suspend",
+                "user",
+                Some(user.id),
+                json!({ "email": user.email, "status": user.status }),
+            )
+            .await
+            .map_err(ApiError)?;
+    }
     Ok(Json(user.into()))
 }
 
@@ -269,6 +292,12 @@ pub async fn update_reseller(
     Json(request): Json<UpdateResellerRequest>,
 ) -> Result<Json<UserResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let previous_status = state
+        .users
+        .get_user_by_id(user_id)
+        .await
+        .map_err(ApiError)?
+        .map(|user| user.status);
     let password_hash = match request.password {
         Some(password) if !password.trim().is_empty() => Some(
             state
@@ -294,6 +323,8 @@ pub async fn update_reseller(
         )
         .await
         .map_err(ApiError)?;
+    let sessions_revoked_on_suspend = matches!(previous_status, Some(anneal_core::UserStatus::Active))
+        && reseller.status != anneal_core::UserStatus::Active;
     state
         .audit_service()
         .write(
@@ -306,6 +337,20 @@ pub async fn update_reseller(
         )
         .await
         .map_err(ApiError)?;
+    if sessions_revoked_on_suspend {
+        state
+            .audit_service()
+            .write(
+                Some(actor.user_id),
+                reseller.tenant_id,
+                "auth.session.revoked_on_suspend",
+                "user",
+                Some(reseller.id),
+                json!({ "email": reseller.email, "status": reseller.status }),
+            )
+            .await
+            .map_err(ApiError)?;
+    }
     Ok(Json(reseller.into()))
 }
 

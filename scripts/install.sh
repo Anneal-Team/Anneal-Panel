@@ -37,43 +37,43 @@ setup_palette() {
 }
 
 installer_backtitle() {
-  text "Anneal • Установка" "Anneal • Installer"
+  text "Anneal вЂў РЈСЃС‚Р°РЅРѕРІРєР°" "Anneal вЂў Installer"
 }
 
 dialog_select_label() {
-  text "Выбрать" "Select"
+  text "Р’С‹Р±СЂР°С‚СЊ" "Select"
 }
 
 dialog_back_label() {
-  text "Назад" "Back"
+  text "РќР°Р·Р°Рґ" "Back"
 }
 
 dialog_confirm_label() {
-  text "Подтвердить" "Confirm"
+  text "РџРѕРґС‚РІРµСЂРґРёС‚СЊ" "Confirm"
 }
 
 dialog_close_label() {
-  text "Закрыть" "Close"
+  text "Р—Р°РєСЂС‹С‚СЊ" "Close"
 }
 
 menu_hint() {
-  text "↑↓ выбрать • Enter подтвердить • Tab кнопки" "↑↓ move • Enter confirm • Tab buttons"
+  text "в†‘в†“ РІС‹Р±СЂР°С‚СЊ вЂў Enter РїРѕРґС‚РІРµСЂРґРёС‚СЊ вЂў Tab РєРЅРѕРїРєРё" "в†‘в†“ move вЂў Enter confirm вЂў Tab buttons"
 }
 
 checklist_hint() {
-  text "↑↓ выбрать • Space переключить • Enter подтвердить" "↑↓ move • Space toggle • Enter confirm"
+  text "в†‘в†“ РІС‹Р±СЂР°С‚СЊ вЂў Space РїРµСЂРµРєР»СЋС‡РёС‚СЊ вЂў Enter РїРѕРґС‚РІРµСЂРґРёС‚СЊ" "в†‘в†“ move вЂў Space toggle вЂў Enter confirm"
 }
 
 input_hint() {
-  text "Введи значение • Enter сохранить • Tab кнопки" "Enter value • Enter save • Tab buttons"
+  text "Р’РІРµРґРё Р·РЅР°С‡РµРЅРёРµ вЂў Enter СЃРѕС…СЂР°РЅРёС‚СЊ вЂў Tab РєРЅРѕРїРєРё" "Enter value вЂў Enter save вЂў Tab buttons"
 }
 
 confirm_hint() {
-  text "←→ выбор • Enter подтвердить" "←→ choose • Enter confirm"
+  text "в†ђв†’ РІС‹Р±РѕСЂ вЂў Enter РїРѕРґС‚РІРµСЂРґРёС‚СЊ" "в†ђв†’ choose вЂў Enter confirm"
 }
 
 logo_block() {
-  printf '%s' '▁▃▆█ Anneal'
+  printf '%s' 'в–Ѓв–ѓв–†в–€ Anneal'
 }
 
 brand_text() {
@@ -88,16 +88,16 @@ brand_text() {
 
 print_banner() {
   printf '\033[38;5;150m'
-  printf '      ▂\n'
-  printf '    ▂▄\n'
-  printf '  ▂▄▆█  '
+  printf '      в–‚\n'
+  printf '    в–‚в–„\n'
+  printf '  в–‚в–„в–†в–€  '
   printf '\033[38;5;194mAnn\033[38;5;150meal\033[0m\n'
   printf '\n'
 }
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    text "Запусти установщик от root." "Run the installer as root." >&2
+    text "Р—Р°РїСѓСЃС‚Рё СѓСЃС‚Р°РЅРѕРІС‰РёРє РѕС‚ root." "Run the installer as root." >&2
     printf '\n' >&2
     exit 1
   fi
@@ -191,7 +191,7 @@ show_error() {
   if use_tui; then
     whiptail \
       --backtitle "$(installer_backtitle)" \
-      --title "$(text "Ошибка" "Error")" \
+      --title "$(text "РћС€РёР±РєР°" "Error")" \
       --ok-button "$(dialog_close_label)" \
       --msgbox "$(brand_text "${message}")" 20 92
     return
@@ -223,7 +223,7 @@ parse_args() {
         shift
         ;;
       *)
-        show_error "$(text "Неизвестный аргумент: $1" "Unknown argument: $1")"
+        show_error "$(text "РќРµРёР·РІРµСЃС‚РЅС‹Р№ Р°СЂРіСѓРјРµРЅС‚: $1" "Unknown argument: $1")"
         exit 1
         ;;
     esac
@@ -240,11 +240,11 @@ choose_language() {
     return
   fi
   ensure_whiptail
-  choice="$(prompt_menu "Anneal" "Language / Язык" \
-    "Русский" "Интерфейс на русском" \
+  choice="$(prompt_menu "Anneal" "Language / РЇР·С‹Рє" \
+    "Р СѓСЃСЃРєРёР№" "РРЅС‚РµСЂС„РµР№СЃ РЅР° СЂСѓСЃСЃРєРѕРј" \
     "English" "English interface")"
   case "${choice}" in
-    Русский) ANNEAL_INSTALLER_LANG="ru" ;;
+    Р СѓСЃСЃРєРёР№) ANNEAL_INSTALLER_LANG="ru" ;;
     English) ANNEAL_INSTALLER_LANG="en" ;;
   esac
 }
@@ -255,13 +255,13 @@ choose_role() {
     return
   fi
   choice="$(prompt_menu \
-    "$(text "Anneal • Роль" "Anneal • Role")" \
-    "$(text "Выбери, что устанавливается на этот сервер." "Choose what will be installed on this server.")" \
-    "$(text "Панель" "Panel")" "$(text "UI, API, worker и база" "UI, API, worker and database")" \
-    "$(text "Нода" "Node")" "$(text "Отдельный VPS/VDS сервер для runtime-пакетов" "Separate VPS/VDS server for runtime packages")")"
+    "$(text "Anneal вЂў Р РѕР»СЊ" "Anneal вЂў Role")" \
+    "$(text "Р’С‹Р±РµСЂРё, С‡С‚Рѕ СѓСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РЅР° СЌС‚РѕС‚ СЃРµСЂРІРµСЂ." "Choose what will be installed on this server.")" \
+    "$(text "РџР°РЅРµР»СЊ" "Panel")" "$(text "UI, API, worker Рё Р±Р°Р·Р°" "UI, API, worker and database")" \
+    "$(text "РќРѕРґР°" "Node")" "$(text "РћС‚РґРµР»СЊРЅС‹Р№ VPS/VDS СЃРµСЂРІРµСЂ РґР»СЏ runtime-РїР°РєРµС‚РѕРІ" "Separate VPS/VDS server for runtime packages")")"
   case "${choice}" in
-    Панель|Panel) ROLE="control-plane" ;;
-    Нода|Node) ROLE="node" ;;
+    РџР°РЅРµР»СЊ|Panel) ROLE="control-plane" ;;
+    РќРѕРґР°|Node) ROLE="node" ;;
   esac
 }
 
@@ -271,10 +271,10 @@ choose_deployment_mode() {
     return
   fi
   choice="$(prompt_menu \
-    "$(text "Anneal • Режим" "Anneal • Mode")" \
-    "$(text "Выбери способ установки." "Choose the deployment mode.")" \
-    "Linux" "$(text "Нативная установка в систему" "Native installation into the system")" \
-    "Docker" "$(text "Запуск готовых пакетов в контейнере" "Run prebuilt packages in a container")")"
+    "$(text "Anneal вЂў Р РµР¶РёРј" "Anneal вЂў Mode")" \
+    "$(text "Р’С‹Р±РµСЂРё СЃРїРѕСЃРѕР± СѓСЃС‚Р°РЅРѕРІРєРё." "Choose the deployment mode.")" \
+    "Linux" "$(text "РќР°С‚РёРІРЅР°СЏ СѓСЃС‚Р°РЅРѕРІРєР° РІ СЃРёСЃС‚РµРјСѓ" "Native installation into the system")" \
+    "Docker" "$(text "Р—Р°РїСѓСЃРє РіРѕС‚РѕРІС‹С… РїР°РєРµС‚РѕРІ РІ РєРѕРЅС‚РµР№РЅРµСЂРµ" "Run prebuilt packages in a container")")"
   case "${choice}" in
     Linux) DEPLOYMENT_MODE="native" ;;
     Docker) DEPLOYMENT_MODE="docker" ;;
@@ -314,70 +314,62 @@ finalize_node_defaults() {
 }
 
 build_node_enrollment_tokens() {
-  local pairs=()
-  if selected_engine xray; then
-    if [[ -z "${ANNEAL_AGENT_XRAY_TOKEN}" ]]; then
-      show_error "$(text "Для runtime Xray нужен enrollment token." "Xray runtime requires an enrollment token.")"
-      exit 1
-    fi
-    pairs+=("xray:${ANNEAL_AGENT_XRAY_TOKEN}")
-  fi
-  if selected_engine singbox; then
-    if [[ -z "${ANNEAL_AGENT_SINGBOX_TOKEN}" ]]; then
-      show_error "$(text "Для runtime Sing-box нужен enrollment token." "Sing-box runtime requires an enrollment token.")"
-      exit 1
-    fi
-    pairs+=("singbox:${ANNEAL_AGENT_SINGBOX_TOKEN}")
-  fi
-  if [[ "${#pairs[@]}" -eq 0 ]]; then
-    show_error "$(text "Выбери хотя бы один runtime для ноды." "Select at least one runtime for the node server.")"
+  return 0
+}
+
+validate_node_bootstrap() {
+  if [[ -z "${ANNEAL_AGENT_BOOTSTRAP_TOKEN}" ]]; then
+    show_error "$(text "Р вЂќР В»РЎРЏ node server Р Р…РЎС“Р В¶Р ВµР Р… bootstrap token Р С‘Р В· Р С—Р В°Р Р…Р ВµР В»Р С‘." "Node server requires a bootstrap token from the panel.")"
     exit 1
   fi
-  ANNEAL_AGENT_ENROLLMENT_TOKENS="$(IFS=,; echo "${pairs[*]}")"
+  if [[ "${ANNEAL_AGENT_SERVER_URL}" != https://* ]]; then
+    show_error "$(text "Control-plane URL Р Т‘Р С•Р В»Р В¶Р ВµР Р… Р Р…Р В°РЎвЂЎР С‘Р Р…Р В°РЎвЂљРЎРЉРЎРѓРЎРЏ РЎРѓ https://." "Control-plane URL must start with https://.")"
+    exit 1
+  fi
 }
 
 control_plane_summary() {
   cat <<EOF
-$(text "Роль" "Role"): control-plane
-$(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
-$(text "Домен" "Domain"): ${ANNEAL_DOMAIN}
+$(text "Р РѕР»СЊ" "Role"): control-plane
+$(text "Р РµР¶РёРј" "Mode"): ${DEPLOYMENT_MODE}
+$(text "Р”РѕРјРµРЅ" "Domain"): ${ANNEAL_DOMAIN}
 panel_url: ${ANNEAL_PUBLIC_BASE_URL}
-$(text "Email суперадмина" "Superadmin email"): ${ANNEAL_SUPERADMIN_EMAIL}
-$(text "Версия канала" "Release channel"): ${ANNEAL_RELEASE_TAG}
+$(text "Email СЃСѓРїРµСЂР°РґРјРёРЅР°" "Superadmin email"): ${ANNEAL_SUPERADMIN_EMAIL}
+$(text "Р’РµСЂСЃРёСЏ РєР°РЅР°Р»Р°" "Release channel"): ${ANNEAL_RELEASE_TAG}
 EOF
 }
 
 node_summary() {
   cat <<EOF
-$(text "Роль" "Role"): node-server
-$(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
+$(text "Р РѕР»СЊ" "Role"): node-server
+$(text "Р РµР¶РёРј" "Mode"): ${DEPLOYMENT_MODE}
 $(text "Control Plane URL" "Control Plane URL"): ${ANNEAL_AGENT_SERVER_URL}
-$(text "Имя ноды" "Node name"): ${ANNEAL_AGENT_NAME}
-$(text "Runtime-пакеты" "Runtime packages"): ${ANNEAL_AGENT_ENGINES}
-$(text "Версия канала" "Release channel"): ${ANNEAL_RELEASE_TAG}
+$(text "РРјСЏ РЅРѕРґС‹" "Node name"): ${ANNEAL_AGENT_NAME}
+$(text "Runtime-РїР°РєРµС‚С‹" "Runtime packages"): ${ANNEAL_AGENT_ENGINES}
+$(text "Р’РµСЂСЃРёСЏ РєР°РЅР°Р»Р°" "Release channel"): ${ANNEAL_RELEASE_TAG}
 EOF
 }
 
 configure_control_plane_tui() {
   finalize_control_plane_defaults
   ANNEAL_DOMAIN="$(prompt_text \
-    "$(text "Anneal • Control Plane" "Anneal • Control Plane")" \
-    "$(text "Укажи домен панели." "Enter the panel domain.")" \
+    "$(text "Anneal вЂў Control Plane" "Anneal вЂў Control Plane")" \
+    "$(text "РЈРєР°Р¶Рё РґРѕРјРµРЅ РїР°РЅРµР»Рё." "Enter the panel domain.")" \
     "${ANNEAL_DOMAIN}")"
   finalize_control_plane_defaults
   ANNEAL_PUBLIC_BASE_URL="$(prompt_text \
-    "$(text "Anneal • Control Plane" "Anneal • Control Plane")" \
-    "$(text "Публичный URL панели." "Enter the public panel URL.")" \
+    "$(text "Anneal вЂў Control Plane" "Anneal вЂў Control Plane")" \
+    "$(text "РџСѓР±Р»РёС‡РЅС‹Р№ URL РїР°РЅРµР»Рё." "Enter the public panel URL.")" \
     "${ANNEAL_PUBLIC_BASE_URL}")"
   ANNEAL_SUPERADMIN_EMAIL="$(prompt_text \
-    "$(text "Anneal • Control Plane" "Anneal • Control Plane")" \
-    "$(text "Email bootstrap-суперадмина." "Enter the bootstrap superadmin email.")" \
+    "$(text "Anneal вЂў Control Plane" "Anneal вЂў Control Plane")" \
+    "$(text "Email bootstrap-СЃСѓРїРµСЂР°РґРјРёРЅР°." "Enter the bootstrap superadmin email.")" \
     "${ANNEAL_SUPERADMIN_EMAIL}")"
   ANNEAL_SUPERADMIN_DISPLAY_NAME="$(prompt_text \
-    "$(text "Anneal • Control Plane" "Anneal • Control Plane")" \
-    "$(text "Отображаемое имя суперадмина." "Enter the superadmin display name.")" \
+    "$(text "Anneal вЂў Control Plane" "Anneal вЂў Control Plane")" \
+    "$(text "РћС‚РѕР±СЂР°Р¶Р°РµРјРѕРµ РёРјСЏ СЃСѓРїРµСЂР°РґРјРёРЅР°." "Enter the superadmin display name.")" \
     "${ANNEAL_SUPERADMIN_DISPLAY_NAME}")"
-  if ! prompt_confirm "$(text "Подтверждение" "Confirmation")" "$(control_plane_summary)"; then
+  if ! prompt_confirm "$(text "РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ" "Confirmation")" "$(control_plane_summary)"; then
     exit 1
   fi
 }
@@ -385,32 +377,24 @@ configure_control_plane_tui() {
 configure_node_tui() {
   finalize_node_defaults
   ANNEAL_AGENT_SERVER_URL="$(prompt_text \
-    "$(text "Anneal • Node Server" "Anneal • Node Server")" \
-    "$(text "Укажи URL control-plane API." "Enter the control-plane API URL.")" \
+    "$(text "Anneal вЂў Node Server" "Anneal вЂў Node Server")" \
+    "$(text "РЈРєР°Р¶Рё URL control-plane API." "Enter the control-plane API URL.")" \
     "${ANNEAL_AGENT_SERVER_URL:-https://panel.example.com}")"
   ANNEAL_AGENT_NAME="$(prompt_text \
-    "$(text "Anneal • Node Server" "Anneal • Node Server")" \
-    "$(text "Имя node server." "Enter the node server name.")" \
+    "$(text "Anneal вЂў Node Server" "Anneal вЂў Node Server")" \
+    "$(text "РРјСЏ node server." "Enter the node server name.")" \
     "${ANNEAL_AGENT_NAME}")"
   ANNEAL_AGENT_ENGINES="$(prompt_checklist \
-    "$(text "Anneal • Runtime-пакеты" "Anneal • Runtime packages")" \
-    "$(text "Выбери runtime-пакеты для этой ноды." "Choose runtime packages for this node server.")" \
-    "xray" "$(text "Xray • vless/vmess/trojan/ss2022" "Xray • vless/vmess/trojan/ss2022")" "ON" \
-    "singbox" "$(text "Sing-box • tuic/hysteria2 + classic" "Sing-box • tuic/hysteria2 + classic")" "ON")"
-  if selected_engine xray; then
-    ANNEAL_AGENT_XRAY_TOKEN="$(prompt_text \
-      "$(text "Anneal • Xray Token" "Anneal • Xray Token")" \
-      "$(text "Enrollment token для Xray на этой ноде." "Enter the Xray enrollment token for this node server.")" \
-      "${ANNEAL_AGENT_XRAY_TOKEN}")"
-  fi
-  if selected_engine singbox; then
-    ANNEAL_AGENT_SINGBOX_TOKEN="$(prompt_text \
-      "$(text "Anneal • Sing-box Token" "Anneal • Sing-box Token")" \
-      "$(text "Enrollment token для Sing-box на этой ноде." "Enter the Sing-box enrollment token for this node server.")" \
-      "${ANNEAL_AGENT_SINGBOX_TOKEN}")"
-  fi
-  build_node_enrollment_tokens
-  if ! prompt_confirm "$(text "Подтверждение" "Confirmation")" "$(node_summary)"; then
+    "$(text "Anneal вЂў Runtime-РїР°РєРµС‚С‹" "Anneal вЂў Runtime packages")" \
+    "$(text "Р’С‹Р±РµСЂРё runtime-РїР°РєРµС‚С‹ РґР»СЏ СЌС‚РѕР№ РЅРѕРґС‹." "Choose runtime packages for this node server.")" \
+    "xray" "$(text "Xray вЂў vless/vmess/trojan/ss2022" "Xray вЂў vless/vmess/trojan/ss2022")" "ON" \
+    "singbox" "$(text "Sing-box вЂў tuic/hysteria2 + classic" "Sing-box вЂў tuic/hysteria2 + classic")" "ON")"
+  ANNEAL_AGENT_BOOTSTRAP_TOKEN="$(prompt_text \
+    "$(text "Anneal РІР‚Сћ Bootstrap Token" "Anneal РІР‚Сћ Bootstrap Token")" \
+    "$(text "Bootstrap token Р С‘Р В· Р С—Р В°Р Р…Р ВµР В»Р С‘ Р Т‘Р В»РЎРЏ РЎРЊРЎвЂљР С•Р в„– Р Р…Р С•Р Т‘РЎвЂ№." "Enter the panel bootstrap token for this node server.")" \
+    "${ANNEAL_AGENT_BOOTSTRAP_TOKEN}")"
+  validate_node_bootstrap
+  if ! prompt_confirm "$(text "РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ" "Confirmation")" "$(node_summary)"; then
     exit 1
   fi
 }
@@ -425,24 +409,24 @@ configure_installation() {
       control-plane) configure_control_plane_tui ;;
       node) configure_node_tui ;;
       *)
-        show_error "$(text "Неизвестная роль." "Unknown role.")"
+        show_error "$(text "РќРµРёР·РІРµСЃС‚РЅР°СЏ СЂРѕР»СЊ." "Unknown role.")"
         exit 1
         ;;
     esac
   else
     [[ -n "${ROLE}" ]] || {
-      show_error "$(text "Передай --role control-plane|node." "Pass --role control-plane|node.")"
+      show_error "$(text "РџРµСЂРµРґР°Р№ --role control-plane|node." "Pass --role control-plane|node.")"
       exit 1
     }
     [[ -n "${DEPLOYMENT_MODE}" ]] || {
-      show_error "$(text "Передай --mode native|docker." "Pass --mode native|docker.")"
+      show_error "$(text "РџРµСЂРµРґР°Р№ --mode native|docker." "Pass --mode native|docker.")"
       exit 1
     }
     if [[ "${ROLE}" == "control-plane" ]]; then
       finalize_control_plane_defaults
     else
       finalize_node_defaults
-      build_node_enrollment_tokens
+      validate_node_bootstrap
     fi
   fi
 }
@@ -520,7 +504,7 @@ compose_cmd() {
     docker-compose "$@"
     return
   fi
-  show_error "$(text "Docker Compose не найден." "Docker Compose was not found.")"
+  show_error "$(text "Docker Compose РЅРµ РЅР°Р№РґРµРЅ." "Docker Compose was not found.")"
   exit 1
 }
 
@@ -544,7 +528,7 @@ ensure_postgres() {
     return
   fi
   systemctl enable --now postgresql
-  runuser -u postgres -- psql -p "${DB_PORT}" -tAc "select 1 from pg_roles where rolname='${DB_USER}'" | grep -q 1 || runuser -u postgres -- psql -p "${DB_PORT}" -c "create role ${DB_USER} login password '${DB_PASSWORD}';"
+  runuser -u postgres -- psql -p "${DB_PORT}" -v ON_ERROR_STOP=1 -v role_name="${DB_USER}" -v role_password="${DB_PASSWORD}" -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname = :'role_name') then execute format('create role %I login password %L', :'role_name', :'role_password'); end if; end \$\$;"
   runuser -u postgres -- psql -p "${DB_PORT}" -tAc "select 1 from pg_database where datname='${DB_NAME}'" | grep -q 1 || runuser -u postgres -- createdb -p "${DB_PORT}" -O "${DB_USER}" "${DB_NAME}"
 }
 
@@ -561,7 +545,7 @@ extract_archive() {
     *.zip) unzip -oq "${archive}" -d "${destination}" ;;
     *.tar.gz) tar -xzf "${archive}" -C "${destination}" ;;
     *)
-      show_error "$(text "Неподдерживаемый архив: ${archive}" "Unsupported archive: ${archive}")"
+      show_error "$(text "РќРµРїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Р№ Р°СЂС…РёРІ: ${archive}" "Unsupported archive: ${archive}")"
       exit 1
       ;;
   esac
@@ -614,7 +598,7 @@ docker_stack_root() {
     control-plane) echo "/opt/anneal/docker/control-plane" ;;
     node) echo "/opt/anneal/docker/node" ;;
     *)
-      show_error "$(text "Неизвестная роль." "Unknown role.")"
+      show_error "$(text "РќРµРёР·РІРµСЃС‚РЅР°СЏ СЂРѕР»СЊ." "Unknown role.")"
       exit 1
       ;;
   esac
@@ -658,6 +642,7 @@ ANNEAL_DATABASE_URL=${ANNEAL_DATABASE_URL}
 ANNEAL_MIGRATIONS_DIR=/opt/anneal/migrations
 ANNEAL_BOOTSTRAP_TOKEN=${ANNEAL_BOOTSTRAP_TOKEN}
 ANNEAL_DATA_ENCRYPTION_KEY=${ANNEAL_DATA_ENCRYPTION_KEY}
+ANNEAL_TOKEN_HASH_KEY=${ANNEAL_TOKEN_HASH_KEY}
 ANNEAL_ACCESS_JWT_SECRET=${ANNEAL_ACCESS_JWT_SECRET}
 ANNEAL_PRE_AUTH_JWT_SECRET=${ANNEAL_PRE_AUTH_JWT_SECRET}
 ANNEAL_PUBLIC_BASE_URL=${ANNEAL_PUBLIC_BASE_URL}
@@ -680,6 +665,7 @@ ANNEAL_DATABASE_URL=postgres://${ANNEAL_DB_USER}:${ANNEAL_DB_PASSWORD}@postgres:
 ANNEAL_MIGRATIONS_DIR=/opt/anneal/migrations
 ANNEAL_BOOTSTRAP_TOKEN=${ANNEAL_BOOTSTRAP_TOKEN}
 ANNEAL_DATA_ENCRYPTION_KEY=${ANNEAL_DATA_ENCRYPTION_KEY}
+ANNEAL_TOKEN_HASH_KEY=${ANNEAL_TOKEN_HASH_KEY}
 ANNEAL_ACCESS_JWT_SECRET=${ANNEAL_ACCESS_JWT_SECRET}
 ANNEAL_PRE_AUTH_JWT_SECRET=${ANNEAL_PRE_AUTH_JWT_SECRET}
 ANNEAL_PUBLIC_BASE_URL=${ANNEAL_PUBLIC_BASE_URL}
@@ -697,7 +683,7 @@ ANNEAL_AGENT_VERSION=${ANNEAL_VERSION}
 ANNEAL_AGENT_ENGINES=${ANNEAL_AGENT_ENGINES}
 ANNEAL_AGENT_PROTOCOLS_XRAY=${ANNEAL_AGENT_PROTOCOLS_XRAY}
 ANNEAL_AGENT_PROTOCOLS_SINGBOX=${ANNEAL_AGENT_PROTOCOLS_SINGBOX}
-ANNEAL_AGENT_ENROLLMENT_TOKENS=${ANNEAL_AGENT_ENROLLMENT_TOKENS}
+ANNEAL_AGENT_BOOTSTRAP_TOKEN=${ANNEAL_AGENT_BOOTSTRAP_TOKEN}
 ANNEAL_AGENT_CONFIG_ROOT=/var/lib/anneal
 ANNEAL_AGENT_XRAY_BINARY=/opt/anneal/bin/xray
 ANNEAL_AGENT_SINGBOX_BINARY=/opt/anneal/bin/hiddify-core
@@ -720,7 +706,7 @@ ANNEAL_AGENT_VERSION=${ANNEAL_VERSION}
 ANNEAL_AGENT_ENGINES=${ANNEAL_AGENT_ENGINES}
 ANNEAL_AGENT_PROTOCOLS_XRAY=${ANNEAL_AGENT_PROTOCOLS_XRAY}
 ANNEAL_AGENT_PROTOCOLS_SINGBOX=${ANNEAL_AGENT_PROTOCOLS_SINGBOX}
-ANNEAL_AGENT_ENROLLMENT_TOKENS=${ANNEAL_AGENT_ENROLLMENT_TOKENS}
+ANNEAL_AGENT_BOOTSTRAP_TOKEN=${ANNEAL_AGENT_BOOTSTRAP_TOKEN}
 ANNEAL_AGENT_CONFIG_ROOT=/var/lib/anneal
 ANNEAL_AGENT_RUNTIME_CONTROLLER=supervisorctl
 ANNEAL_AGENT_SYSTEMCTL_BINARY=/usr/bin/supervisorctl
@@ -742,7 +728,7 @@ wait_for_api() {
     fi
     sleep 2
   done
-  show_error "$(text "API не поднялся вовремя." "API did not become ready in time.")"
+  show_error "$(text "API РЅРµ РїРѕРґРЅСЏР»СЃСЏ РІРѕРІСЂРµРјСЏ." "API did not become ready in time.")"
   exit 1
 }
 
@@ -763,7 +749,7 @@ bootstrap_superadmin() {
   fi
   cat "${response_file}" >&2
   rm -f "${response_file}"
-  show_error "$(text "Не удалось выполнить bootstrap суперадмина." "Failed to bootstrap the superadmin.")"
+  show_error "$(text "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ bootstrap СЃСѓРїРµСЂР°РґРјРёРЅР°." "Failed to bootstrap the superadmin.")"
   exit 1
 }
 
@@ -817,7 +803,7 @@ save_admin_summary() {
 
 load_install_state() {
   [[ -f "${META_FILE}" ]] || {
-    show_error "$(text "Файл состояния установки не найден." "Install state file was not found.")"
+    show_error "$(text "Р¤Р°Р№Р» СЃРѕСЃС‚РѕСЏРЅРёСЏ СѓСЃС‚Р°РЅРѕРІРєРё РЅРµ РЅР°Р№РґРµРЅ." "Install state file was not found.")"
     exit 1
   }
   source /etc/anneal/install.meta
@@ -855,7 +841,7 @@ EOF
 
 control_plane_install_message() {
   cat <<EOF
-$(text "Установка завершена." "Installation completed.")
+$(text "РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРµСЂС€РµРЅР°." "Installation completed.")
 
 panel_url: ${ANNEAL_PUBLIC_BASE_URL}
 admin_email: ${ANNEAL_SUPERADMIN_EMAIL}
@@ -867,7 +853,7 @@ EOF
 
 node_install_message() {
   cat <<EOF
-$(text "Установка завершена." "Installation completed.")
+$(text "РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРµСЂС€РµРЅР°." "Installation completed.")
 
 control_plane_url: ${ANNEAL_AGENT_SERVER_URL}
 node_name: ${ANNEAL_AGENT_NAME}
@@ -879,7 +865,7 @@ EOF
 install_native_control_plane() {
   finalize_control_plane_defaults
   if [[ -z "${ANNEAL_DOMAIN}" ]]; then
-    show_error "$(text "Для control-plane нужен домен." "Control-plane requires a domain.")"
+    show_error "$(text "Р”Р»СЏ control-plane РЅСѓР¶РµРЅ РґРѕРјРµРЅ." "Control-plane requires a domain.")"
     exit 1
   fi
   prepare_deploy_assets
@@ -927,7 +913,7 @@ install_native_node() {
 install_docker_control_plane() {
   finalize_control_plane_defaults
   if [[ -z "${ANNEAL_DOMAIN}" ]]; then
-    show_error "$(text "Для control-plane нужен домен." "Control-plane requires a domain.")"
+    show_error "$(text "Р”Р»СЏ control-plane РЅСѓР¶РµРЅ РґРѕРјРµРЅ." "Control-plane requires a domain.")"
     exit 1
   fi
   prepare_deploy_assets
@@ -1099,14 +1085,14 @@ uninstall_current_install() {
 show_admin_details() {
   load_admin_summary
   if [[ "${ROLE}" == "control-plane" ]]; then
-    show_info "$(text "Данные администратора" "Administrator details")" "$(control_plane_install_message)"
+    show_info "$(text "Р”Р°РЅРЅС‹Рµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°" "Administrator details")" "$(control_plane_install_message)"
     return
   fi
-  show_info "$(text "Данные ноды" "Node server details")" "$(node_install_message)"
+  show_info "$(text "Р”Р°РЅРЅС‹Рµ РЅРѕРґС‹" "Node server details")" "$(node_install_message)"
 }
 
 show_status_dialog() {
-  show_info "$(text "Статус" "Status")" "$(status_summary)"
+  show_info "$(text "РЎС‚Р°С‚СѓСЃ" "Status")" "$(status_summary)"
 }
 
 management_menu() {
@@ -1114,44 +1100,44 @@ management_menu() {
     clear
     print_banner
     local title prompt status_key update_key restart_key details_key remove_key shell_key exit_key choice
-    title="$(text "Anneal • Управление" "Anneal • Management")"
-    prompt="$(text "Выбери действие для установленного сервера." "Choose an action for the installed server.")"
-    status_key="$(text "Статус" "Status")"
-    update_key="$(text "Обновить" "Update")"
-    restart_key="$(text "Перезапуск" "Restart")"
-    details_key="$(text "Данные" "Details")"
-    remove_key="$(text "Удалить" "Remove")"
+    title="$(text "Anneal вЂў РЈРїСЂР°РІР»РµРЅРёРµ" "Anneal вЂў Management")"
+    prompt="$(text "Р’С‹Р±РµСЂРё РґРµР№СЃС‚РІРёРµ РґР»СЏ СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅРѕРіРѕ СЃРµСЂРІРµСЂР°." "Choose an action for the installed server.")"
+    status_key="$(text "РЎС‚Р°С‚СѓСЃ" "Status")"
+    update_key="$(text "РћР±РЅРѕРІРёС‚СЊ" "Update")"
+    restart_key="$(text "РџРµСЂРµР·Р°РїСѓСЃРє" "Restart")"
+    details_key="$(text "Р”Р°РЅРЅС‹Рµ" "Details")"
+    remove_key="$(text "РЈРґР°Р»РёС‚СЊ" "Remove")"
     shell_key="$(text "Shell" "Shell")"
-    exit_key="$(text "Выход" "Exit")"
+    exit_key="$(text "Р’С‹С…РѕРґ" "Exit")"
     choice="$(prompt_menu \
       "${title}" \
       "${prompt}" \
-      "${status_key}" "$(text "Сервисы, health и версия" "Services, health and version")" \
-      "${update_key}" "$(text "Скачать и применить свежий релиз" "Download and apply the latest release")" \
-      "${restart_key}" "$(text "Перезапустить сервисы Anneal" "Restart Anneal services")" \
-      "${details_key}" "$(text "Показать доступы и ссылки" "Show access data and links")" \
-      "${remove_key}" "$(text "Полностью удалить Anneal" "Completely remove Anneal")" \
-      "${shell_key}" "$(text "Выйти в обычную консоль" "Leave to the regular shell")" \
-      "${exit_key}" "$(text "Закрыть меню" "Close the menu")")"
+      "${status_key}" "$(text "РЎРµСЂРІРёСЃС‹, health Рё РІРµСЂСЃРёСЏ" "Services, health and version")" \
+      "${update_key}" "$(text "РЎРєР°С‡Р°С‚СЊ Рё РїСЂРёРјРµРЅРёС‚СЊ СЃРІРµР¶РёР№ СЂРµР»РёР·" "Download and apply the latest release")" \
+      "${restart_key}" "$(text "РџРµСЂРµР·Р°РїСѓСЃС‚РёС‚СЊ СЃРµСЂРІРёСЃС‹ Anneal" "Restart Anneal services")" \
+      "${details_key}" "$(text "РџРѕРєР°Р·Р°С‚СЊ РґРѕСЃС‚СѓРїС‹ Рё СЃСЃС‹Р»РєРё" "Show access data and links")" \
+      "${remove_key}" "$(text "РџРѕР»РЅРѕСЃС‚СЊСЋ СѓРґР°Р»РёС‚СЊ Anneal" "Completely remove Anneal")" \
+      "${shell_key}" "$(text "Р’С‹Р№С‚Рё РІ РѕР±С‹С‡РЅСѓСЋ РєРѕРЅСЃРѕР»СЊ" "Leave to the regular shell")" \
+      "${exit_key}" "$(text "Р—Р°РєСЂС‹С‚СЊ РјРµРЅСЋ" "Close the menu")")"
     case "${choice}" in
       "${status_key}")
         show_status_dialog
         ;;
       "${update_key}")
         update_current_install
-        show_info "$(text "Обновление" "Update")" "$(text "Обновление завершено." "Update completed.")"
+        show_info "$(text "РћР±РЅРѕРІР»РµРЅРёРµ" "Update")" "$(text "РћР±РЅРѕРІР»РµРЅРёРµ Р·Р°РІРµСЂС€РµРЅРѕ." "Update completed.")"
         ;;
       "${restart_key}")
         restart_current_install
-        show_info "$(text "Перезапуск" "Restart")" "$(text "Перезапуск завершён." "Restart completed.")"
+        show_info "$(text "РџРµСЂРµР·Р°РїСѓСЃРє" "Restart")" "$(text "РџРµСЂРµР·Р°РїСѓСЃРє Р·Р°РІРµСЂС€С‘РЅ." "Restart completed.")"
         ;;
       "${details_key}")
         show_admin_details
         ;;
       "${remove_key}")
-        if prompt_confirm "$(text "Подтверждение удаления" "Uninstall confirmation")" "$(text "Удалить Anneal с этого сервера?" "Remove Anneal from this server?")"; then
+        if prompt_confirm "$(text "РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ СѓРґР°Р»РµРЅРёСЏ" "Uninstall confirmation")" "$(text "РЈРґР°Р»РёС‚СЊ Anneal СЃ СЌС‚РѕРіРѕ СЃРµСЂРІРµСЂР°?" "Remove Anneal from this server?")"; then
           uninstall_current_install
-          show_info "$(text "Удаление" "Uninstall")" "$(text "Anneal удалён с сервера." "Anneal was removed from the server.")"
+          show_info "$(text "РЈРґР°Р»РµРЅРёРµ" "Uninstall")" "$(text "Anneal СѓРґР°Р»С‘РЅ СЃ СЃРµСЂРІРµСЂР°." "Anneal was removed from the server.")"
           exit 0
         fi
         ;;
@@ -1176,7 +1162,7 @@ run_install() {
     node:native) install_native_node ;;
     node:docker) install_docker_node ;;
     *)
-      show_error "$(text "Комбинация роли и режима не поддерживается." "Unsupported role and mode combination.")"
+      show_error "$(text "РљРѕРјР±РёРЅР°С†РёСЏ СЂРѕР»Рё Рё СЂРµР¶РёРјР° РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ." "Unsupported role and mode combination.")"
       exit 1
       ;;
   esac
@@ -1216,6 +1202,7 @@ ANNEAL_DATABASE_PORT="${ANNEAL_DATABASE_PORT:-5432}"
 ANNEAL_DATABASE_URL="${ANNEAL_DATABASE_URL:-postgres://${ANNEAL_DB_USER}:${ANNEAL_DB_PASSWORD}@${ANNEAL_DATABASE_HOST}:${ANNEAL_DATABASE_PORT}/${ANNEAL_DB_NAME}}"
 ANNEAL_BOOTSTRAP_TOKEN="${ANNEAL_BOOTSTRAP_TOKEN:-$(generate_secret 24)}"
 ANNEAL_DATA_ENCRYPTION_KEY="${ANNEAL_DATA_ENCRYPTION_KEY:-$(generate_hex 32)}"
+ANNEAL_TOKEN_HASH_KEY="${ANNEAL_TOKEN_HASH_KEY:-$(generate_hex 32)}"
 ANNEAL_ACCESS_JWT_SECRET="${ANNEAL_ACCESS_JWT_SECRET:-$(generate_hex 32)}"
 ANNEAL_PRE_AUTH_JWT_SECRET="${ANNEAL_PRE_AUTH_JWT_SECRET:-$(generate_hex 32)}"
 ANNEAL_SUPERADMIN_EMAIL="${ANNEAL_SUPERADMIN_EMAIL:-}"
@@ -1227,9 +1214,7 @@ ANNEAL_AGENT_NAME="${ANNEAL_AGENT_NAME:-}"
 ANNEAL_AGENT_ENGINES="${ANNEAL_AGENT_ENGINES:-}"
 ANNEAL_AGENT_PROTOCOLS_XRAY="${ANNEAL_AGENT_PROTOCOLS_XRAY:-}"
 ANNEAL_AGENT_PROTOCOLS_SINGBOX="${ANNEAL_AGENT_PROTOCOLS_SINGBOX:-}"
-ANNEAL_AGENT_XRAY_TOKEN="${ANNEAL_AGENT_XRAY_TOKEN:-}"
-ANNEAL_AGENT_SINGBOX_TOKEN="${ANNEAL_AGENT_SINGBOX_TOKEN:-}"
-ANNEAL_AGENT_ENROLLMENT_TOKENS="${ANNEAL_AGENT_ENROLLMENT_TOKENS:-}"
+ANNEAL_AGENT_BOOTSTRAP_TOKEN="${ANNEAL_AGENT_BOOTSTRAP_TOKEN:-}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SELF_SOURCE="${BASH_SOURCE[0]}"
 ENV_FILE="/etc/anneal/anneal.env"
@@ -1276,7 +1261,7 @@ case "${ACTION}" in
     printf '%s\n' "$(status_summary)"
     ;;
   *)
-    show_error "$(text "Неизвестное действие." "Unknown action.")"
+    show_error "$(text "РќРµРёР·РІРµСЃС‚РЅРѕРµ РґРµР№СЃС‚РІРёРµ." "Unknown action.")"
     exit 1
     ;;
 esac

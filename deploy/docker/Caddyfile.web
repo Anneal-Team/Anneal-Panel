@@ -1,4 +1,5 @@
-:80 {
+https://web, https://localhost {
+    tls /tls/web.crt /tls/web.key
     encode gzip zstd
 
     handle /api/* {

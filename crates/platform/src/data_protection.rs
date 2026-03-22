@@ -1,11 +1,11 @@
-use anneal_core::{ApplicationError, ApplicationResult, SecretBox};
-use sha2::{Digest, Sha256};
+use anneal_core::{ApplicationError, ApplicationResult, SecretBox, TokenHasher};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 pub async fn backfill_protected_data(
     pool: &PgPool,
     secret_box: &SecretBox,
+    token_hasher: &TokenHasher,
 ) -> ApplicationResult<()> {
     let mut transaction = pool
         .begin()
@@ -16,9 +16,8 @@ pub async fn backfill_protected_data(
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
     backfill_users(&mut transaction, secret_box).await?;
-    backfill_devices(&mut transaction, secret_box).await?;
+    backfill_devices(&mut transaction, secret_box, token_hasher).await?;
     backfill_subscriptions(&mut transaction, secret_box).await?;
-    backfill_subscription_links(&mut transaction, secret_box).await?;
     backfill_node_endpoints(&mut transaction, secret_box).await?;
     backfill_config_revisions(&mut transaction, secret_box).await?;
     backfill_deployment_rollouts(&mut transaction, secret_box).await?;
@@ -55,17 +54,23 @@ async fn backfill_users(
 async fn backfill_devices(
     transaction: &mut Transaction<'_, Postgres>,
     secret_box: &SecretBox,
+    token_hasher: &TokenHasher,
 ) -> ApplicationResult<()> {
-    let rows = sqlx::query_as::<_, (Uuid, String)>("select id, device_token from devices")
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
+        "select id, device_token, device_token_hash from devices",
+    )
         .fetch_all(&mut **transaction)
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-    for (id, device_token) in rows {
-        let protected = secret_box.encrypt(&secret_box.decrypt(&device_token)?)?;
-        if protected != device_token {
-            sqlx::query("update devices set device_token = $2 where id = $1")
+    for (id, device_token, device_token_hash) in rows {
+        let plaintext = secret_box.decrypt(&device_token)?;
+        let protected = secret_box.encrypt(&plaintext)?;
+        let hash = token_hasher.hash(&plaintext);
+        if protected != device_token || device_token_hash.as_deref() != Some(hash.as_str()) {
+            sqlx::query("update devices set device_token = $2, device_token_hash = $3 where id = $1")
                 .bind(id)
                 .bind(protected)
+                .bind(hash)
                 .execute(&mut **transaction)
                 .await
                 .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
@@ -88,33 +93,6 @@ async fn backfill_subscriptions(
             sqlx::query("update subscriptions set access_key = $2 where id = $1")
                 .bind(id)
                 .bind(protected)
-                .execute(&mut **transaction)
-                .await
-                .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        }
-    }
-    Ok(())
-}
-
-async fn backfill_subscription_links(
-    transaction: &mut Transaction<'_, Postgres>,
-    secret_box: &SecretBox,
-) -> ApplicationResult<()> {
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
-        "select id, token, token_hash from subscription_links",
-    )
-    .fetch_all(&mut **transaction)
-    .await
-    .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-    for (id, token, token_hash) in rows {
-        let plaintext = secret_box.decrypt(&token)?;
-        let protected = secret_box.encrypt(&plaintext)?;
-        let hash = hash_value(&plaintext);
-        if protected != token || token_hash.as_deref() != Some(hash.as_str()) {
-            sqlx::query("update subscription_links set token = $2, token_hash = $3 where id = $1")
-                .bind(id)
-                .bind(protected)
-                .bind(hash)
                 .execute(&mut **transaction)
                 .await
                 .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
@@ -193,10 +171,4 @@ async fn backfill_deployment_rollouts(
         }
     }
     Ok(())
-}
-
-pub fn hash_value(value: &str) -> String {
-    let mut digest = Sha256::new();
-    digest.update(value.as_bytes());
-    format!("{:x}", digest.finalize())
 }

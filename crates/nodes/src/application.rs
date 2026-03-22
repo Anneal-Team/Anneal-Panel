@@ -6,40 +6,41 @@ use std::{
 use anneal_config_engine::SecurityKind;
 use anneal_core::{
     Actor, ApplicationError, ApplicationResult, DeploymentStatus, NodeStatus, ProtocolKind,
-    ProxyEngine, UserRole,
+    ProxyEngine, TokenHasher, UserRole,
 };
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use rand::{Rng, distr::Alphanumeric};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::domain::{
-    ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, EnrollmentGrant, Node, NodeCapability,
-    NodeEndpoint, NodeEndpointDraft, NodeEnrollmentToken, NodeGroup, NodeGroupDomain,
-    NodeGroupDomainDraft, NodeGroupDomainMode, NodeRegistration,
+    ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, EnrollmentGrant, NodeRuntime,
+    NodeBootstrapGrant, NodeBootstrapRuntimeGrant, NodeBootstrapSession, NodeCapability,
+    NodeEndpoint, NodeEndpointDraft, NodeEnrollmentToken, ServerNode, NodeDomain,
+    NodeDomainDraft, NodeDomainMode, RuntimeRegistration, RuntimeRegistrationGrant,
+    NodeTokenRotationGrant,
 };
 
 #[async_trait]
 pub trait NodeRepository: Send + Sync {
-    async fn create_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup>;
-    async fn list_node_groups(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeGroup>>;
-    async fn find_node_group(&self, node_group_id: Uuid) -> ApplicationResult<Option<NodeGroup>>;
-    async fn update_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup>;
-    async fn delete_node_group(&self, node_group_id: Uuid) -> ApplicationResult<()>;
-    async fn list_nodes_in_group(&self, node_group_id: Uuid) -> ApplicationResult<Vec<Node>>;
-    async fn list_node_group_domains(
+    async fn create_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode>;
+    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>>;
+    async fn find_server_node(&self, server_node_id: Uuid) -> ApplicationResult<Option<ServerNode>>;
+    async fn update_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode>;
+    async fn delete_server_node(&self, server_node_id: Uuid) -> ApplicationResult<()>;
+    async fn list_node_runtimes_for_server(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>>;
+    async fn list_node_domains(
         &self,
-        node_group_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeGroupDomain>>;
-    async fn replace_node_group_domains(
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeDomain>>;
+    async fn replace_node_domains(
         &self,
-        node_group_id: Uuid,
-        domains: &[NodeGroupDomain],
-    ) -> ApplicationResult<Vec<NodeGroupDomain>>;
+        server_node_id: Uuid,
+        domains: &[NodeDomain],
+    ) -> ApplicationResult<Vec<NodeDomain>>;
     async fn create_enrollment_token(
         &self,
         record: NodeEnrollmentToken,
@@ -48,23 +49,36 @@ pub trait NodeRepository: Send + Sync {
         &self,
         token_hash: &str,
     ) -> ApplicationResult<Option<NodeEnrollmentToken>>;
+    async fn create_bootstrap_session(
+        &self,
+        session: NodeBootstrapSession,
+    ) -> ApplicationResult<NodeBootstrapSession>;
+    async fn consume_bootstrap_session(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<NodeBootstrapSession>>;
     async fn create_node(
         &self,
-        node: Node,
+        node: NodeRuntime,
         protocols: &[NodeCapability],
-    ) -> ApplicationResult<Node>;
+    ) -> ApplicationResult<NodeRuntime>;
     async fn find_node_by_token_hash(
         &self,
         token_hash: &str,
-    ) -> ApplicationResult<Option<Node>>;
-    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>>;
+    ) -> ApplicationResult<Option<NodeRuntime>>;
+    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<NodeRuntime>>;
+    async fn update_node_token_hash(
+        &self,
+        node_id: Uuid,
+        node_token_hash: &str,
+    ) -> ApplicationResult<()>;
     async fn update_node_heartbeat(
         &self,
         node_id: Uuid,
         version: &str,
         status: NodeStatus,
-    ) -> ApplicationResult<Option<Node>>;
-    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<Node>>;
+    ) -> ApplicationResult<Option<NodeRuntime>>;
+    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeRuntime>>;
     async fn list_node_capabilities(&self, node_id: Uuid)
     -> ApplicationResult<Vec<NodeCapability>>;
     async fn replace_node_endpoints(
@@ -129,44 +143,44 @@ impl<T> NodeRepository for &T
 where
     T: NodeRepository + Send + Sync,
 {
-    async fn create_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
-        (*self).create_node_group(group).await
+    async fn create_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode> {
+        (*self).create_server_node(group).await
     }
 
-    async fn list_node_groups(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeGroup>> {
-        (*self).list_node_groups(tenant_id).await
+    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>> {
+        (*self).list_server_nodes(tenant_id).await
     }
 
-    async fn find_node_group(&self, node_group_id: Uuid) -> ApplicationResult<Option<NodeGroup>> {
-        (*self).find_node_group(node_group_id).await
+    async fn find_server_node(&self, server_node_id: Uuid) -> ApplicationResult<Option<ServerNode>> {
+        (*self).find_server_node(server_node_id).await
     }
 
-    async fn update_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
-        (*self).update_node_group(group).await
+    async fn update_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode> {
+        (*self).update_server_node(group).await
     }
 
-    async fn delete_node_group(&self, node_group_id: Uuid) -> ApplicationResult<()> {
-        (*self).delete_node_group(node_group_id).await
+    async fn delete_server_node(&self, server_node_id: Uuid) -> ApplicationResult<()> {
+        (*self).delete_server_node(server_node_id).await
     }
 
-    async fn list_nodes_in_group(&self, node_group_id: Uuid) -> ApplicationResult<Vec<Node>> {
-        (*self).list_nodes_in_group(node_group_id).await
+    async fn list_node_runtimes_for_server(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>> {
+        (*self).list_node_runtimes_for_server(server_node_id).await
     }
 
-    async fn list_node_group_domains(
+    async fn list_node_domains(
         &self,
-        node_group_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
-        (*self).list_node_group_domains(node_group_id).await
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeDomain>> {
+        (*self).list_node_domains(server_node_id).await
     }
 
-    async fn replace_node_group_domains(
+    async fn replace_node_domains(
         &self,
-        node_group_id: Uuid,
-        domains: &[NodeGroupDomain],
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
+        server_node_id: Uuid,
+        domains: &[NodeDomain],
+    ) -> ApplicationResult<Vec<NodeDomain>> {
         (*self)
-            .replace_node_group_domains(node_group_id, domains)
+            .replace_node_domains(server_node_id, domains)
             .await
     }
 
@@ -184,23 +198,45 @@ where
         (*self).consume_enrollment_token(token_hash).await
     }
 
+    async fn create_bootstrap_session(
+        &self,
+        session: NodeBootstrapSession,
+    ) -> ApplicationResult<NodeBootstrapSession> {
+        (*self).create_bootstrap_session(session).await
+    }
+
+    async fn consume_bootstrap_session(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<NodeBootstrapSession>> {
+        (*self).consume_bootstrap_session(token_hash).await
+    }
+
     async fn create_node(
         &self,
-        node: Node,
+        node: NodeRuntime,
         protocols: &[NodeCapability],
-    ) -> ApplicationResult<Node> {
+    ) -> ApplicationResult<NodeRuntime> {
         (*self).create_node(node, protocols).await
     }
 
     async fn find_node_by_token_hash(
         &self,
         token_hash: &str,
-    ) -> ApplicationResult<Option<Node>> {
+    ) -> ApplicationResult<Option<NodeRuntime>> {
         (*self).find_node_by_token_hash(token_hash).await
     }
 
-    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>> {
+    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<NodeRuntime>> {
         (*self).find_node(node_id).await
+    }
+
+    async fn update_node_token_hash(
+        &self,
+        node_id: Uuid,
+        node_token_hash: &str,
+    ) -> ApplicationResult<()> {
+        (*self).update_node_token_hash(node_id, node_token_hash).await
     }
 
     async fn update_node_heartbeat(
@@ -208,13 +244,13 @@ where
         node_id: Uuid,
         version: &str,
         status: NodeStatus,
-    ) -> ApplicationResult<Option<Node>> {
+    ) -> ApplicationResult<Option<NodeRuntime>> {
         (*self)
             .update_node_heartbeat(node_id, version, status)
             .await
     }
 
-    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<Node>> {
+    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeRuntime>> {
         (*self).list_nodes(tenant_id).await
     }
 
@@ -292,11 +328,24 @@ where
 pub struct NodeService<R> {
     repository: R,
     rbac: RbacService,
+    token_hasher: TokenHasher,
 }
 
 impl<R> NodeService<R> {
     pub fn new(repository: R, rbac: RbacService) -> Self {
-        Self { repository, rbac }
+        Self::with_token_hasher(
+            repository,
+            rbac,
+            TokenHasher::new("anneal-default-token-hash-key").expect("token hasher"),
+        )
+    }
+
+    pub fn with_token_hasher(repository: R, rbac: RbacService, token_hasher: TokenHasher) -> Self {
+        Self {
+            repository,
+            rbac,
+            token_hasher,
+        }
     }
 }
 
@@ -304,12 +353,96 @@ impl<R> NodeService<R>
 where
     R: NodeRepository,
 {
-    pub async fn create_node_group(
+    async fn issue_enrollment_grant(
+        &self,
+        tenant_id: Uuid,
+        server_node_id: Uuid,
+        engine: ProxyEngine,
+        ttl: Duration,
+    ) -> ApplicationResult<EnrollmentGrant> {
+        let token = generate_token();
+        let now = Utc::now();
+        let record = NodeEnrollmentToken {
+            id: Uuid::new_v4(),
+            tenant_id,
+            server_node_id,
+            token_hash: self.token_hasher.hash(&token),
+            engine,
+            expires_at: now + ttl,
+            created_at: now,
+            used_at: None,
+        };
+        let record = self.repository.create_enrollment_token(record).await?;
+        Ok(EnrollmentGrant { token, record })
+    }
+
+    pub async fn create_bootstrap_token(
+        &self,
+        actor: &Actor,
+        tenant_id: Uuid,
+        server_node_id: Uuid,
+        node_name: String,
+        engines: Vec<ProxyEngine>,
+    ) -> ApplicationResult<NodeBootstrapGrant> {
+        self.rbac.authorize(
+            actor,
+            Permission::ManageNodes,
+            AccessScope {
+                target_tenant_id: Some(tenant_id),
+            },
+        )?;
+        let group = self
+            .repository
+            .find_server_node(server_node_id)
+            .await?
+            .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
+        if group.tenant_id != tenant_id {
+            return Err(ApplicationError::Forbidden);
+        }
+        let engines = deduplicate_engines(engines);
+        if engines.is_empty() {
+            return Err(ApplicationError::Validation(
+                "at least one engine is required".into(),
+            ));
+        }
+        let node_name = node_name.trim().to_owned();
+        if node_name.is_empty() {
+            return Err(ApplicationError::Validation(
+                "node name is required".into(),
+            ));
+        }
+        let now = Utc::now();
+        let expires_at = now + Duration::minutes(15);
+        let bootstrap_token = generate_token();
+        self.repository
+            .create_bootstrap_session(NodeBootstrapSession {
+                id: Uuid::new_v4(),
+                tenant_id,
+                server_node_id,
+                node_name: node_name.clone(),
+                engines: engines.clone(),
+                token_hash: self.token_hasher.hash(&bootstrap_token),
+                expires_at,
+                created_at: now,
+                used_at: None,
+            })
+            .await?;
+        Ok(NodeBootstrapGrant {
+            bootstrap_token,
+            tenant_id,
+            node_id: server_node_id,
+            node_name,
+            engines,
+            expires_at,
+        })
+    }
+
+    pub async fn create_server_node(
         &self,
         actor: &Actor,
         tenant_id: Uuid,
         name: String,
-    ) -> ApplicationResult<NodeGroup> {
+    ) -> ApplicationResult<ServerNode> {
         self.rbac.authorize(
             actor,
             Permission::ManageNodes,
@@ -319,7 +452,7 @@ where
         )?;
         let now = Utc::now();
         self.repository
-            .create_node_group(NodeGroup {
+            .create_server_node(ServerNode {
                 id: Uuid::new_v4(),
                 tenant_id,
                 name,
@@ -329,13 +462,13 @@ where
             .await
     }
 
-    pub async fn update_node_group(
+    pub async fn update_server_node(
         &self,
         actor: &Actor,
         tenant_id: Uuid,
-        node_group_id: Uuid,
+        server_node_id: Uuid,
         name: String,
-    ) -> ApplicationResult<NodeGroup> {
+    ) -> ApplicationResult<ServerNode> {
         self.rbac.authorize(
             actor,
             Permission::ManageNodes,
@@ -345,7 +478,7 @@ where
         )?;
         let mut group = self
             .repository
-            .find_node_group(node_group_id)
+            .find_server_node(server_node_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
         if group.tenant_id != tenant_id {
@@ -358,14 +491,14 @@ where
             ));
         }
         group.updated_at = Utc::now();
-        self.repository.update_node_group(group).await
+        self.repository.update_server_node(group).await
     }
 
-    pub async fn delete_node_group(
+    pub async fn delete_server_node(
         &self,
         actor: &Actor,
         tenant_id: Uuid,
-        node_group_id: Uuid,
+        server_node_id: Uuid,
     ) -> ApplicationResult<()> {
         self.rbac.authorize(
             actor,
@@ -376,20 +509,20 @@ where
         )?;
         let group = self
             .repository
-            .find_node_group(node_group_id)
+            .find_server_node(server_node_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
         if group.tenant_id != tenant_id {
             return Err(ApplicationError::Forbidden);
         }
-        self.repository.delete_node_group(node_group_id).await
+        self.repository.delete_server_node(server_node_id).await
     }
 
     pub async fn create_enrollment_token(
         &self,
         actor: &Actor,
         tenant_id: Uuid,
-        node_group_id: Uuid,
+        server_node_id: Uuid,
         engine: ProxyEngine,
     ) -> ApplicationResult<EnrollmentGrant> {
         self.rbac.authorize(
@@ -401,36 +534,24 @@ where
         )?;
         let group = self
             .repository
-            .find_node_group(node_group_id)
+            .find_server_node(server_node_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
         if group.tenant_id != tenant_id {
             return Err(ApplicationError::Forbidden);
         }
-        let token = generate_token();
-        let now = Utc::now();
-        let record = NodeEnrollmentToken {
-            id: Uuid::new_v4(),
-            tenant_id,
-            node_group_id,
-            token_hash: hash_token(&token),
-            engine,
-            expires_at: now + Duration::hours(12),
-            created_at: now,
-            used_at: None,
-        };
-        let record = self.repository.create_enrollment_token(record).await?;
-        Ok(EnrollmentGrant { token, record })
+        self.issue_enrollment_grant(tenant_id, server_node_id, engine, Duration::hours(12))
+            .await
     }
 
     pub async fn register_node(
         &self,
         token: &str,
-        registration: NodeRegistration,
-    ) -> ApplicationResult<crate::domain::NodeRegistrationGrant> {
+        registration: RuntimeRegistration,
+    ) -> ApplicationResult<RuntimeRegistrationGrant> {
         let record = self
             .repository
-            .consume_enrollment_token(&hash_token(token))
+            .consume_enrollment_token(&self.token_hasher.hash(token))
             .await?
             .ok_or(ApplicationError::Unauthorized)?;
         if record.used_at.is_some() || record.expires_at <= Utc::now() {
@@ -444,16 +565,16 @@ where
         validate_registered_protocols(registration.engine, &registration.protocols)?;
         let now = Utc::now();
         let node_token = generate_token();
-        let node = Node {
+        let node = NodeRuntime {
             id: Uuid::new_v4(),
             tenant_id: record.tenant_id,
-            node_group_id: record.node_group_id,
+            server_node_id: record.server_node_id,
             name: registration.name,
             engine: registration.engine,
             version: registration.version,
             status: NodeStatus::Online,
             last_seen_at: Some(now),
-            node_token_hash: hash_token(&node_token),
+            node_token_hash: self.token_hasher.hash(&node_token),
             created_at: now,
             updated_at: now,
         };
@@ -466,8 +587,50 @@ where
             })
             .collect::<Vec<_>>();
         let node = self.repository.create_node(node, &protocols).await?;
-        self.sync_node_group_endpoints(record.node_group_id).await?;
-        Ok(crate::domain::NodeRegistrationGrant { node, node_token })
+        self.sync_server_node_endpoints(record.server_node_id).await?;
+        Ok(RuntimeRegistrationGrant { runtime: node, node_token })
+    }
+
+    pub async fn bootstrap_nodes(
+        &self,
+        token: &str,
+        registrations: Vec<RuntimeRegistration>,
+    ) -> ApplicationResult<Vec<NodeBootstrapRuntimeGrant>> {
+        let session = self
+            .repository
+            .consume_bootstrap_session(&self.token_hasher.hash(token))
+            .await?
+            .ok_or(ApplicationError::Unauthorized)?;
+        if session.used_at.is_some() || session.expires_at <= Utc::now() {
+            return Err(ApplicationError::Unauthorized);
+        }
+        let registrations = registrations
+            .into_iter()
+            .map(|registration| (registration.engine, registration))
+            .collect::<HashMap<_, _>>();
+        let mut grants = Vec::with_capacity(session.engines.len());
+        for engine in &session.engines {
+            let mut registration = registrations
+                .get(engine)
+                .cloned()
+                .ok_or_else(|| {
+                    ApplicationError::Validation(format!(
+                        "missing bootstrap registration for {}",
+                        engine_name(*engine)
+                    ))
+                })?;
+            registration.name =
+                bootstrap_node_name(&session.node_name, *engine, session.engines.len());
+            let grant = self
+                .register_bootstrap_runtime(session.tenant_id, session.server_node_id, registration)
+                .await?;
+            grants.push(NodeBootstrapRuntimeGrant {
+                engine: *engine,
+                node_id: grant.runtime.id,
+                node_token: grant.node_token,
+            });
+        }
+        Ok(grants)
     }
 
     pub async fn heartbeat(
@@ -475,7 +638,7 @@ where
         node_id: Uuid,
         node_token: &str,
         version: &str,
-    ) -> ApplicationResult<Node> {
+    ) -> ApplicationResult<NodeRuntime> {
         let node = self.authenticate_node(node_id, node_token).await?;
         self.repository
             .update_node_heartbeat(node.id, version, NodeStatus::Online)
@@ -483,7 +646,57 @@ where
             .ok_or_else(|| ApplicationError::NotFound("node not found".into()))
     }
 
-    pub async fn list_nodes(&self, actor: &Actor) -> ApplicationResult<Vec<Node>> {
+    pub async fn rotate_node_token(
+        &self,
+        node_id: Uuid,
+        current_node_token: &str,
+    ) -> ApplicationResult<NodeTokenRotationGrant> {
+        let node = self.authenticate_node(node_id, current_node_token).await?;
+        let node_token = generate_token();
+        self.repository
+            .update_node_token_hash(node.id, &self.token_hasher.hash(&node_token))
+            .await?;
+        Ok(NodeTokenRotationGrant {
+            node_id: node.id,
+            node_token,
+        })
+    }
+
+    pub async fn reissue_bootstrap_for_node(
+        &self,
+        actor: &Actor,
+        tenant_id: Uuid,
+        node_id: Uuid,
+    ) -> ApplicationResult<NodeBootstrapGrant> {
+        self.rbac.authorize(
+            actor,
+            Permission::ManageNodes,
+            AccessScope {
+                target_tenant_id: Some(tenant_id),
+            },
+        )?;
+        let node = self
+            .repository
+            .find_node(node_id)
+            .await?
+            .ok_or_else(|| ApplicationError::NotFound("node not found".into()))?;
+        if node.tenant_id != tenant_id {
+            return Err(ApplicationError::Forbidden);
+        }
+        self.repository
+            .update_node_token_hash(node.id, &self.token_hasher.hash(&generate_token()))
+            .await?;
+        self.create_bootstrap_token(
+            actor,
+            tenant_id,
+            node.server_node_id,
+            node.name.clone(),
+            vec![node.engine],
+        )
+            .await
+    }
+
+    pub async fn list_nodes(&self, actor: &Actor) -> ApplicationResult<Vec<NodeRuntime>> {
         let tenant_id = if actor.role == UserRole::Reseller {
             actor.tenant_id
         } else {
@@ -499,7 +712,7 @@ where
         self.repository.list_nodes(tenant_id).await
     }
 
-    pub async fn list_node_groups(&self, actor: &Actor) -> ApplicationResult<Vec<NodeGroup>> {
+    pub async fn list_server_nodes(&self, actor: &Actor) -> ApplicationResult<Vec<ServerNode>> {
         let tenant_id = if actor.role == UserRole::Reseller {
             actor.tenant_id
         } else {
@@ -512,15 +725,15 @@ where
                 target_tenant_id: tenant_id,
             },
         )?;
-        self.repository.list_node_groups(tenant_id).await
+        self.repository.list_server_nodes(tenant_id).await
     }
 
-    pub async fn list_node_group_domains(
+    pub async fn list_node_domains(
         &self,
         actor: &Actor,
         tenant_id: Uuid,
-        node_group_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeDomain>> {
         self.rbac.authorize(
             actor,
             Permission::ManageNodes,
@@ -530,22 +743,22 @@ where
         )?;
         let group = self
             .repository
-            .find_node_group(node_group_id)
+            .find_server_node(server_node_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
         if group.tenant_id != tenant_id {
             return Err(ApplicationError::Forbidden);
         }
-        self.repository.list_node_group_domains(node_group_id).await
+        self.repository.list_node_domains(server_node_id).await
     }
 
-    pub async fn replace_node_group_domains(
+    pub async fn replace_node_domains(
         &self,
         actor: &Actor,
         tenant_id: Uuid,
-        node_group_id: Uuid,
-        drafts: Vec<NodeGroupDomainDraft>,
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
+        server_node_id: Uuid,
+        drafts: Vec<NodeDomainDraft>,
+    ) -> ApplicationResult<Vec<NodeDomain>> {
         self.rbac.authorize(
             actor,
             Permission::ManageNodes,
@@ -555,19 +768,19 @@ where
         )?;
         let group = self
             .repository
-            .find_node_group(node_group_id)
+            .find_server_node(server_node_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("node group not found".into()))?;
         if group.tenant_id != tenant_id {
             return Err(ApplicationError::Forbidden);
         }
         let now = Utc::now();
-        let domains = normalize_node_group_domains(node_group_id, drafts, now)?;
+        let domains = normalize_node_group_domains(server_node_id, drafts, now)?;
         let domains = self
             .repository
-            .replace_node_group_domains(node_group_id, &domains)
+            .replace_node_domains(server_node_id, &domains)
             .await?;
-        self.sync_node_group_endpoints(node_group_id).await?;
+        self.sync_server_node_endpoints(server_node_id).await?;
         Ok(domains)
     }
 
@@ -783,6 +996,41 @@ where
         Ok(rollout)
     }
 
+    async fn register_bootstrap_runtime(
+        &self,
+        tenant_id: Uuid,
+        server_node_id: Uuid,
+        registration: RuntimeRegistration,
+    ) -> ApplicationResult<RuntimeRegistrationGrant> {
+        validate_registered_protocols(registration.engine, &registration.protocols)?;
+        let now = Utc::now();
+        let node_token = generate_token();
+        let node = NodeRuntime {
+            id: Uuid::new_v4(),
+            tenant_id,
+            server_node_id,
+            name: registration.name,
+            engine: registration.engine,
+            version: registration.version,
+            status: NodeStatus::Online,
+            last_seen_at: Some(now),
+            node_token_hash: self.token_hasher.hash(&node_token),
+            created_at: now,
+            updated_at: now,
+        };
+        let protocols = registration
+            .protocols
+            .into_iter()
+            .map(|protocol| NodeCapability {
+                node_id: node.id,
+                protocol,
+            })
+            .collect::<Vec<_>>();
+        let node = self.repository.create_node(node, &protocols).await?;
+        self.sync_server_node_endpoints(server_node_id).await?;
+        Ok(RuntimeRegistrationGrant { runtime: node, node_token })
+    }
+
     pub fn resolve_status(
         last_seen_at: chrono::DateTime<Utc>,
         now: chrono::DateTime<Utc>,
@@ -795,14 +1043,14 @@ where
         }
     }
 
-    async fn authenticate_node(&self, node_id: Uuid, node_token: &str) -> ApplicationResult<Node> {
+    async fn authenticate_node(&self, node_id: Uuid, node_token: &str) -> ApplicationResult<NodeRuntime> {
         let node_token = node_token.trim();
         if node_token.is_empty() {
             return Err(ApplicationError::Unauthorized);
         }
         let node = self
             .repository
-            .find_node_by_token_hash(&hash_token(node_token))
+            .find_node_by_token_hash(&self.token_hasher.hash(node_token))
             .await?
             .ok_or(ApplicationError::Unauthorized)?;
         if node.id != node_id {
@@ -811,14 +1059,14 @@ where
         Ok(node)
     }
 
-    async fn sync_node_group_endpoints(&self, node_group_id: Uuid) -> ApplicationResult<()> {
-        let nodes = self.repository.list_nodes_in_group(node_group_id).await?;
+    async fn sync_server_node_endpoints(&self, server_node_id: Uuid) -> ApplicationResult<()> {
+        let nodes = self.repository.list_node_runtimes_for_server(server_node_id).await?;
         if nodes.is_empty() {
             return Ok(());
         }
         let domains = self
             .repository
-            .list_node_group_domains(node_group_id)
+            .list_node_domains(server_node_id)
             .await?;
         let mut capabilities_by_node = HashMap::new();
         let mut existing_endpoints_by_node = HashMap::new();
@@ -833,7 +1081,7 @@ where
         let mut resolved_domains = Vec::with_capacity(domains.len());
         for domain in domains {
             let public_hosts = resolve_public_hosts(&domain).await;
-            resolved_domains.push(ResolvedNodeGroupDomain {
+            resolved_domains.push(ResolvedNodeDomain {
                 domain,
                 public_hosts,
             });
@@ -859,10 +1107,11 @@ where
 
 #[derive(Default)]
 pub struct InMemoryNodeRepository {
-    groups: RwLock<HashMap<Uuid, NodeGroup>>,
-    domains: RwLock<HashMap<Uuid, Vec<NodeGroupDomain>>>,
+    groups: RwLock<HashMap<Uuid, ServerNode>>,
+    domains: RwLock<HashMap<Uuid, Vec<NodeDomain>>>,
     tokens: RwLock<HashMap<Uuid, NodeEnrollmentToken>>,
-    nodes: RwLock<HashMap<Uuid, Node>>,
+    bootstrap_sessions: RwLock<HashMap<Uuid, NodeBootstrapSession>>,
+    nodes: RwLock<HashMap<Uuid, NodeRuntime>>,
     capabilities: RwLock<HashMap<Uuid, Vec<NodeCapability>>>,
     endpoints: RwLock<HashMap<Uuid, Vec<NodeEndpoint>>>,
     revisions: RwLock<HashMap<Uuid, ConfigRevision>>,
@@ -871,7 +1120,7 @@ pub struct InMemoryNodeRepository {
 
 #[async_trait]
 impl NodeRepository for InMemoryNodeRepository {
-    async fn create_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
+    async fn create_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode> {
         self.groups
             .write()
             .expect("lock")
@@ -879,7 +1128,7 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(group)
     }
 
-    async fn list_node_groups(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeGroup>> {
+    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>> {
         Ok(self
             .groups
             .read()
@@ -890,16 +1139,16 @@ impl NodeRepository for InMemoryNodeRepository {
             .collect())
     }
 
-    async fn find_node_group(&self, node_group_id: Uuid) -> ApplicationResult<Option<NodeGroup>> {
+    async fn find_server_node(&self, server_node_id: Uuid) -> ApplicationResult<Option<ServerNode>> {
         Ok(self
             .groups
             .read()
             .expect("lock")
-            .get(&node_group_id)
+            .get(&server_node_id)
             .cloned())
     }
 
-    async fn update_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
+    async fn update_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode> {
         self.groups
             .write()
             .expect("lock")
@@ -907,21 +1156,21 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(group)
     }
 
-    async fn delete_node_group(&self, node_group_id: Uuid) -> ApplicationResult<()> {
-        self.groups.write().expect("lock").remove(&node_group_id);
-        self.domains.write().expect("lock").remove(&node_group_id);
+    async fn delete_server_node(&self, server_node_id: Uuid) -> ApplicationResult<()> {
+        self.groups.write().expect("lock").remove(&server_node_id);
+        self.domains.write().expect("lock").remove(&server_node_id);
         let node_ids = self
             .nodes
             .read()
             .expect("lock")
             .values()
-            .filter(|node| node.node_group_id == node_group_id)
+            .filter(|node| node.server_node_id == server_node_id)
             .map(|node| node.id)
             .collect::<Vec<_>>();
         self.nodes
             .write()
             .expect("lock")
-            .retain(|_, node| node.node_group_id != node_group_id);
+            .retain(|_, node| node.server_node_id != server_node_id);
         self.capabilities
             .write()
             .expect("lock")
@@ -933,7 +1182,7 @@ impl NodeRepository for InMemoryNodeRepository {
         self.tokens
             .write()
             .expect("lock")
-            .retain(|_, token| token.node_group_id != node_group_id);
+            .retain(|_, token| token.server_node_id != server_node_id);
         self.rollouts
             .write()
             .expect("lock")
@@ -941,39 +1190,39 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(())
     }
 
-    async fn list_nodes_in_group(&self, node_group_id: Uuid) -> ApplicationResult<Vec<Node>> {
+    async fn list_node_runtimes_for_server(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>> {
         Ok(self
             .nodes
             .read()
             .expect("lock")
             .values()
-            .filter(|node| node.node_group_id == node_group_id)
+            .filter(|node| node.server_node_id == server_node_id)
             .cloned()
             .collect())
     }
 
-    async fn list_node_group_domains(
+    async fn list_node_domains(
         &self,
-        node_group_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeDomain>> {
         Ok(self
             .domains
             .read()
             .expect("lock")
-            .get(&node_group_id)
+            .get(&server_node_id)
             .cloned()
             .unwrap_or_default())
     }
 
-    async fn replace_node_group_domains(
+    async fn replace_node_domains(
         &self,
-        node_group_id: Uuid,
-        domains: &[NodeGroupDomain],
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
+        server_node_id: Uuid,
+        domains: &[NodeDomain],
+    ) -> ApplicationResult<Vec<NodeDomain>> {
         self.domains
             .write()
             .expect("lock")
-            .insert(node_group_id, domains.to_vec());
+            .insert(server_node_id, domains.to_vec());
         Ok(domains.to_vec())
     }
 
@@ -1004,11 +1253,38 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(found)
     }
 
+    async fn create_bootstrap_session(
+        &self,
+        session: NodeBootstrapSession,
+    ) -> ApplicationResult<NodeBootstrapSession> {
+        self.bootstrap_sessions
+            .write()
+            .expect("lock")
+            .insert(session.id, session.clone());
+        Ok(session)
+    }
+
+    async fn consume_bootstrap_session(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<NodeBootstrapSession>> {
+        let mut sessions = self.bootstrap_sessions.write().expect("lock");
+        let found = sessions
+            .values_mut()
+            .find(|session| session.token_hash == token_hash && session.used_at.is_none())
+            .map(|session| {
+                let snapshot = session.clone();
+                session.used_at = Some(Utc::now());
+                snapshot
+            });
+        Ok(found)
+    }
+
     async fn create_node(
         &self,
-        node: Node,
+        node: NodeRuntime,
         protocols: &[NodeCapability],
-    ) -> ApplicationResult<Node> {
+    ) -> ApplicationResult<NodeRuntime> {
         self.nodes
             .write()
             .expect("lock")
@@ -1023,7 +1299,7 @@ impl NodeRepository for InMemoryNodeRepository {
     async fn find_node_by_token_hash(
         &self,
         token_hash: &str,
-    ) -> ApplicationResult<Option<Node>> {
+    ) -> ApplicationResult<Option<NodeRuntime>> {
         Ok(self
             .nodes
             .read()
@@ -1033,8 +1309,22 @@ impl NodeRepository for InMemoryNodeRepository {
             .cloned())
     }
 
-    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>> {
+    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<NodeRuntime>> {
         Ok(self.nodes.read().expect("lock").get(&node_id).cloned())
+    }
+
+    async fn update_node_token_hash(
+        &self,
+        node_id: Uuid,
+        node_token_hash: &str,
+    ) -> ApplicationResult<()> {
+        let mut nodes = self.nodes.write().expect("lock");
+        let node = nodes
+            .get_mut(&node_id)
+            .ok_or_else(|| ApplicationError::NotFound("node not found".into()))?;
+        node.node_token_hash = node_token_hash.into();
+        node.updated_at = Utc::now();
+        Ok(())
     }
 
     async fn update_node_heartbeat(
@@ -1042,7 +1332,7 @@ impl NodeRepository for InMemoryNodeRepository {
         node_id: Uuid,
         version: &str,
         status: NodeStatus,
-    ) -> ApplicationResult<Option<Node>> {
+    ) -> ApplicationResult<Option<NodeRuntime>> {
         let mut nodes = self.nodes.write().expect("lock");
         let updated = nodes.get_mut(&node_id).map(|node| {
             node.version = version.into();
@@ -1054,7 +1344,7 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(updated)
     }
 
-    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<Node>> {
+    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeRuntime>> {
         Ok(self
             .nodes
             .read()
@@ -1239,10 +1529,14 @@ pub fn generate_token() -> String {
         .collect()
 }
 
-pub fn hash_token(token: &str) -> String {
-    let mut digest = Sha256::new();
-    digest.update(token.as_bytes());
-    format!("{:x}", digest.finalize())
+fn deduplicate_engines(engines: Vec<ProxyEngine>) -> Vec<ProxyEngine> {
+    let mut deduplicated = Vec::new();
+    for engine in engines {
+        if !deduplicated.contains(&engine) {
+            deduplicated.push(engine);
+        }
+    }
+    deduplicated
 }
 
 fn validate_registered_protocols(
@@ -1287,6 +1581,13 @@ fn normalize_endpoint_draft(mut draft: NodeEndpointDraft) -> NodeEndpointDraft {
         if is_blank_option(&draft.reality_short_id) {
             draft.reality_short_id = Some(generate_reality_short_id());
         }
+    }
+    if matches!(draft.security, SecurityKind::Tls) {
+        draft.tls_certificate_path = Some(DEFAULT_TLS_CERTIFICATE_PATH.into());
+        draft.tls_key_path = Some(DEFAULT_TLS_KEY_PATH.into());
+    } else {
+        draft.tls_certificate_path = None;
+        draft.tls_key_path = None;
     }
     draft
 }
@@ -1335,16 +1636,16 @@ struct GeneratedTemplate {
     include_host_header: bool,
 }
 
-struct ResolvedNodeGroupDomain {
-    domain: NodeGroupDomain,
+struct ResolvedNodeDomain {
+    domain: NodeDomain,
     public_hosts: Vec<String>,
 }
 
 fn normalize_node_group_domains(
-    node_group_id: Uuid,
-    drafts: Vec<NodeGroupDomainDraft>,
+    server_node_id: Uuid,
+    drafts: Vec<NodeDomainDraft>,
     now: chrono::DateTime<Utc>,
-) -> ApplicationResult<Vec<NodeGroupDomain>> {
+) -> ApplicationResult<Vec<NodeDomain>> {
     drafts
         .into_iter()
         .map(|draft| {
@@ -1352,9 +1653,9 @@ fn normalize_node_group_domains(
             if domain.is_empty() {
                 return Err(ApplicationError::Validation("domain is required".into()));
             }
-            Ok(NodeGroupDomain {
+            Ok(NodeDomain {
                 id: Uuid::new_v4(),
-                node_group_id,
+                server_node_id,
                 mode: draft.mode,
                 domain,
                 alias: normalize_optional_string(draft.alias),
@@ -1365,6 +1666,20 @@ fn normalize_node_group_domains(
             })
         })
         .collect()
+}
+
+fn bootstrap_node_name(base_name: &str, engine: ProxyEngine, engines_count: usize) -> String {
+    if engines_count == 1 {
+        return base_name.to_owned();
+    }
+    format!("{base_name}-{}", engine_key(engine))
+}
+
+fn engine_key(engine: ProxyEngine) -> &'static str {
+    match engine {
+        ProxyEngine::Xray => "xray",
+        ProxyEngine::Singbox => "singbox",
+    }
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -1446,9 +1761,9 @@ fn endpoint_state_key(endpoint: &NodeEndpoint) -> String {
 }
 
 fn build_group_generated_endpoints(
-    nodes: &[Node],
+    nodes: &[NodeRuntime],
     capabilities_by_node: &HashMap<Uuid, Vec<NodeCapability>>,
-    domains: &[ResolvedNodeGroupDomain],
+    domains: &[ResolvedNodeDomain],
 ) -> ApplicationResult<HashMap<Uuid, Vec<NodeEndpoint>>> {
     let mut result = nodes
         .iter()
@@ -1502,9 +1817,9 @@ fn build_group_generated_endpoints(
 }
 
 fn build_domain_endpoint_drafts(
-    nodes: &[Node],
+    nodes: &[NodeRuntime],
     capabilities_by_node: &HashMap<Uuid, Vec<NodeCapability>>,
-    resolved_domain: &ResolvedNodeGroupDomain,
+    resolved_domain: &ResolvedNodeDomain,
 ) -> HashMap<Uuid, Vec<NodeEndpointDraft>> {
     let mut result = HashMap::new();
     let domain = &resolved_domain.domain;
@@ -1581,8 +1896,8 @@ fn build_domain_endpoint_drafts(
     result
 }
 
-async fn resolve_public_hosts(domain: &NodeGroupDomain) -> Vec<String> {
-    if domain.mode != NodeGroupDomainMode::AutoCdn {
+async fn resolve_public_hosts(domain: &NodeDomain) -> Vec<String> {
+    if domain.mode != NodeDomainMode::AutoCdn {
         return vec![domain.domain.clone()];
     }
     let Ok(addresses) = tokio::net::lookup_host((domain.domain.as_str(), 443)).await else {
@@ -1600,9 +1915,9 @@ async fn resolve_public_hosts(domain: &NodeGroupDomain) -> Vec<String> {
     }
 }
 
-fn endpoint_templates_for_mode(mode: NodeGroupDomainMode) -> Vec<GeneratedTemplate> {
+fn endpoint_templates_for_mode(mode: NodeDomainMode) -> Vec<GeneratedTemplate> {
     match mode {
-        NodeGroupDomainMode::Reality => vec![GeneratedTemplate {
+        NodeDomainMode::Reality => vec![GeneratedTemplate {
             protocol: ProtocolKind::VlessReality,
             transport: anneal_config_engine::TransportKind::Tcp,
             security: SecurityKind::Reality,
@@ -1615,7 +1930,7 @@ fn endpoint_templates_for_mode(mode: NodeGroupDomainMode) -> Vec<GeneratedTempla
             fingerprint: Some("chrome"),
             include_host_header: false,
         }],
-        NodeGroupDomainMode::Worker => vec![
+        NodeDomainMode::Worker => vec![
             GeneratedTemplate {
                 protocol: ProtocolKind::VlessReality,
                 transport: anneal_config_engine::TransportKind::Ws,
@@ -1670,13 +1985,13 @@ fn endpoint_templates_for_mode(mode: NodeGroupDomainMode) -> Vec<GeneratedTempla
             },
         ],
         _ => {
-            let include_grpc = mode != NodeGroupDomainMode::LegacyDirect;
+            let include_grpc = mode != NodeDomainMode::LegacyDirect;
             let include_udp = matches!(
                 mode,
-                NodeGroupDomainMode::Direct
-                    | NodeGroupDomainMode::LegacyDirect
-                    | NodeGroupDomainMode::Relay
-                    | NodeGroupDomainMode::Fake
+                NodeDomainMode::Direct
+                    | NodeDomainMode::LegacyDirect
+                    | NodeDomainMode::Relay
+                    | NodeDomainMode::Fake
             );
             let mut templates = vec![
                 GeneratedTemplate {
@@ -1929,9 +2244,9 @@ fn endpoint_templates_for_mode(mode: NodeGroupDomainMode) -> Vec<GeneratedTempla
 
 fn select_owner_node<'a>(
     protocol: ProtocolKind,
-    nodes: &'a [Node],
+    nodes: &'a [NodeRuntime],
     capabilities_by_node: &HashMap<Uuid, Vec<NodeCapability>>,
-) -> Option<&'a Node> {
+) -> Option<&'a NodeRuntime> {
     let priorities = match protocol {
         ProtocolKind::Tuic | ProtocolKind::Hysteria2 => {
             [ProxyEngine::Singbox, ProxyEngine::Singbox]
@@ -1949,7 +2264,7 @@ fn select_owner_node<'a>(
 }
 
 fn node_supports_protocol(
-    node: &Node,
+    node: &NodeRuntime,
     protocol: ProtocolKind,
     capabilities_by_node: &HashMap<Uuid, Vec<NodeCapability>>,
 ) -> bool {
@@ -2091,7 +2406,7 @@ mod tests {
 
     use crate::{
         application::{InMemoryNodeRepository, NodeRepository, NodeService},
-        domain::{NodeEndpointDraft, NodeGroupDomainDraft, NodeGroupDomainMode, NodeRegistration},
+        domain::{NodeEndpointDraft, NodeDomainDraft, NodeDomainMode, RuntimeRegistration},
     };
 
     fn draft_from_endpoint(endpoint: &crate::domain::NodeEndpoint) -> NodeEndpointDraft {
@@ -2131,7 +2446,7 @@ mod tests {
         };
 
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2147,7 +2462,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2170,7 +2485,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2185,7 +2500,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Singbox,
@@ -2245,7 +2560,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2260,7 +2575,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2315,7 +2630,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2330,7 +2645,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2391,7 +2706,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2406,7 +2721,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2463,7 +2778,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let xray_token = service
@@ -2487,7 +2802,7 @@ mod tests {
         let xray = service
             .register_node(
                 &xray_token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-xray".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2504,7 +2819,7 @@ mod tests {
         let singbox = service
             .register_node(
                 &singbox_token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-singbox".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Singbox,
@@ -2522,12 +2837,12 @@ mod tests {
             .expect("register singbox");
 
         let domains = service
-            .replace_node_group_domains(
+            .replace_node_domains(
                 &actor,
                 actor.tenant_id.expect("tenant"),
                 group.id,
-                vec![NodeGroupDomainDraft {
-                    mode: NodeGroupDomainMode::Direct,
+                vec![NodeDomainDraft {
+                    mode: NodeDomainMode::Direct,
                     domain: "edge.example.com".into(),
                     alias: Some("main".into()),
                     server_names: vec![],
@@ -2580,7 +2895,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2595,7 +2910,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-xray".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2606,12 +2921,12 @@ mod tests {
             .expect("register");
 
         service
-            .replace_node_group_domains(
+            .replace_node_domains(
                 &actor,
                 actor.tenant_id.expect("tenant"),
                 group.id,
-                vec![NodeGroupDomainDraft {
-                    mode: NodeGroupDomainMode::Reality,
+                vec![NodeDomainDraft {
+                    mode: NodeDomainMode::Reality,
                     domain: "gateway.example.com".into(),
                     alias: None,
                     server_names: vec!["cdn-a.example.com".into(), "cdn-b.example.com".into()],
@@ -2657,7 +2972,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2672,7 +2987,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-xray".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2688,12 +3003,12 @@ mod tests {
             .expect("register");
 
         service
-            .replace_node_group_domains(
+            .replace_node_domains(
                 &actor,
                 actor.tenant_id.expect("tenant"),
                 group.id,
-                vec![NodeGroupDomainDraft {
-                    mode: NodeGroupDomainMode::Direct,
+                vec![NodeDomainDraft {
+                    mode: NodeDomainMode::Direct,
                     domain: "edge.example.com".into(),
                     alias: None,
                     server_names: vec![],
@@ -2741,12 +3056,12 @@ mod tests {
             .id;
 
         service
-            .replace_node_group_domains(
+            .replace_node_domains(
                 &actor,
                 actor.tenant_id.expect("tenant"),
                 group.id,
-                vec![NodeGroupDomainDraft {
-                    mode: NodeGroupDomainMode::Direct,
+                vec![NodeDomainDraft {
+                    mode: NodeDomainMode::Direct,
                     domain: "edge.example.com".into(),
                     alias: None,
                     server_names: vec![],
@@ -2777,7 +3092,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let token = service
@@ -2792,7 +3107,7 @@ mod tests {
         let node = service
             .register_node(
                 &token.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-xray".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2803,12 +3118,12 @@ mod tests {
             .expect("register");
 
         service
-            .replace_node_group_domains(
+            .replace_node_domains(
                 &actor,
                 actor.tenant_id.expect("tenant"),
                 group.id,
-                vec![NodeGroupDomainDraft {
-                    mode: NodeGroupDomainMode::Reality,
+                vec![NodeDomainDraft {
+                    mode: NodeDomainMode::Reality,
                     domain: "gateway.example.com".into(),
                     alias: None,
                     server_names: vec!["cdn-a.example.com".into()],
@@ -2827,12 +3142,12 @@ mod tests {
             .expect("first endpoint");
 
         service
-            .replace_node_group_domains(
+            .replace_node_domains(
                 &actor,
                 actor.tenant_id.expect("tenant"),
                 group.id,
-                vec![NodeGroupDomainDraft {
-                    mode: NodeGroupDomainMode::Reality,
+                vec![NodeDomainDraft {
+                    mode: NodeDomainMode::Reality,
                     domain: "gateway.example.com".into(),
                     alias: None,
                     server_names: vec!["cdn-a.example.com".into()],
@@ -2876,7 +3191,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let grant = service
@@ -2891,7 +3206,7 @@ mod tests {
         let node = service
             .register_node(
                 &grant.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2929,7 +3244,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&owner, owner.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&owner, owner.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
 
@@ -2955,7 +3270,7 @@ mod tests {
             role: UserRole::Reseller,
         };
         let group = service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let first_grant = service
@@ -2979,7 +3294,7 @@ mod tests {
         let first_node = service
             .register_node(
                 &first_grant.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-a".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -2991,7 +3306,7 @@ mod tests {
         let second_node = service
             .register_node(
                 &second_grant.token,
-                NodeRegistration {
+                RuntimeRegistration {
                     name: "edge-b".into(),
                     version: "1.0.0".into(),
                     engine: ProxyEngine::Xray,
@@ -3043,4 +3358,204 @@ mod tests {
         assert_eq!(acknowledged.id, rollout.id);
         assert_eq!(acknowledged.node_id, first_node.id);
     }
+
+    #[tokio::test]
+    async fn bootstrap_token_registers_multiple_runtimes_once() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let bootstrap = service
+            .create_bootstrap_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                "edge".into(),
+                vec![ProxyEngine::Xray, ProxyEngine::Singbox],
+            )
+            .await
+            .expect("bootstrap");
+
+        let grants = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-xray".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![ProtocolKind::VlessReality],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-singbox".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
+                    },
+                ],
+            )
+            .await
+            .expect("bootstrap nodes");
+
+        assert_eq!(grants.len(), 2);
+
+        let second_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![RuntimeRegistration {
+                    name: "edge-xray".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                }],
+            )
+            .await
+            .expect_err("bootstrap token must be one-time via consumed grants");
+        assert!(matches!(
+            second_attempt,
+            anneal_core::ApplicationError::Unauthorized
+        ));
+    }
+
+    #[tokio::test]
+    async fn rotating_node_token_invalidates_previous_token() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let enrollment = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect("token");
+        let node = service
+            .register_node(
+                &enrollment.token,
+                RuntimeRegistration {
+                    name: "edge-1".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                },
+            )
+            .await
+            .expect("register");
+
+        let rotated = service
+            .rotate_node_token(node.id, &node.node_token)
+            .await
+            .expect("rotate");
+
+        let old_error = service
+            .heartbeat(node.id, &node.node_token, "1.0.1")
+            .await
+            .expect_err("old token must fail");
+        assert!(matches!(old_error, anneal_core::ApplicationError::Unauthorized));
+
+        let updated = service
+            .heartbeat(rotated.node_id, &rotated.node_token, "1.0.1")
+            .await
+            .expect("heartbeat");
+        assert_eq!(updated.version, "1.0.1");
+    }
+
+    #[tokio::test]
+    async fn manual_tls_paths_are_overwritten_with_managed_defaults() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let enrollment = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect("token");
+        let node = service
+            .register_node(
+                &enrollment.token,
+                RuntimeRegistration {
+                    name: "edge-1".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::Vmess],
+                },
+            )
+            .await
+            .expect("register");
+
+        let endpoints = service
+            .replace_node_endpoints(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                node.id,
+                vec![NodeEndpointDraft {
+                    protocol: ProtocolKind::Vmess,
+                    listen_host: "0.0.0.0".into(),
+                    listen_port: 8443,
+                    public_host: "edge.example.com".into(),
+                    public_port: 443,
+                    transport: anneal_config_engine::TransportKind::Ws,
+                    security: SecurityKind::Tls,
+                    server_name: Some("edge.example.com".into()),
+                    host_header: None,
+                    path: Some("/ws".into()),
+                    service_name: None,
+                    flow: None,
+                    reality_public_key: None,
+                    reality_private_key: None,
+                    reality_short_id: None,
+                    fingerprint: Some("chrome".into()),
+                    alpn: vec!["http/1.1".into()],
+                    cipher: None,
+                    tls_certificate_path: Some("/tmp/custom.crt".into()),
+                    tls_key_path: Some("/tmp/custom.key".into()),
+                    enabled: true,
+                }],
+            )
+            .await
+            .expect("replace endpoints");
+
+        assert_eq!(
+            endpoints[0].tls_certificate_path.as_deref(),
+            Some(super::DEFAULT_TLS_CERTIFICATE_PATH)
+        );
+        assert_eq!(
+            endpoints[0].tls_key_path.as_deref(),
+            Some(super::DEFAULT_TLS_KEY_PATH)
+        );
+    }
 }
+
+
+
+
+

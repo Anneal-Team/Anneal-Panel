@@ -7,8 +7,8 @@ use anneal_core::{ApplicationError, ApplicationResult, DeploymentStatus, NodeSta
 use crate::{
     application::NodeRepository,
     domain::{
-        ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, Node, NodeCapability,
-        NodeEndpoint, NodeEnrollmentToken, NodeGroup, NodeGroupDomain,
+        ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, NodeRuntime, NodeCapability,
+        NodeBootstrapSession, NodeEndpoint, NodeEnrollmentToken, ServerNode, NodeDomain,
     },
 };
 
@@ -51,7 +51,7 @@ impl PgNodeRepository {
 
 #[async_trait]
 impl NodeRepository for PgNodeRepository {
-    async fn create_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
+    async fn create_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode> {
         sqlx::query(
             "insert into node_groups (id, tenant_id, name, created_at, updated_at) values ($1,$2,$3,$4,$5)",
         )
@@ -66,16 +66,16 @@ impl NodeRepository for PgNodeRepository {
         Ok(group)
     }
 
-    async fn list_node_groups(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeGroup>> {
+    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>> {
         let rows = if let Some(tenant_id) = tenant_id {
-            sqlx::query_as::<_, NodeGroup>(
+            sqlx::query_as::<_, ServerNode>(
                 "select * from node_groups where tenant_id = $1 order by name asc",
             )
             .bind(tenant_id)
             .fetch_all(&self.pool)
             .await
         } else {
-            sqlx::query_as::<_, NodeGroup>("select * from node_groups order by name asc")
+            sqlx::query_as::<_, ServerNode>("select * from node_groups order by name asc")
                 .fetch_all(&self.pool)
                 .await
         }
@@ -83,15 +83,15 @@ impl NodeRepository for PgNodeRepository {
         Ok(rows)
     }
 
-    async fn find_node_group(&self, node_group_id: Uuid) -> ApplicationResult<Option<NodeGroup>> {
-        sqlx::query_as::<_, NodeGroup>("select * from node_groups where id = $1")
+    async fn find_server_node(&self, node_group_id: Uuid) -> ApplicationResult<Option<ServerNode>> {
+        sqlx::query_as::<_, ServerNode>("select * from node_groups where id = $1")
             .bind(node_group_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn update_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
+    async fn update_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode> {
         sqlx::query("update node_groups set name = $2, updated_at = $3 where id = $1")
             .bind(group.id)
             .bind(&group.name)
@@ -102,7 +102,7 @@ impl NodeRepository for PgNodeRepository {
         Ok(group)
     }
 
-    async fn delete_node_group(&self, node_group_id: Uuid) -> ApplicationResult<()> {
+    async fn delete_server_node(&self, node_group_id: Uuid) -> ApplicationResult<()> {
         sqlx::query("delete from node_groups where id = $1")
             .bind(node_group_id)
             .execute(&self.pool)
@@ -111,8 +111,8 @@ impl NodeRepository for PgNodeRepository {
         Ok(())
     }
 
-    async fn list_nodes_in_group(&self, node_group_id: Uuid) -> ApplicationResult<Vec<Node>> {
-        sqlx::query_as::<_, Node>(
+    async fn list_node_runtimes_for_server(&self, node_group_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>> {
+        sqlx::query_as::<_, NodeRuntime>(
             "select * from nodes where node_group_id = $1 order by engine::text asc, name asc",
         )
         .bind(node_group_id)
@@ -121,11 +121,11 @@ impl NodeRepository for PgNodeRepository {
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn list_node_group_domains(
+    async fn list_node_domains(
         &self,
         node_group_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
-        sqlx::query_as::<_, NodeGroupDomain>(
+    ) -> ApplicationResult<Vec<NodeDomain>> {
+        sqlx::query_as::<_, NodeDomain>(
             "select * from node_group_domains where node_group_id = $1 order by created_at asc",
         )
         .bind(node_group_id)
@@ -134,11 +134,11 @@ impl NodeRepository for PgNodeRepository {
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn replace_node_group_domains(
+    async fn replace_node_domains(
         &self,
         node_group_id: Uuid,
-        domains: &[NodeGroupDomain],
-    ) -> ApplicationResult<Vec<NodeGroupDomain>> {
+        domains: &[NodeDomain],
+    ) -> ApplicationResult<Vec<NodeDomain>> {
         let mut transaction = self
             .pool
             .begin()
@@ -158,7 +158,7 @@ impl NodeRepository for PgNodeRepository {
                 "#,
             )
             .bind(domain.id)
-            .bind(domain.node_group_id)
+            .bind(domain.server_node_id)
             .bind(domain.mode)
             .bind(&domain.domain)
             .bind(&domain.alias)
@@ -190,7 +190,7 @@ impl NodeRepository for PgNodeRepository {
         )
         .bind(record.id)
         .bind(record.tenant_id)
-        .bind(record.node_group_id)
+        .bind(record.server_node_id)
         .bind(&record.token_hash)
         .bind(record.engine)
         .bind(record.expires_at)
@@ -240,11 +240,75 @@ impl NodeRepository for PgNodeRepository {
         Ok(record)
     }
 
+    async fn create_bootstrap_session(
+        &self,
+        session: NodeBootstrapSession,
+    ) -> ApplicationResult<NodeBootstrapSession> {
+        sqlx::query(
+            r#"
+            insert into node_bootstrap_sessions (
+                id, tenant_id, node_group_id, node_name, engines, token_hash, expires_at, created_at, used_at
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            "#,
+        )
+        .bind(session.id)
+        .bind(session.tenant_id)
+        .bind(session.server_node_id)
+        .bind(&session.node_name)
+        .bind(&session.engines)
+        .bind(&session.token_hash)
+        .bind(session.expires_at)
+        .bind(session.created_at)
+        .bind(session.used_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(session)
+    }
+
+    async fn consume_bootstrap_session(
+        &self,
+        token_hash: &str,
+    ) -> ApplicationResult<Option<NodeBootstrapSession>> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let session = sqlx::query_as::<_, NodeBootstrapSession>(
+            r#"
+            select * from node_bootstrap_sessions
+            where token_hash = $1 and used_at is null
+            order by created_at desc
+            limit 1
+            for update
+            "#,
+        )
+        .bind(token_hash)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        if let Some(session) = &session {
+            sqlx::query(
+                "update node_bootstrap_sessions set used_at = now() at time zone 'utc' where id = $1",
+            )
+            .bind(session.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(session)
+    }
+
     async fn create_node(
         &self,
-        node: Node,
+        node: NodeRuntime,
         protocols: &[NodeCapability],
-    ) -> ApplicationResult<Node> {
+    ) -> ApplicationResult<NodeRuntime> {
         let mut transaction = self
             .pool
             .begin()
@@ -259,7 +323,7 @@ impl NodeRepository for PgNodeRepository {
         )
         .bind(node.id)
         .bind(node.tenant_id)
-        .bind(node.node_group_id)
+        .bind(node.server_node_id)
         .bind(&node.name)
         .bind(node.engine)
         .bind(&node.version)
@@ -286,19 +350,35 @@ impl NodeRepository for PgNodeRepository {
         Ok(node)
     }
 
-    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<Node>> {
-        sqlx::query_as::<_, Node>("select * from nodes where id = $1")
+    async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<NodeRuntime>> {
+        sqlx::query_as::<_, NodeRuntime>("select * from nodes where id = $1")
             .bind(node_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
+    async fn update_node_token_hash(
+        &self,
+        node_id: Uuid,
+        node_token_hash: &str,
+    ) -> ApplicationResult<()> {
+        sqlx::query(
+            "update nodes set node_token_hash = $2, updated_at = now() at time zone 'utc' where id = $1",
+        )
+        .bind(node_id)
+        .bind(node_token_hash)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(())
+    }
+
     async fn find_node_by_token_hash(
         &self,
         token_hash: &str,
-    ) -> ApplicationResult<Option<Node>> {
-        sqlx::query_as::<_, Node>("select * from nodes where node_token_hash = $1")
+    ) -> ApplicationResult<Option<NodeRuntime>> {
+        sqlx::query_as::<_, NodeRuntime>("select * from nodes where node_token_hash = $1")
             .bind(token_hash)
             .fetch_optional(&self.pool)
             .await
@@ -310,8 +390,8 @@ impl NodeRepository for PgNodeRepository {
         node_id: Uuid,
         version: &str,
         status: NodeStatus,
-    ) -> ApplicationResult<Option<Node>> {
-        sqlx::query_as::<_, Node>(
+    ) -> ApplicationResult<Option<NodeRuntime>> {
+        sqlx::query_as::<_, NodeRuntime>(
             r#"
             update nodes
             set version = $2, status = $3, last_seen_at = now() at time zone 'utc', updated_at = now() at time zone 'utc'
@@ -327,14 +407,14 @@ impl NodeRepository for PgNodeRepository {
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<Node>> {
+    async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeRuntime>> {
         let rows = if let Some(tenant_id) = tenant_id {
-            sqlx::query_as::<_, Node>("select * from nodes where tenant_id = $1 order by name asc")
+            sqlx::query_as::<_, NodeRuntime>("select * from nodes where tenant_id = $1 order by name asc")
                 .bind(tenant_id)
                 .fetch_all(&self.pool)
                 .await
         } else {
-            sqlx::query_as::<_, Node>("select * from nodes order by name asc")
+            sqlx::query_as::<_, NodeRuntime>("select * from nodes order by name asc")
                 .fetch_all(&self.pool)
                 .await
         }
@@ -621,3 +701,7 @@ impl NodeRepository for PgNodeRepository {
         Ok(())
     }
 }
+
+
+
+

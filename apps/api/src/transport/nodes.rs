@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use anneal_core::{ProtocolKind, ProxyEngine};
-use anneal_nodes::{NodeEndpointDraft, NodeGroupDomainDraft, NodeRegistration};
+use anneal_nodes::{NodeEndpointDraft, NodeDomainDraft, RuntimeRegistration};
 
 use crate::{
     app_state::AppState, error::ApiError, extractors::authenticated_actor,
@@ -19,7 +19,7 @@ use crate::{
 #[derive(Debug, Serialize, ToSchema)]
 pub struct NodeEndpointResponse {
     pub id: Uuid,
-    pub node_id: Uuid,
+    pub node_runtime_id: Uuid,
     pub protocol: ProtocolKind,
     pub listen_host: String,
     pub listen_port: i32,
@@ -37,8 +37,6 @@ pub struct NodeEndpointResponse {
     pub fingerprint: Option<String>,
     pub alpn: Vec<String>,
     pub cipher: Option<String>,
-    pub tls_certificate_path: Option<String>,
-    pub tls_key_path: Option<String>,
     pub enabled: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -48,7 +46,7 @@ impl From<anneal_nodes::NodeEndpoint> for NodeEndpointResponse {
     fn from(endpoint: anneal_nodes::NodeEndpoint) -> Self {
         Self {
             id: endpoint.id,
-            node_id: endpoint.node_id,
+            node_runtime_id: endpoint.node_id,
             protocol: endpoint.protocol,
             listen_host: endpoint.listen_host,
             listen_port: endpoint.listen_port,
@@ -66,8 +64,6 @@ impl From<anneal_nodes::NodeEndpoint> for NodeEndpointResponse {
             fingerprint: endpoint.fingerprint,
             alpn: endpoint.alpn,
             cipher: endpoint.cipher,
-            tls_certificate_path: endpoint.tls_certificate_path,
-            tls_key_path: endpoint.tls_key_path,
             enabled: endpoint.enabled,
             created_at: endpoint.created_at,
             updated_at: endpoint.updated_at,
@@ -79,7 +75,7 @@ impl From<anneal_nodes::NodeEndpoint> for NodeEndpointResponse {
 pub struct DeploymentRolloutResponse {
     pub id: Uuid,
     pub tenant_id: Uuid,
-    pub node_id: Uuid,
+    pub node_runtime_id: Uuid,
     pub config_revision_id: Uuid,
     pub engine: ProxyEngine,
     pub revision_name: String,
@@ -96,7 +92,7 @@ impl From<anneal_nodes::DeploymentRollout> for DeploymentRolloutResponse {
         Self {
             id: rollout.id,
             tenant_id: rollout.tenant_id,
-            node_id: rollout.node_id,
+            node_runtime_id: rollout.node_id,
             config_revision_id: rollout.config_revision_id,
             engine: rollout.engine,
             revision_name: rollout.revision_name,
@@ -110,27 +106,95 @@ impl From<anneal_nodes::DeploymentRollout> for DeploymentRolloutResponse {
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NodeRuntimeResponse {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub node_id: Uuid,
+    pub engine: ProxyEngine,
+    pub version: String,
+    pub status: anneal_core::NodeStatus,
+    pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<anneal_nodes::NodeRuntime> for NodeRuntimeResponse {
+    fn from(runtime: anneal_nodes::NodeRuntime) -> Self {
+        Self {
+            id: runtime.id,
+            tenant_id: runtime.tenant_id,
+            node_id: runtime.server_node_id,
+            engine: runtime.engine,
+            version: runtime.version,
+            status: runtime.status,
+            last_seen_at: runtime.last_seen_at,
+            created_at: runtime.created_at,
+            updated_at: runtime.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NodeResponse {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub name: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub runtimes: Vec<NodeRuntimeResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NodeDomainResponse {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub mode: anneal_nodes::NodeDomainMode,
+    pub domain: String,
+    pub alias: Option<String>,
+    pub server_names: Vec<String>,
+    pub host_headers: Vec<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<anneal_nodes::NodeDomain> for NodeDomainResponse {
+    fn from(domain: anneal_nodes::NodeDomain) -> Self {
+        Self {
+            id: domain.id,
+            node_id: domain.server_node_id,
+            mode: domain.mode,
+            domain: domain.domain,
+            alias: domain.alias,
+            server_names: domain.server_names,
+            host_headers: domain.host_headers,
+            created_at: domain.created_at,
+            updated_at: domain.updated_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct CreateNodeGroupRequest {
+pub struct CreateNodeRequest {
     pub tenant_id: Uuid,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct UpdateNodeGroupRequest {
+pub struct UpdateNodeRequest {
     pub tenant_id: Uuid,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct ReplaceNodeGroupDomainsRequest {
+pub struct ReplaceNodeDomainsRequest {
     pub tenant_id: Uuid,
-    pub domains: Vec<NodeGroupDomainRequest>,
+    pub domains: Vec<NodeDomainRequest>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct NodeGroupDomainRequest {
-    pub mode: anneal_nodes::NodeGroupDomainMode,
+pub struct NodeDomainRequest {
+    pub mode: anneal_nodes::NodeDomainMode,
     pub domain: String,
     pub alias: Option<String>,
     pub server_names: Vec<String>,
@@ -138,15 +202,19 @@ pub struct NodeGroupDomainRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct CreateEnrollmentTokenRequest {
+pub struct CreateBootstrapSessionRequest {
     pub tenant_id: Uuid,
-    pub node_group_id: Uuid,
-    pub engine: ProxyEngine,
+    pub engines: Vec<ProxyEngine>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct RegisterNodeRequest {
-    pub enrollment_token: String,
+pub struct BootstrapAgentRequest {
+    pub bootstrap_token: String,
+    pub runtimes: Vec<BootstrapRuntimeRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct BootstrapRuntimeRequest {
     pub name: String,
     pub version: String,
     pub engine: ProxyEngine,
@@ -156,23 +224,30 @@ pub struct RegisterNodeRequest {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct HeartbeatRequest {
     pub node_id: Uuid,
-    pub node_token: String,
     pub version: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct PullRolloutsRequest {
     pub node_id: Uuid,
-    pub node_token: String,
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct AckRolloutRequest {
     pub node_id: Uuid,
-    pub node_token: String,
     pub success: bool,
     pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct RotateNodeTokenRequest {
+    pub node_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct ReissueBootstrapRequest {
+    pub tenant_id: Uuid,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -198,21 +273,19 @@ pub struct NodeEndpointRequest {
     pub fingerprint: Option<String>,
     pub alpn: Vec<String>,
     pub cipher: Option<String>,
-    pub tls_certificate_path: Option<String>,
-    pub tls_key_path: Option<String>,
     pub enabled: bool,
 }
 
-#[utoipa::path(post, path = "/api/v1/node-groups", request_body = CreateNodeGroupRequest)]
-pub async fn create_node_group(
+#[utoipa::path(post, path = "/api/v1/nodes", request_body = CreateNodeRequest)]
+pub async fn create_node(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<CreateNodeGroupRequest>,
-) -> Result<Json<anneal_nodes::NodeGroup>, ApiError> {
+    Json(request): Json<CreateNodeRequest>,
+) -> Result<Json<NodeResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let group = state
         .node_service()
-        .create_node_group(&actor, request.tenant_id, request.name)
+        .create_server_node(&actor, request.tenant_id, request.name)
         .await
         .map_err(ApiError)?;
     state
@@ -220,41 +293,53 @@ pub async fn create_node_group(
         .write(
             Some(actor.user_id),
             Some(group.tenant_id),
-            "nodes.group.create",
-            "node_group",
+            "nodes.create",
+            "node",
             Some(group.id),
             json!({ "name": group.name }),
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(group))
+    Ok(Json(NodeResponse {
+        id: group.id,
+        tenant_id: group.tenant_id,
+        name: group.name,
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+        runtimes: Vec::new(),
+    }))
 }
 
-#[utoipa::path(get, path = "/api/v1/node-groups")]
-pub async fn list_node_groups(
+#[utoipa::path(get, path = "/api/v1/nodes")]
+pub async fn list_nodes(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<anneal_nodes::NodeGroup>>, ApiError> {
+) -> Result<Json<Vec<NodeResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
-    let rows = state
+    let groups = state
         .node_service()
-        .list_node_groups(&actor)
+        .list_server_nodes(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(rows))
+    let runtimes = state
+        .node_service()
+        .list_nodes(&actor)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(build_node_responses(groups, runtimes)))
 }
 
-#[utoipa::path(patch, path = "/api/v1/node-groups/{id}", request_body = UpdateNodeGroupRequest)]
-pub async fn update_node_group(
+#[utoipa::path(patch, path = "/api/v1/nodes/{id}", request_body = UpdateNodeRequest)]
+pub async fn update_node(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(node_group_id): Path<Uuid>,
-    Json(request): Json<UpdateNodeGroupRequest>,
-) -> Result<Json<anneal_nodes::NodeGroup>, ApiError> {
+    Path(node_id): Path<Uuid>,
+    Json(request): Json<UpdateNodeRequest>,
+) -> Result<Json<NodeResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let group = state
         .node_service()
-        .update_node_group(&actor, request.tenant_id, node_group_id, request.name)
+        .update_server_node(&actor, request.tenant_id, node_id, request.name)
         .await
         .map_err(ApiError)?;
     state
@@ -262,21 +347,37 @@ pub async fn update_node_group(
         .write(
             Some(actor.user_id),
             Some(group.tenant_id),
-            "nodes.group.update",
-            "node_group",
+            "nodes.update",
+            "node",
             Some(group.id),
             json!({ "name": group.name }),
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(group))
+    let runtimes = state
+        .node_service()
+        .list_nodes(&actor)
+        .await
+        .map_err(ApiError)?
+        .into_iter()
+        .filter(|runtime| runtime.server_node_id == group.id)
+        .map(NodeRuntimeResponse::from)
+        .collect();
+    Ok(Json(NodeResponse {
+        id: group.id,
+        tenant_id: group.tenant_id,
+        name: group.name,
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+        runtimes,
+    }))
 }
 
-#[utoipa::path(delete, path = "/api/v1/node-groups/{id}")]
-pub async fn delete_node_group(
+#[utoipa::path(delete, path = "/api/v1/nodes/{id}")]
+pub async fn delete_node(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(node_group_id): Path<Uuid>,
+    Path(node_id): Path<Uuid>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let tenant_id = params
@@ -290,7 +391,7 @@ pub async fn delete_node_group(
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     state
         .node_service()
-        .delete_node_group(&actor, tenant_id, node_group_id)
+        .delete_server_node(&actor, tenant_id, node_id)
         .await
         .map_err(ApiError)?;
     state
@@ -298,9 +399,9 @@ pub async fn delete_node_group(
         .write(
             Some(actor.user_id),
             Some(tenant_id),
-            "nodes.group.delete",
-            "node_group",
-            Some(node_group_id),
+            "nodes.delete",
+            "node",
+            Some(node_id),
             json!({}),
         )
         .await
@@ -308,13 +409,13 @@ pub async fn delete_node_group(
     Ok(Json(json!({ "ok": true })))
 }
 
-#[utoipa::path(get, path = "/api/v1/node-groups/{id}/domains")]
-pub async fn list_node_group_domains(
+#[utoipa::path(get, path = "/api/v1/nodes/{id}/domains")]
+pub async fn list_node_domains(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(node_group_id): Path<Uuid>,
+    Path(node_id): Path<Uuid>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<Vec<anneal_nodes::NodeGroupDomain>>, ApiError> {
+) -> Result<Json<Vec<NodeDomainResponse>>, ApiError> {
     let tenant_id = params
         .get("tenant_id")
         .and_then(|value| Uuid::parse_str(value).ok())
@@ -326,31 +427,36 @@ pub async fn list_node_group_domains(
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let domains = state
         .node_service()
-        .list_node_group_domains(&actor, tenant_id, node_group_id)
+        .list_node_domains(&actor, tenant_id, node_id)
         .await
         .map_err(ApiError)?;
-    Ok(Json(domains))
+    Ok(Json(
+        domains
+            .into_iter()
+            .map(NodeDomainResponse::from)
+            .collect(),
+    ))
 }
 
-#[utoipa::path(post, path = "/api/v1/node-groups/{id}/domains", request_body = ReplaceNodeGroupDomainsRequest)]
-pub async fn replace_node_group_domains(
+#[utoipa::path(post, path = "/api/v1/nodes/{id}/domains", request_body = ReplaceNodeDomainsRequest)]
+pub async fn replace_node_domains(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(node_group_id): Path<Uuid>,
-    Json(request): Json<ReplaceNodeGroupDomainsRequest>,
-) -> Result<Json<Vec<anneal_nodes::NodeGroupDomain>>, ApiError> {
+    Path(node_id): Path<Uuid>,
+    Json(request): Json<ReplaceNodeDomainsRequest>,
+) -> Result<Json<Vec<NodeDomainResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let tenant_id = request.tenant_id;
     let domains = state
         .node_service()
-        .replace_node_group_domains(
+        .replace_node_domains(
             &actor,
             tenant_id,
-            node_group_id,
+            node_id,
             request
                 .domains
                 .into_iter()
-                .map(|domain| NodeGroupDomainDraft {
+                .map(|domain| NodeDomainDraft {
                     mode: domain.mode,
                     domain: domain.domain,
                     alias: domain.alias,
@@ -366,9 +472,9 @@ pub async fn replace_node_group_domains(
         .write(
             Some(actor.user_id),
             Some(tenant_id),
-            "nodes.group_domains.replace",
-            "node_group",
-            Some(node_group_id),
+            "nodes.domains.replace",
+            "node",
+            Some(node_id),
             json!({ "count": domains.len() }),
         )
         .await
@@ -376,23 +482,40 @@ pub async fn replace_node_group_domains(
     queue_tenant_rollouts_for_current_state(&state, tenant_id, "group-domains-sync")
         .await
         .map_err(ApiError)?;
-    Ok(Json(domains))
+    Ok(Json(
+        domains
+            .into_iter()
+            .map(NodeDomainResponse::from)
+            .collect(),
+    ))
 }
 
-#[utoipa::path(post, path = "/api/v1/nodes/enrollment-tokens", request_body = CreateEnrollmentTokenRequest)]
-pub async fn create_enrollment_token(
+#[utoipa::path(post, path = "/api/v1/nodes/{id}/bootstrap-sessions", request_body = CreateBootstrapSessionRequest)]
+pub async fn create_bootstrap_session(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<CreateEnrollmentTokenRequest>,
-) -> Result<Json<anneal_nodes::EnrollmentGrant>, ApiError> {
+    Path(node_id): Path<Uuid>,
+    Json(request): Json<CreateBootstrapSessionRequest>,
+) -> Result<Json<anneal_nodes::NodeBootstrapGrant>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let node = state
+        .node_service()
+        .list_server_nodes(&actor)
+        .await
+        .map_err(ApiError)?
+        .into_iter()
+        .find(|node| node.id == node_id)
+        .ok_or_else(|| {
+            ApiError(anneal_core::ApplicationError::NotFound("node not found".into()))
+        })?;
     let grant = state
         .node_service()
-        .create_enrollment_token(
+        .create_bootstrap_token(
             &actor,
             request.tenant_id,
-            request.node_group_id,
-            request.engine,
+            node_id,
+            node.name.clone(),
+            request.engines,
         )
         .await
         .map_err(ApiError)?;
@@ -400,32 +523,18 @@ pub async fn create_enrollment_token(
         .audit_service()
         .write(
             Some(actor.user_id),
-            Some(grant.record.tenant_id),
-            "nodes.enrollment_token.create",
-            "node_enrollment_token",
-            Some(grant.record.id),
-            json!({ "engine": grant.record.engine }),
+            Some(grant.tenant_id),
+            "nodes.bootstrap_session.create",
+            "node_bootstrap",
+            Some(node_id),
+            json!({ "engines": grant.engines, "node_name": grant.node_name }),
         )
         .await
         .map_err(ApiError)?;
     Ok(Json(grant))
 }
 
-#[utoipa::path(get, path = "/api/v1/nodes")]
-pub async fn list_nodes(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<anneal_nodes::Node>>, ApiError> {
-    let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
-    let nodes = state
-        .node_service()
-        .list_nodes(&actor)
-        .await
-        .map_err(ApiError)?;
-    Ok(Json(nodes))
-}
-
-#[utoipa::path(post, path = "/api/v1/nodes/{id}/endpoints", request_body = ReplaceNodeEndpointsRequest)]
+#[utoipa::path(post, path = "/api/v1/node-runtimes/{id}/endpoints", request_body = ReplaceNodeEndpointsRequest)]
 pub async fn replace_node_endpoints(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -450,7 +559,7 @@ pub async fn replace_node_endpoints(
             Some(actor.user_id),
             Some(tenant_id),
             "nodes.endpoints.replace",
-            "node",
+            "node_runtime",
             Some(node_id),
             json!({ "count": endpoints.len() }),
         )
@@ -467,7 +576,7 @@ pub async fn replace_node_endpoints(
     ))
 }
 
-#[utoipa::path(get, path = "/api/v1/nodes/{id}/endpoints")]
+#[utoipa::path(get, path = "/api/v1/node-runtimes/{id}/endpoints")]
 pub async fn list_node_endpoints(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -514,48 +623,41 @@ pub async fn list_rollouts(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/agent/register", request_body = RegisterNodeRequest)]
-pub async fn register_agent(
+#[utoipa::path(post, path = "/api/v1/agent/bootstrap", request_body = BootstrapAgentRequest)]
+pub async fn bootstrap_agent(
     State(state): State<AppState>,
-    Json(request): Json<RegisterNodeRequest>,
-) -> Result<Json<anneal_nodes::domain::NodeRegistrationGrant>, ApiError> {
-    let grant = state
+    Json(request): Json<BootstrapAgentRequest>,
+) -> Result<Json<Vec<anneal_nodes::NodeBootstrapRuntimeGrant>>, ApiError> {
+    let grants = state
         .node_service()
-        .register_node(
-            &request.enrollment_token,
-            NodeRegistration {
-                name: request.name,
-                version: request.version,
-                engine: request.engine,
-                protocols: request.protocols,
-            },
+        .bootstrap_nodes(
+            &request.bootstrap_token,
+            request
+                .runtimes
+                .into_iter()
+                .map(|runtime| RuntimeRegistration {
+                    name: runtime.name,
+                    version: runtime.version,
+                    engine: runtime.engine,
+                    protocols: runtime.protocols,
+                })
+                .collect(),
         )
         .await
         .map_err(ApiError)?;
-    let node = &grant.node;
-    state
-        .audit_service()
-        .write(
-            None,
-            Some(node.tenant_id),
-            "nodes.register",
-            "node",
-            Some(node.id),
-            json!({ "engine": node.engine, "name": node.name.clone() }),
-        )
-        .await
-        .map_err(ApiError)?;
-    Ok(Json(grant))
+    Ok(Json(grants))
 }
 
 #[utoipa::path(post, path = "/api/v1/agent/heartbeat", request_body = HeartbeatRequest)]
 pub async fn heartbeat(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<HeartbeatRequest>,
-) -> Result<Json<anneal_nodes::Node>, ApiError> {
+) -> Result<Json<anneal_nodes::NodeRuntime>, ApiError> {
+    let node_token = bearer_node_token(&headers).map_err(ApiError)?;
     let node = state
         .node_service()
-        .heartbeat(request.node_id, &request.node_token, &request.version)
+        .heartbeat(request.node_id, &node_token, &request.version)
         .await
         .map_err(ApiError)?;
     Ok(Json(node))
@@ -564,11 +666,13 @@ pub async fn heartbeat(
 #[utoipa::path(post, path = "/api/v1/agent/jobs/pull", request_body = PullRolloutsRequest)]
 pub async fn pull_rollouts(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<PullRolloutsRequest>,
 ) -> Result<Json<Vec<anneal_nodes::DeploymentRollout>>, ApiError> {
+    let node_token = bearer_node_token(&headers).map_err(ApiError)?;
     let rollouts = state
         .node_service()
-        .pull_rollouts(request.node_id, &request.node_token, request.limit.unwrap_or(10))
+        .pull_rollouts(request.node_id, &node_token, request.limit.unwrap_or(10))
         .await
         .map_err(ApiError)?;
     Ok(Json(rollouts))
@@ -577,15 +681,17 @@ pub async fn pull_rollouts(
 #[utoipa::path(post, path = "/api/v1/agent/jobs/{id}/ack", request_body = AckRolloutRequest)]
 pub async fn ack_rollout(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(rollout_id): Path<Uuid>,
     Json(request): Json<AckRolloutRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let failure_reason = request.failure_reason.clone();
+    let node_token = bearer_node_token(&headers).map_err(ApiError)?;
     let rollout = state
         .node_service()
         .acknowledge_rollout(
             request.node_id,
-            &request.node_token,
+            &node_token,
             rollout_id,
             request.success,
             failure_reason.clone(),
@@ -614,6 +720,82 @@ pub async fn ack_rollout(
     })))
 }
 
+#[utoipa::path(post, path = "/api/v1/agent/node-token/rotate", request_body = RotateNodeTokenRequest)]
+pub async fn rotate_node_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RotateNodeTokenRequest>,
+) -> Result<Json<anneal_nodes::NodeTokenRotationGrant>, ApiError> {
+    let node_token = bearer_node_token(&headers).map_err(ApiError)?;
+    let grant = state
+        .node_service()
+        .rotate_node_token(request.node_id, &node_token)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(grant))
+}
+
+#[utoipa::path(post, path = "/api/v1/node-runtimes/{id}/reissue-bootstrap", request_body = ReissueBootstrapRequest)]
+pub async fn reissue_bootstrap(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(node_id): Path<Uuid>,
+    Json(request): Json<ReissueBootstrapRequest>,
+) -> Result<Json<anneal_nodes::NodeBootstrapGrant>, ApiError> {
+    let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let grant = state
+        .node_service()
+        .reissue_bootstrap_for_node(&actor, request.tenant_id, node_id)
+        .await
+        .map_err(ApiError)?;
+    state
+        .audit_service()
+        .write(
+            Some(actor.user_id),
+            Some(grant.tenant_id),
+            "nodes.bootstrap.reissue",
+            "node",
+            Some(node_id),
+            json!({ "engines": grant.engines }),
+        )
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(grant))
+}
+
+fn build_node_responses(
+    groups: Vec<anneal_nodes::ServerNode>,
+    runtimes: Vec<anneal_nodes::NodeRuntime>,
+) -> Vec<NodeResponse> {
+    let mut runtimes_by_node = std::collections::HashMap::<Uuid, Vec<NodeRuntimeResponse>>::new();
+    for runtime in runtimes {
+        runtimes_by_node
+            .entry(runtime.server_node_id)
+            .or_default()
+            .push(NodeRuntimeResponse::from(runtime));
+    }
+    let mut nodes = groups
+        .into_iter()
+        .map(|group| {
+            let mut node_runtimes = runtimes_by_node.remove(&group.id).unwrap_or_default();
+            node_runtimes.sort_by_key(|runtime| match runtime.engine {
+                ProxyEngine::Xray => 0_u8,
+                ProxyEngine::Singbox => 1_u8,
+            });
+            NodeResponse {
+                id: group.id,
+                tenant_id: group.tenant_id,
+                name: group.name,
+                created_at: group.created_at,
+                updated_at: group.updated_at,
+                runtimes: node_runtimes,
+            }
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.name.cmp(&right.name));
+    nodes
+}
+
 fn build_node_endpoint_drafts(endpoints: Vec<NodeEndpointRequest>) -> Vec<NodeEndpointDraft> {
     endpoints
         .into_iter()
@@ -636,9 +818,23 @@ fn build_node_endpoint_drafts(endpoints: Vec<NodeEndpointRequest>) -> Vec<NodeEn
             fingerprint: endpoint.fingerprint,
             alpn: endpoint.alpn,
             cipher: endpoint.cipher,
-            tls_certificate_path: endpoint.tls_certificate_path,
-            tls_key_path: endpoint.tls_key_path,
+            tls_certificate_path: None,
+            tls_key_path: None,
             enabled: endpoint.enabled,
         })
         .collect()
 }
+
+fn bearer_node_token(headers: &HeaderMap) -> anneal_core::ApplicationResult<String> {
+    headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or(anneal_core::ApplicationError::Unauthorized)
+}
+
+
+

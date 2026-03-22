@@ -14,10 +14,11 @@ use sqlx::PgPool;
 async fn main() -> anyhow::Result<()> {
     let settings = Settings::from_env()?;
     let secret_box = SecretBox::new(&settings.data_encryption_key)?;
+    let token_hasher = anneal_core::TokenHasher::new(&settings.token_hash_key)?;
     init_telemetry("anneal-worker", &settings)?;
     let pool = connect_pool(&settings.database_url).await?;
     run_migrations(&pool, &settings.migrations_dir).await?;
-    backfill_protected_data(&pool, &secret_box).await?;
+    backfill_protected_data(&pool, &secret_box, &token_hasher).await?;
 
     let deployment_storage =
         PostgresStorage::new_with_notify(&pool, &Config::new("deployment_jobs"));

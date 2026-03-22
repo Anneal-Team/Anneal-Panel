@@ -10,7 +10,15 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
-import { formatBytes, formatDate, formatDeploymentStatus, formatNodeStatus, formatQuotaState } from "@/lib/format";
+import {
+  formatBytes,
+  formatDate,
+  formatDeploymentStatus,
+  formatNodeName,
+  formatNodeStatus,
+  formatNotificationBody,
+  formatQuotaState,
+} from "@/lib/format";
 import { useNow } from "@/lib/use-now";
 
 type AttentionItem = {
@@ -45,10 +53,10 @@ function notificationTone(kind: string) {
   return "warning" as const;
 }
 
-function sessionLabel(userAgent: string | null, ipAddress: string | null) {
+function sessionLabel(userAgent: string | null, ipAddress: string | null, fallback: string) {
   const parts = [userAgent?.trim(), ipAddress?.trim()].filter(Boolean);
   if (parts.length === 0) {
-    return "Без подписи";
+    return fallback;
   }
   return parts.join(" / ");
 }
@@ -67,11 +75,6 @@ export function DashboardPage() {
   const [securityError, setSecurityError] = useState<string | null>(null);
 
   const usersQuery = useQuery({ queryKey: ["users"], queryFn: api.listUsers, enabled: Boolean(session.accessToken) });
-  const nodeGroupsQuery = useQuery({
-    queryKey: ["node-groups"],
-    queryFn: api.listNodeGroups,
-    enabled: Boolean(session.accessToken),
-  });
   const nodesQuery = useQuery({ queryKey: ["nodes"], queryFn: api.listNodes, enabled: Boolean(session.accessToken) });
   const subscriptionsQuery = useQuery({
     queryKey: ["subscriptions"],
@@ -95,12 +98,23 @@ export function DashboardPage() {
   });
 
   const users = usersQuery.data ?? [];
-  const nodeGroups = nodeGroupsQuery.data ?? [];
-  const nodes = [...(nodesQuery.data ?? [])].sort((left, right) => {
+  const serverNodes = [...(nodesQuery.data ?? [])].sort((left, right) => {
     const leftTime = new Date(left.updated_at).getTime();
     const rightTime = new Date(right.updated_at).getTime();
     return rightTime - leftTime;
   });
+  const nodes = serverNodes
+    .flatMap((node) =>
+      node.runtimes.map((runtime) => ({
+        ...runtime,
+        node_name: node.name,
+      })),
+    )
+    .sort((left, right) => {
+      const leftTime = new Date(left.updated_at).getTime();
+      const rightTime = new Date(right.updated_at).getTime();
+      return rightTime - leftTime;
+    });
   const subscriptions = [...(subscriptionsQuery.data ?? [])].sort((left, right) => {
     const leftTime = new Date(left.updated_at).getTime();
     const rightTime = new Date(right.updated_at).getTime();
@@ -143,13 +157,13 @@ export function DashboardPage() {
   const attentionItems: AttentionItem[] = [
     ...offlineNodes.map((node) => ({
       id: `node-${node.id}`,
-      title: `${node.name} не в сети`,
-      description: `Последний сигнал: ${formatDate(node.last_seen_at)}. Движок: ${node.engine}.`,
+      title: `${formatNodeName(node.node_name)} / ${node.engine}`,
+      description: t("dashboard.attention.node_offline", { date: formatDate(node.last_seen_at) }),
       tone: "danger" as const,
     })),
     ...failedRollouts.map((rollout) => ({
       id: `rollout-${rollout.id}`,
-      title: `${rollout.revision_name} завершился с ошибкой`,
+      title: t("dashboard.attention.rollout_failed", { name: rollout.revision_name }),
       description: rollout.failure_reason ?? `${rollout.engine} / ${rollout.target_path}`,
       tone: "danger" as const,
     })),
@@ -157,8 +171,12 @@ export function DashboardPage() {
       .filter((subscription) => subscription.suspended || subscription.quota_state === "exhausted")
       .map((subscription) => ({
         id: `subscription-danger-${subscription.id}`,
-        title: `${subscription.name} заблокирована`,
-        description: `${formatBytes(subscription.used_bytes)} из ${formatBytes(subscription.traffic_limit_bytes)}. До ${formatDate(subscription.expires_at)}.`,
+        title: t("dashboard.attention.subscription_blocked", { name: subscription.name }),
+        description: t("dashboard.attention.subscription_blocked_description", {
+          used: formatBytes(subscription.used_bytes),
+          limit: formatBytes(subscription.traffic_limit_bytes),
+          date: formatDate(subscription.expires_at),
+        }),
         tone: "danger" as const,
       })),
     ...subscriptions
@@ -170,14 +188,20 @@ export function DashboardPage() {
       )
       .map((subscription) => ({
         id: `subscription-warning-${subscription.id}`,
-        title: `${subscription.name} близка к лимиту`,
-        description: `${formatQuotaState(subscription.quota_state)}. ${formatBytes(subscription.used_bytes)} из ${formatBytes(subscription.traffic_limit_bytes)}.`,
+        title: t("dashboard.attention.subscription_warning", { name: subscription.name }),
+        description: t("dashboard.attention.subscription_warning_description", {
+          state: formatQuotaState(subscription.quota_state),
+          used: formatBytes(subscription.used_bytes),
+          limit: formatBytes(subscription.traffic_limit_bytes),
+        }),
         tone: "warning" as const,
       })),
     ...expiringSoon.map((subscription) => ({
       id: `subscription-expiring-${subscription.id}`,
-      title: `${subscription.name} скоро истечёт`,
-      description: `Срок действия до ${formatDate(subscription.expires_at)}.`,
+      title: t("dashboard.attention.subscription_expiring", { name: subscription.name }),
+      description: t("dashboard.attention.subscription_expiring_description", {
+        date: formatDate(subscription.expires_at),
+      }),
       tone: "warning" as const,
     })),
   ].slice(0, 8);
@@ -186,7 +210,7 @@ export function DashboardPage() {
     mutationFn: () => api.disableTotp(disableTotpPassword),
     onSuccess: async () => {
       setSecurityError(null);
-      setSecurityMessage("2FA отключена, активные refresh-сессии сброшены.");
+      setSecurityMessage(t("dashboard.security.disable_success"));
       setDisableTotpPassword("");
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
@@ -200,7 +224,7 @@ export function DashboardPage() {
     mutationFn: () => api.changePassword(passwordForm.current_password, passwordForm.new_password),
     onSuccess: async () => {
       setSecurityError(null);
-      setSecurityMessage("Пароль обновлён, активные refresh-сессии сброшены.");
+      setSecurityMessage(t("dashboard.security.password_success"));
       setPasswordForm({ current_password: "", new_password: "" });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
@@ -214,7 +238,7 @@ export function DashboardPage() {
     mutationFn: api.logoutAll,
     onSuccess: async () => {
       setSecurityError(null);
-      setSecurityMessage("Все refresh-сессии отозваны.");
+      setSecurityMessage(t("dashboard.security.logout_all_success"));
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
     onError: (error) => {
@@ -241,24 +265,29 @@ export function DashboardPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          label="Пользователи"
+          label={t("dashboard.metrics.users_label")}
           value={String(activeUsers.length)}
-          hint={`Реселлеров: ${resellers.length}`}
+          hint={t("dashboard.metrics.users_hint", { count: resellers.length })}
         />
         <MetricCard
-          label="Подписки"
+          label={t("dashboard.metrics.subscriptions_label")}
           value={String(activeSubscriptions.length)}
-          hint={`Проблемных: ${quotaProblems.length + suspendedSubscriptions.length}`}
+          hint={t("dashboard.metrics.subscriptions_hint", {
+            count: quotaProblems.length + suspendedSubscriptions.length,
+          })}
         />
         <MetricCard
-          label="Рантаймы"
+          label={t("dashboard.metrics.runtimes_label")}
           value={String(onlineNodes.length)}
-          hint={`Всего: ${nodes.length}, offline: ${offlineNodes.length}`}
+          hint={t("dashboard.metrics.runtimes_hint", {
+            total: nodes.length,
+            offline: offlineNodes.length,
+          })}
         />
         <MetricCard
-          label="Трафик"
+          label={t("dashboard.metrics.traffic_label")}
           value={formatBytes(totalUsedBytes)}
-          hint={`Из лимита ${formatBytes(totalLimitBytes)}`}
+          hint={t("dashboard.metrics.traffic_hint", { limit: formatBytes(totalLimitBytes) })}
         />
       </div>
 
@@ -275,7 +304,11 @@ export function DashboardPage() {
                   <div key={item.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
                     <div className="flex flex-wrap items-center gap-3">
                       <div className="text-lg font-semibold">{item.title}</div>
-                      <Badge tone={item.tone}>{item.tone === "danger" ? "Критично" : "Нужно проверить"}</Badge>
+                      <Badge tone={item.tone}>
+                        {item.tone === "danger"
+                          ? t("dashboard.attention.badge.critical")
+                          : t("dashboard.attention.badge.review")}
+                      </Badge>
                     </div>
                     <div className="mt-2 text-sm text-foreground/80">
                     <ExpandableText text={item.description} />
@@ -334,7 +367,7 @@ export function DashboardPage() {
                     <Badge tone={notificationTone(event.kind)}>{event.kind}</Badge>
                   </div>
                   <div className="mt-2 text-sm text-foreground/80">
-                    <ExpandableText text={event.body} />
+                    <ExpandableText text={formatNotificationBody(event.kind, event.body)} />
                   </div>
                   <div className="mt-2 text-xs text-foreground/90">{formatDate(event.created_at)}</div>
                 </div>
@@ -356,7 +389,7 @@ export function DashboardPage() {
             </div>
             <div className="grid gap-3">
               <div className="rounded-[18px] bg-[#fbf7ef] px-4 py-3 text-sm text-[#485644]">
-                {t("dashboard.stat.node_groups")}: <span className="font-bold text-[#1d271a]">{nodeGroups.length}</span>
+                {t("dashboard.stat.node_groups")}: <span className="font-bold text-[#1d271a]">{serverNodes.length}</span>
               </div>
               <div className="rounded-[18px] bg-[#fbf7ef] px-4 py-3 text-sm text-[#485644]">
                 {t("dashboard.stat.pending_runtimes")}: <span className="font-bold text-[#1d271a]">{nodes.filter((node) => node.status === "pending").length}</span>
@@ -382,7 +415,7 @@ export function DashboardPage() {
               {nodes.slice(0, 6).map((node) => (
                 <div key={node.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
                   <div className="flex flex-wrap items-center gap-3">
-                    <div className="text-lg font-semibold">{node.name}</div>
+                    <div className="text-lg font-semibold">{formatNodeName(node.node_name)}</div>
                     <Badge
                       tone={
                         node.status === "online"
@@ -396,8 +429,12 @@ export function DashboardPage() {
                     </Badge>
                     <Badge tone="muted">{node.engine}</Badge>
                   </div>
-                  <div className="mt-2 text-sm text-foreground/80">Версия {node.version}</div>
-                  <div className="mt-2 text-xs text-foreground/90">Последний сигнал: {formatDate(node.last_seen_at)}</div>
+                  <div className="mt-2 text-sm text-foreground/80">
+                    {t("dashboard.nodes.version", { version: node.version })}
+                  </div>
+                  <div className="mt-2 text-xs text-foreground/90">
+                    {t("dashboard.nodes.last_seen")}: {formatDate(node.last_seen_at)}
+                  </div>
                 </div>
               ))}
               {nodes.length === 0 ? (
@@ -417,9 +454,15 @@ export function DashboardPage() {
             <div className="space-y-3">
               {activeSessions.slice(0, 4).map((entry) => (
                 <div key={entry.id} className="rounded-[22px] border border-border bg-[#f8f5f0] px-4 py-3 text-sm">
-                  <div className="font-semibold">{sessionLabel(entry.user_agent, entry.ip_address)}</div>
-                  <div className="mt-1 text-foreground/80">Создана: {formatDate(entry.created_at)}</div>
-                  <div className="mt-1 text-foreground/80">Истекает: {formatDate(entry.expires_at)}</div>
+                  <div className="font-semibold">
+                    {sessionLabel(entry.user_agent, entry.ip_address, t("dashboard.security.session_fallback"))}
+                  </div>
+                  <div className="mt-1 text-foreground/80">
+                    {t("dashboard.security.session_created")}: {formatDate(entry.created_at)}
+                  </div>
+                  <div className="mt-1 text-foreground/80">
+                    {t("dashboard.security.session_expires")}: {formatDate(entry.expires_at)}
+                  </div>
                 </div>
               ))}
               {activeSessions.length === 0 ? (

@@ -8,8 +8,13 @@ use anneal_core::{ProtocolKind, ProxyEngine};
 use anneal_nodes::DeploymentRollout;
 
 #[derive(Debug, Serialize)]
-pub struct RegisterNodeRequest {
-    pub enrollment_token: String,
+pub struct BootstrapAgentRequest {
+    pub bootstrap_token: String,
+    pub runtimes: Vec<RegisterRuntimeRequest>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RegisterRuntimeRequest {
     pub name: String,
     pub version: String,
     pub engine: ProxyEngine,
@@ -45,38 +50,46 @@ pub fn build_client() -> anyhow::Result<Client> {
 }
 
 #[derive(Debug, Deserialize)]
-struct RegisteredNode {
-    id: Uuid,
+pub struct BootstrappedRuntime {
+    pub engine: ProxyEngine,
+    pub node_id: Uuid,
+    pub node_token: String,
 }
 
-pub async fn register(
+#[derive(Debug, Clone)]
+pub struct RuntimeIdentity {
+    pub node_id: Uuid,
+    pub node_token: String,
+}
+
+pub async fn bootstrap(
     client: &Client,
     server_url: &str,
-    request: RegisterNodeRequest,
-) -> anyhow::Result<Uuid> {
+    request: BootstrapAgentRequest,
+) -> anyhow::Result<Vec<BootstrappedRuntime>> {
     let response = client
-        .post(format!("{server_url}/api/v1/agent/register"))
+        .post(format!("{server_url}/api/v1/agent/bootstrap"))
         .json(&request)
         .send()
         .await?;
     let response = ensure_success(response).await?;
-    let response = response
-        .json::<RegisteredNode>()
+    response
+        .json::<Vec<BootstrappedRuntime>>()
         .await
-        .context("failed to decode register response")?;
-    Ok(response.id)
+        .context("failed to decode bootstrap response")
 }
 
 pub async fn heartbeat(
     client: &Client,
     server_url: &str,
-    node_id: Uuid,
+    identity: &RuntimeIdentity,
     version: &str,
 ) -> anyhow::Result<()> {
     let response = client
         .post(format!("{server_url}/api/v1/agent/heartbeat"))
+        .bearer_auth(&identity.node_token)
         .json(&HeartbeatRequest {
-            node_id,
+            node_id: identity.node_id,
             version: version.into(),
         })
         .send()
@@ -88,12 +101,13 @@ pub async fn heartbeat(
 pub async fn pull_rollouts(
     client: &Client,
     server_url: &str,
-    node_id: Uuid,
+    identity: &RuntimeIdentity,
 ) -> anyhow::Result<Vec<DeploymentRollout>> {
     let response = client
         .post(format!("{server_url}/api/v1/agent/jobs/pull"))
+        .bearer_auth(&identity.node_token)
         .json(&PullRolloutsRequest {
-            node_id,
+            node_id: identity.node_id,
             limit: Some(10),
         })
         .send()
@@ -108,15 +122,16 @@ pub async fn pull_rollouts(
 pub async fn ack_rollout(
     client: &Client,
     server_url: &str,
-    node_id: Uuid,
+    identity: &RuntimeIdentity,
     rollout_id: Uuid,
     success: bool,
     failure_reason: Option<String>,
 ) -> anyhow::Result<()> {
     let response = client
         .post(format!("{server_url}/api/v1/agent/jobs/{rollout_id}/ack"))
+        .bearer_auth(&identity.node_token)
         .json(&AckRolloutRequest {
-            node_id,
+            node_id: identity.node_id,
             success,
             failure_reason,
         })
@@ -169,7 +184,7 @@ mod tests {
         .expect("server");
         let client = Client::new();
         let response = client
-            .post(format!("{server_url}/api/v1/agent/register"))
+            .post(format!("{server_url}/api/v1/agent/bootstrap"))
             .send()
             .await
             .expect("response");
@@ -190,15 +205,17 @@ mod tests {
         .await
         .expect("server");
         let client = build_client().expect("client");
-        let error = super::register(
+        let error = super::bootstrap(
             &client,
             &server_url,
-            super::RegisterNodeRequest {
-                enrollment_token: "token".into(),
-                name: "node".into(),
-                version: "1.0.0".into(),
-                engine: ProxyEngine::Xray,
-                protocols: vec![ProtocolKind::VlessReality],
+            super::BootstrapAgentRequest {
+                bootstrap_token: "token".into(),
+                runtimes: vec![super::RegisterRuntimeRequest {
+                    name: "node".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                }],
             },
         )
         .await

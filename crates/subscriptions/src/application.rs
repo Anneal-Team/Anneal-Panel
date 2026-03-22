@@ -7,13 +7,12 @@ use anneal_config_engine::{
     ClientCredential, InboundProfile, RenderedShareLink, ShareLinkRenderer, ShareLinkStrategy,
     SubscriptionDocumentFormat, SubscriptionDocumentRenderer,
 };
-use anneal_core::{Actor, ApplicationError, ApplicationResult, QuotaState, UserRole};
+use anneal_core::{Actor, ApplicationError, ApplicationResult, QuotaState, TokenHasher, UserRole};
 use anneal_nodes::{DeliveryNodeEndpoint, NodeEndpointCatalog};
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use chrono::Utc;
 use rand::{Rng, distr::Alphanumeric};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -54,15 +53,16 @@ pub trait SubscriptionRepository: Send + Sync {
         &self,
         device_id: Uuid,
         device_token: &str,
+        device_token_hash: &str,
     ) -> ApplicationResult<()>;
     async fn rotate_subscription_token(
         &self,
         subscription_id: Uuid,
-        token: &str,
+        expires_at: chrono::DateTime<Utc>,
     ) -> ApplicationResult<SubscriptionLink>;
-    async fn find_by_subscription_token(
+    async fn find_by_delivery_token(
         &self,
-        token: &str,
+        link_id: Uuid,
     ) -> ApplicationResult<Option<ResolvedSubscriptionContext>>;
 }
 
@@ -131,36 +131,53 @@ where
         &self,
         device_id: Uuid,
         device_token: &str,
+        device_token_hash: &str,
     ) -> ApplicationResult<()> {
-        (*self).rotate_device_token(device_id, device_token).await
+        (*self)
+            .rotate_device_token(device_id, device_token, device_token_hash)
+            .await
     }
 
     async fn rotate_subscription_token(
         &self,
         subscription_id: Uuid,
-        token: &str,
+        expires_at: chrono::DateTime<Utc>,
     ) -> ApplicationResult<SubscriptionLink> {
         (*self)
-            .rotate_subscription_token(subscription_id, token)
+            .rotate_subscription_token(subscription_id, expires_at)
             .await
     }
 
-    async fn find_by_subscription_token(
+    async fn find_by_delivery_token(
         &self,
-        token: &str,
+        link_id: Uuid,
     ) -> ApplicationResult<Option<ResolvedSubscriptionContext>> {
-        (*self).find_by_subscription_token(token).await
+        (*self).find_by_delivery_token(link_id).await
     }
 }
 
 pub struct SubscriptionService<R> {
     repository: R,
     rbac: RbacService,
+    token_hasher: TokenHasher,
 }
 
 impl<R> SubscriptionService<R> {
     pub fn new(repository: R, rbac: RbacService) -> Self {
-        Self { repository, rbac }
+        Self::with_token_hasher(
+            repository,
+            rbac,
+            TokenHasher::new("anneal-subscription-default-token-hash-key")
+                .expect("token hasher"),
+        )
+    }
+
+    pub fn with_token_hasher(repository: R, rbac: RbacService, token_hasher: TokenHasher) -> Self {
+        Self {
+            repository,
+            rbac,
+            token_hasher,
+        }
     }
 }
 
@@ -188,13 +205,15 @@ where
             return Err(ApplicationError::Forbidden);
         }
         let now = Utc::now();
+        let device_token = generate_token();
         self.repository
             .create_device(Device {
                 id: Uuid::new_v4(),
                 tenant_id: command.tenant_id,
                 user_id: command.user_id,
                 name: command.name,
-                device_token: generate_token(),
+                device_token_hash: self.token_hasher.hash(&device_token),
+                device_token,
                 suspended: false,
                 created_at: now,
                 updated_at: now,
@@ -222,12 +241,14 @@ where
             return Err(ApplicationError::Forbidden);
         }
         let now = Utc::now();
+        let device_token = generate_token();
         let device = Device {
             id: Uuid::new_v4(),
             tenant_id: command.tenant_id,
             user_id: command.user_id,
             name: format!("{} access", command.name),
-            device_token: generate_token(),
+            device_token_hash: self.token_hasher.hash(&device_token),
+            device_token,
             suspended: false,
             created_at: now,
             updated_at: now,
@@ -252,15 +273,14 @@ where
         let link = SubscriptionLink {
             id: Uuid::new_v4(),
             subscription_id: subscription.id,
-            token: generate_token(),
+            token: String::new(),
             token_hash: String::new(),
+            expires_at: subscription.expires_at,
             revoked_at: None,
             created_at: now,
         };
-        let mut link = link;
-        link.token_hash = hash_token(&link.token);
         let mut subscription = subscription;
-        subscription.current_token = Some(link.token.clone());
+        subscription.current_token = Some(link.id.to_string());
         self.repository
             .create_subscription(device, subscription, link)
             .await
@@ -368,8 +388,9 @@ where
             return Err(ApplicationError::Forbidden);
         }
         let token = generate_token();
+        let token_hash = self.token_hasher.hash(&token);
         self.repository
-            .rotate_device_token(device_id, &token)
+            .rotate_device_token(device_id, &token, &token_hash)
             .await?;
         Ok(token)
     }
@@ -396,17 +417,18 @@ where
             return Err(ApplicationError::Forbidden);
         }
         self.repository
-            .rotate_subscription_token(subscription_id, &generate_token())
+            .rotate_subscription_token(subscription_id, subscription.expires_at)
             .await
     }
 
     pub async fn resolve_subscription(
         &self,
-        subscription_token: &str,
+        link_token: &str,
     ) -> ApplicationResult<ResolvedSubscriptionContext> {
+        let link_id = parse_link_token(link_token)?;
         let context = self
             .repository
-            .find_by_subscription_token(subscription_token)
+            .find_by_delivery_token(link_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("subscription not found".into()))?;
         if context.subscription.suspended || context.subscription.expires_at <= Utc::now() {
@@ -423,6 +445,16 @@ pub struct UnifiedSubscriptionService<R, C> {
 
 impl<R, C> UnifiedSubscriptionService<R, C> {
     pub fn new(subscriptions: R, catalog: C) -> Self {
+        Self::with_token_hasher(
+            subscriptions,
+            catalog,
+            TokenHasher::new("anneal-subscription-default-token-hash-key")
+                .expect("token hasher"),
+        )
+    }
+
+    pub fn with_token_hasher(subscriptions: R, catalog: C, token_hasher: TokenHasher) -> Self {
+        let _ = token_hasher;
         Self {
             subscriptions,
             catalog,
@@ -437,13 +469,13 @@ where
 {
     pub async fn render_bundle(
         &self,
-        subscription_token: &str,
-        _device_token: Option<&str>,
+        link_token: &str,
         format: SubscriptionDocumentFormat,
     ) -> ApplicationResult<RenderedSubscriptionBundle> {
+        let link_id = parse_link_token(link_token)?;
         let context = self
             .subscriptions
-            .find_by_subscription_token(subscription_token)
+            .find_by_delivery_token(link_id)
             .await?
             .ok_or_else(|| ApplicationError::NotFound("subscription not found".into()))?;
         if context.subscription.suspended || context.subscription.expires_at <= Utc::now() {
@@ -603,10 +635,12 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
                 subscription.current_token = links
                     .values()
                     .filter(|link| {
-                        link.subscription_id == subscription.id && link.revoked_at.is_none()
+                        link.subscription_id == subscription.id
+                            && link.revoked_at.is_none()
+                            && link.expires_at > Utc::now()
                     })
                     .max_by(|left, right| left.created_at.cmp(&right.created_at))
-                    .map(|link| link.token.clone());
+                    .map(|link| link.id.to_string());
                 subscription
             })
             .collect())
@@ -628,6 +662,13 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
         &self,
         subscription: Subscription,
     ) -> ApplicationResult<Subscription> {
+        let mut links = self.links.write().expect("lock");
+        for link in links
+            .values_mut()
+            .filter(|link| link.subscription_id == subscription.id && link.revoked_at.is_none())
+        {
+            link.expires_at = subscription.expires_at;
+        }
         self.subscriptions
             .write()
             .expect("lock")
@@ -664,12 +705,14 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
         &self,
         device_id: Uuid,
         device_token: &str,
+        device_token_hash: &str,
     ) -> ApplicationResult<()> {
         let mut devices = self.devices.write().expect("lock");
         let device = devices
             .get_mut(&device_id)
             .ok_or_else(|| ApplicationError::NotFound("device not found".into()))?;
         device.device_token = device_token.into();
+        device.device_token_hash = device_token_hash.into();
         device.updated_at = Utc::now();
         Ok(())
     }
@@ -677,7 +720,7 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
     async fn rotate_subscription_token(
         &self,
         subscription_id: Uuid,
-        token: &str,
+        expires_at: chrono::DateTime<Utc>,
     ) -> ApplicationResult<SubscriptionLink> {
         let mut links = self.links.write().expect("lock");
         if let Some(current) = links
@@ -689,8 +732,9 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
         let link = SubscriptionLink {
             id: Uuid::new_v4(),
             subscription_id,
-            token: token.into(),
-            token_hash: hash_token(token),
+            token: String::new(),
+            token_hash: String::new(),
+            expires_at,
             revoked_at: None,
             created_at: Utc::now(),
         };
@@ -701,30 +745,36 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
             .expect("lock")
             .get_mut(&subscription_id)
         {
-            subscription.current_token = Some(link.token.clone());
+            subscription.current_token = Some(link.id.to_string());
             subscription.updated_at = Utc::now();
         }
         Ok(link)
     }
 
-    async fn find_by_subscription_token(
+    async fn find_by_delivery_token(
         &self,
-        token: &str,
+        link_id: Uuid,
     ) -> ApplicationResult<Option<ResolvedSubscriptionContext>> {
         let links = self.links.read().expect("lock");
         let subscriptions = self.subscriptions.read().expect("lock");
-        let found = links
-            .values()
-            .find(|link| link.token_hash == hash_token(token) && link.revoked_at.is_none())
-            .and_then(|link| {
-                subscriptions
-                    .get(&link.subscription_id)
-                    .cloned()
-                    .map(|subscription| ResolvedSubscriptionContext {
-                        subscription,
-                        link: link.clone(),
-                    })
-            });
+        let devices = self.devices.read().expect("lock");
+        let found = links.get(&link_id).and_then(|link| {
+            if link.revoked_at.is_some() || link.expires_at <= Utc::now() {
+                return None;
+            }
+            subscriptions
+                .get(&link.subscription_id)
+                .cloned()
+                .filter(|subscription| {
+                    devices
+                        .get(&subscription.device_id)
+                        .is_some_and(|device| !device.suspended)
+                })
+                .map(|subscription| ResolvedSubscriptionContext {
+                    subscription,
+                    link: link.clone(),
+                })
+        });
         Ok(found)
     }
 }
@@ -737,11 +787,11 @@ pub fn generate_token() -> String {
         .collect()
 }
 
-fn hash_token(token: &str) -> String {
-    let mut digest = Sha256::new();
-    digest.update(token.as_bytes());
-    format!("{:x}", digest.finalize())
+fn parse_link_token(link_token: &str) -> ApplicationResult<Uuid> {
+    Uuid::parse_str(link_token)
+        .map_err(|_| ApplicationError::NotFound("subscription not found".into()))
 }
+
 
 fn decide_quota_state(traffic_limit_bytes: i64, used_bytes: i64) -> QuotaState {
     let ratio = if traffic_limit_bytes > 0 {
@@ -859,8 +909,14 @@ mod tests {
             .rotate_subscription_token(&actor, actor.tenant_id.expect("tenant"), subscription.id)
             .await
             .expect("rotated");
+        let first_token = first_link.id.to_string();
+        let error = service
+            .resolve_subscription(&first_token)
+            .await
+            .expect_err("revoked link must be rejected");
 
-        assert_ne!(first_link.token, rotated.token);
+        assert_ne!(first_link.id, rotated.id);
+        assert!(matches!(error, ApplicationError::NotFound(_)));
     }
 
     #[tokio::test]
@@ -877,7 +933,7 @@ mod tests {
         subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
 
         let group = node_service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let grant = node_service
@@ -892,7 +948,7 @@ mod tests {
         let node = node_service
             .register_node(
                 &grant.token,
-                anneal_nodes::NodeRegistration {
+                anneal_nodes::RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: anneal_core::ProxyEngine::Singbox,
@@ -972,9 +1028,10 @@ mod tests {
             )
             .await
             .expect("subscription");
+        let link_token = link.id.to_string();
 
         let unified = UnifiedSubscriptionService::new(&subscriptions, &nodes)
-            .render_bundle(&link.token, None, SubscriptionDocumentFormat::Raw)
+            .render_bundle(&link_token, SubscriptionDocumentFormat::Raw)
             .await
             .expect("bundle");
 
@@ -997,7 +1054,7 @@ mod tests {
         subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
 
         let group = node_service
-            .create_node_group(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
             .await
             .expect("group");
         let grant = node_service
@@ -1012,7 +1069,7 @@ mod tests {
         let node = node_service
             .register_node(
                 &grant.token,
-                anneal_nodes::NodeRegistration {
+                anneal_nodes::RuntimeRegistration {
                     name: "edge-1".into(),
                     version: "1.0.0".into(),
                     engine: anneal_core::ProxyEngine::Singbox,
@@ -1092,9 +1149,10 @@ mod tests {
             )
             .await
             .expect("subscription");
+        let link_token = link.id.to_string();
 
         let unified = UnifiedSubscriptionService::new(&subscriptions, &nodes)
-            .render_bundle(&link.token, None, SubscriptionDocumentFormat::SingBox)
+            .render_bundle(&link_token, SubscriptionDocumentFormat::SingBox)
             .await
             .expect("bundle");
 
@@ -1143,3 +1201,4 @@ mod tests {
         assert!(matches!(error, ApplicationError::Forbidden));
     }
 }
+

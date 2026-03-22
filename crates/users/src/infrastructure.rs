@@ -300,6 +300,106 @@ impl UserRepository for PgUserRepository {
         Ok(user)
     }
 
+    async fn update_user_and_revoke_sessions(&self, user: User) -> ApplicationResult<User> {
+        let encrypted_totp_secret = self
+            .secret_box
+            .encrypt_option(user.totp_secret.as_deref())?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        sqlx::query(
+            r#"
+            update users
+            set tenant_id = $2, email = $3, display_name = $4, role = $5, status = $6, password_hash = $7, totp_secret = $8, totp_confirmed = $9, updated_at = $10
+            where id = $1
+            "#,
+        )
+        .bind(user.id)
+        .bind(user.tenant_id)
+        .bind(&user.email)
+        .bind(&user.display_name)
+        .bind(user.role)
+        .bind(user.status)
+        .bind(&user.password_hash)
+        .bind(&encrypted_totp_secret)
+        .bind(user.totp_confirmed)
+        .bind(user.updated_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        sqlx::query(
+            "update refresh_sessions set revoked_at = now() at time zone 'utc' where user_id = $1 and revoked_at is null",
+        )
+        .bind(user.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(user)
+    }
+
+    async fn update_reseller_bundle_and_revoke_sessions(
+        &self,
+        tenant: Tenant,
+        user: User,
+    ) -> ApplicationResult<User> {
+        let encrypted_totp_secret = self
+            .secret_box
+            .encrypt_option(user.totp_secret.as_deref())?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        sqlx::query(
+            "update tenants set name = $2, owner_user_id = $3, updated_at = $4 where id = $1",
+        )
+        .bind(tenant.id)
+        .bind(&tenant.name)
+        .bind(tenant.owner_user_id)
+        .bind(tenant.updated_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        sqlx::query(
+            r#"
+            update users
+            set tenant_id = $2, email = $3, display_name = $4, role = $5, status = $6, password_hash = $7, totp_secret = $8, totp_confirmed = $9, updated_at = $10
+            where id = $1
+            "#,
+        )
+        .bind(user.id)
+        .bind(user.tenant_id)
+        .bind(&user.email)
+        .bind(&user.display_name)
+        .bind(user.role)
+        .bind(user.status)
+        .bind(&user.password_hash)
+        .bind(&encrypted_totp_secret)
+        .bind(user.totp_confirmed)
+        .bind(user.updated_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        sqlx::query(
+            "update refresh_sessions set revoked_at = now() at time zone 'utc' where user_id = $1 and revoked_at is null",
+        )
+        .bind(user.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(user)
+    }
+
     async fn delete_user(&self, user_id: Uuid) -> ApplicationResult<()> {
         sqlx::query("delete from users where id = $1")
             .bind(user_id)

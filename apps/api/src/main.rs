@@ -29,10 +29,11 @@ use crate::app_state::AppState;
 async fn main() -> anyhow::Result<()> {
     let settings = Settings::from_env()?;
     let secret_box = anneal_core::SecretBox::new(&settings.data_encryption_key)?;
+    let token_hasher = anneal_core::TokenHasher::new(&settings.token_hash_key)?;
     init_telemetry("anneal-api", &settings)?;
     let pool = connect_pool(&settings.database_url).await?;
     run_migrations(&pool, &settings.migrations_dir).await?;
-    anneal_platform::backfill_protected_data(&pool, &secret_box).await?;
+    anneal_platform::backfill_protected_data(&pool, &secret_box, &token_hasher).await?;
     let deployment_queue = PostgresStorage::new_with_config(&pool, &Config::new("deployment_jobs"));
     let notification_queue =
         PostgresStorage::new_with_config(&pool, &Config::new("notification_jobs"));
@@ -51,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
         password_service: ArgonPasswordService,
         jwt_service: JwtService::new(&settings.access_jwt_secret, &settings.pre_auth_jwt_secret),
         totp_service: OtpAuthTotpService::new("Anneal"),
+        token_hasher,
         deployment_queue,
         notification_queue,
     };
@@ -88,31 +90,35 @@ async fn main() -> anyhow::Result<()> {
             patch(users::update_reseller).delete(users::delete_reseller),
         )
         .route(
-            "/api/v1/node-groups",
-            get(nodes::list_node_groups).post(nodes::create_node_group),
+            "/api/v1/nodes",
+            get(nodes::list_nodes).post(nodes::create_node),
         )
         .route(
-            "/api/v1/node-groups/{id}",
-            patch(nodes::update_node_group).delete(nodes::delete_node_group),
+            "/api/v1/nodes/{id}",
+            patch(nodes::update_node).delete(nodes::delete_node),
         )
         .route(
-            "/api/v1/node-groups/{id}/domains",
-            get(nodes::list_node_group_domains).post(nodes::replace_node_group_domains),
+            "/api/v1/nodes/{id}/domains",
+            get(nodes::list_node_domains).post(nodes::replace_node_domains),
         )
-        .route("/api/v1/nodes", get(nodes::list_nodes))
         .route(
-            "/api/v1/nodes/{id}/endpoints",
+            "/api/v1/node-runtimes/{id}/endpoints",
             get(nodes::list_node_endpoints).post(nodes::replace_node_endpoints),
         )
         .route(
-            "/api/v1/nodes/enrollment-tokens",
-            post(nodes::create_enrollment_token),
+            "/api/v1/nodes/{id}/bootstrap-sessions",
+            post(nodes::create_bootstrap_session),
+        )
+        .route(
+            "/api/v1/node-runtimes/{id}/reissue-bootstrap",
+            post(nodes::reissue_bootstrap),
         )
         .route("/api/v1/rollouts", get(nodes::list_rollouts))
-        .route("/api/v1/agent/register", post(nodes::register_agent))
+        .route("/api/v1/agent/bootstrap", post(nodes::bootstrap_agent))
         .route("/api/v1/agent/heartbeat", post(nodes::heartbeat))
         .route("/api/v1/agent/jobs/pull", post(nodes::pull_rollouts))
         .route("/api/v1/agent/jobs/{id}/ack", post(nodes::ack_rollout))
+        .route("/api/v1/agent/node-token/rotate", post(nodes::rotate_node_token))
         .route("/api/v1/agent/usage/bulk", post(usage::ingest_usage))
         .route("/api/v1/usage", get(usage::list_usage))
         .route("/api/v1/devices", get(subscriptions::list_devices))
@@ -123,6 +129,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/v1/subscriptions/{id}",
             patch(subscriptions::update_subscription).delete(subscriptions::delete_subscription),
+        )
+        .route(
+            "/api/v1/subscriptions/public/{token}",
+            get(subscriptions::public_subscription),
         )
         .route(
             "/api/v1/subscriptions/{id}/rotate-link",

@@ -46,6 +46,7 @@ impl RbacService {
             | Permission::ManageNodes
             | Permission::ManageSubscriptions
             | Permission::ManageUsage
+            | Permission::ManageNotifications
             | Permission::SelfService => tenant_matches,
             Permission::ManageResellers
             | Permission::ManageGlobalUsers
@@ -98,6 +99,45 @@ mod tests {
             Permission::ManageSubscriptions,
             AccessScope {
                 target_tenant_id: Some(Uuid::new_v4()),
+            },
+        );
+
+        assert!(!allowed);
+    }
+
+    #[test]
+    fn reseller_can_manage_notifications_in_own_tenant() {
+        let tenant_id = Uuid::new_v4();
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(tenant_id),
+            role: UserRole::Reseller,
+        };
+
+        let allowed = RbacService.is_allowed(
+            &actor,
+            Permission::ManageNotifications,
+            AccessScope {
+                target_tenant_id: Some(tenant_id),
+            },
+        );
+
+        assert!(allowed);
+    }
+
+    #[test]
+    fn user_cannot_manage_notifications() {
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::User,
+        };
+
+        let allowed = RbacService.is_allowed(
+            &actor,
+            Permission::ManageNotifications,
+            AccessScope {
+                target_tenant_id: actor.tenant_id,
             },
         );
 

@@ -14,6 +14,9 @@ pub struct Device {
     pub name: String,
     #[serde(skip_serializing, default)]
     pub device_token: String,
+    #[serde(skip_serializing, default)]
+    #[sqlx(default)]
+    pub device_token_hash: String,
     pub suspended: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -46,10 +49,12 @@ pub struct SubscriptionLink {
     pub id: Uuid,
     pub subscription_id: Uuid,
     #[serde(skip_serializing, default)]
+    #[sqlx(default)]
     pub token: String,
     #[serde(skip_serializing, default)]
     #[sqlx(default)]
     pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }

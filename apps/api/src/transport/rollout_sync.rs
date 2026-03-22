@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use anneal_config_engine::{CanonicalConfig, ClientCredential, ConfigRenderer, InboundProfile};
 use anneal_core::DeploymentStatus;
-use anneal_nodes::{ConfigRevision, DeploymentRollout, Node, NodeEndpoint, NodeRepository};
+use anneal_nodes::{ConfigRevision, DeploymentRollout, NodeRuntime, NodeEndpoint, NodeRepository};
 use anneal_platform::DeploymentJob;
 use anneal_subscriptions::SubscriptionRepository;
 use apalis::prelude::TaskSink;
@@ -16,7 +16,7 @@ pub async fn queue_tenant_rollouts_for_current_state(
     tenant_id: Uuid,
     reason: &str,
 ) -> anneal_core::ApplicationResult<()> {
-    let nodes = sqlx::query_as::<_, Node>(
+    let nodes = sqlx::query_as::<_, NodeRuntime>(
         "select * from nodes where tenant_id = $1 and status = 'online' order by name asc",
     )
     .bind(tenant_id)
@@ -165,3 +165,5 @@ fn map_endpoint_to_profile(
         tls_key_path: endpoint.tls_key_path.clone(),
     })
 }
+
+

@@ -2,6 +2,7 @@ use anneal_audit::{AuditService, PgAuditRepository};
 use anneal_auth::{
     ArgonPasswordService, AuthService, JwtService, OtpAuthTotpService, PgSessionRepository,
 };
+use anneal_core::TokenHasher;
 use anneal_nodes::{NodeService, PgNodeRepository};
 use anneal_notifications::{NotificationService, PgNotificationRepository, TelegramNotifier};
 use anneal_platform::{DeploymentJob, NotificationJob, Settings};
@@ -29,6 +30,7 @@ pub struct AppState {
     pub password_service: ArgonPasswordService,
     pub jwt_service: JwtService,
     pub totp_service: OtpAuthTotpService,
+    pub token_hasher: TokenHasher,
     pub deployment_queue: PostgresStorage<DeploymentJob>,
     pub notification_queue: PostgresStorage<NotificationJob>,
 }
@@ -61,17 +63,25 @@ impl AppState {
     }
 
     pub fn node_service(&self) -> NodeService<&PgNodeRepository> {
-        NodeService::new(&self.nodes, self.rbac)
+        NodeService::with_token_hasher(&self.nodes, self.rbac, self.token_hasher.clone())
     }
 
     pub fn subscription_service(&self) -> SubscriptionService<&PgSubscriptionRepository> {
-        SubscriptionService::new(&self.subscriptions, self.rbac)
+        SubscriptionService::with_token_hasher(
+            &self.subscriptions,
+            self.rbac,
+            self.token_hasher.clone(),
+        )
     }
 
     pub fn unified_subscription_service(
         &self,
     ) -> UnifiedSubscriptionService<&PgSubscriptionRepository, &PgNodeRepository> {
-        UnifiedSubscriptionService::new(&self.subscriptions, &self.nodes)
+        UnifiedSubscriptionService::with_token_hasher(
+            &self.subscriptions,
+            &self.nodes,
+            self.token_hasher.clone(),
+        )
     }
 
     pub fn usage_service(&self) -> UsageService<&PgUsageRepository> {

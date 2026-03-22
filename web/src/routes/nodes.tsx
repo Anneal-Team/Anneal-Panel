@@ -12,39 +12,34 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { api, type Node, type NodeGroup, type ProxyEngine } from "@/lib/api";
-import { formatDate, formatNodeStatus } from "@/lib/format";
+import { api, type Node, type NodeRuntime, type ProxyEngine } from "@/lib/api";
+import { formatDate, formatNodeName, formatNodeStatus } from "@/lib/format";
 
 const runtimeProtocols: Record<ProxyEngine, string> = {
   xray: "vless_reality,vmess,trojan,shadowsocks_2022",
   singbox: "vless_reality,vmess,trojan,shadowsocks_2022,tuic,hysteria2",
 };
 
-type ServerCard = {
-  id: string;
-  tenant_id: string;
-  name: string;
-  runtimes: Partial<Record<ProxyEngine, Node>>;
-};
-
 type NodeDialogMode = "create" | "edit";
 
-function buildInstallBlock(name: string, tokens: Record<ProxyEngine, string>) {
+function buildInstallBlock(name: string, bootstrapToken: string) {
   return [
     `ANNEAL_AGENT_SERVER_URL=${window.location.origin}`,
     `ANNEAL_AGENT_NAME=${name}`,
+    `ANNEAL_AGENT_BOOTSTRAP_TOKEN=${bootstrapToken}`,
     "ANNEAL_AGENT_ENGINES=xray,singbox",
     `ANNEAL_AGENT_PROTOCOLS_XRAY=${runtimeProtocols.xray}`,
     `ANNEAL_AGENT_PROTOCOLS_SINGBOX=${runtimeProtocols.singbox}`,
-    `ANNEAL_AGENT_ENROLLMENT_TOKENS=xray:${tokens.xray},singbox:${tokens.singbox}`,
     "./install.sh --role node",
   ].join("\n");
 }
 
-function overallStatus(server: ServerCard) {
-  const states = Object.values(server.runtimes)
-    .filter(Boolean)
-    .map((runtime) => runtime.status);
+function runtimeByEngine(node: Node, engine: ProxyEngine) {
+  return node.runtimes.find((runtime) => runtime.engine === engine);
+}
+
+function overallStatus(node: Node) {
+  const states = node.runtimes.map((runtime) => runtime.status);
   if (states.includes("online")) {
     return "online";
   }
@@ -54,53 +49,27 @@ function overallStatus(server: ServerCard) {
   return "offline";
 }
 
-function groupServers(nodeGroups: NodeGroup[] | undefined, nodes: Node[] | undefined) {
-  const servers = new Map<string, ServerCard>();
-  for (const group of nodeGroups ?? []) {
-    servers.set(group.id, {
-      id: group.id,
-      tenant_id: group.tenant_id,
-      name: group.name,
-      runtimes: {},
-    });
-  }
-  for (const node of nodes ?? []) {
-    const existing = servers.get(node.node_group_id) ?? {
-      id: node.node_group_id,
-      tenant_id: node.tenant_id,
-      name: node.name,
-      runtimes: {},
-    };
-    existing.runtimes[node.engine] = node;
-    servers.set(node.node_group_id, existing);
-  }
-  return Array.from(servers.values()).sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function runtimeTone(node: Node | undefined) {
-  if (!node) {
+function runtimeTone(runtime: NodeRuntime | undefined) {
+  if (!runtime) {
     return "muted" as const;
   }
-  if (node.status === "online") {
+  if (runtime.status === "online") {
     return "success" as const;
   }
-  if (node.status === "pending") {
+  if (runtime.status === "pending") {
     return "warning" as const;
   }
   return "danger" as const;
 }
 
-function runtimeLabel(node: Node | undefined) {
-  if (!node) {
-    return "Не зарегистрирован";
+function runtimeLabel(runtime: NodeRuntime | undefined, missingLabel: string) {
+  if (!runtime) {
+    return missingLabel;
   }
-  return formatNodeStatus(node.status);
+  return formatNodeStatus(runtime.status);
 }
 
-function tenantLabel(
-  tenantId: string,
-  tenantNames: Map<string, string>,
-) {
+function tenantLabel(tenantId: string, tenantNames: Map<string, string>) {
   return tenantNames.get(tenantId) ?? tenantId;
 }
 
@@ -112,10 +81,10 @@ export function NodesPage() {
   const [error, setError] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<NodeDialogMode>("create");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ServerCard | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Node | null>(null);
   const [installBlock, setInstallBlock] = useState<string | null>(null);
   const [form, setForm] = useState({
-    node_group_id: "",
+    node_id: "",
     tenant_id: "",
     name: "",
   });
@@ -123,11 +92,6 @@ export function NodesPage() {
   const resellersQuery = useQuery({
     queryKey: ["resellers"],
     queryFn: api.listResellers,
-    enabled: Boolean(session.accessToken),
-  });
-  const nodeGroupsQuery = useQuery({
-    queryKey: ["node-groups"],
-    queryFn: api.listNodeGroups,
     enabled: Boolean(session.accessToken),
   });
   const nodesQuery = useQuery({
@@ -154,52 +118,37 @@ export function NodesPage() {
     [resellersQuery.data],
   );
 
-  const servers = useMemo(
-    () => groupServers(nodeGroupsQuery.data, nodesQuery.data),
-    [nodeGroupsQuery.data, nodesQuery.data],
+  const nodes = useMemo(
+    () => [...(nodesQuery.data ?? [])].sort((left, right) => left.name.localeCompare(right.name)),
+    [nodesQuery.data],
   );
 
   const createNodeMutation = useMutation({
     mutationFn: async () => {
       const name = form.name.trim();
-      const group = await api.createNodeGroup({
+      const node = await api.createNode({
         tenant_id: form.tenant_id,
         name,
       });
-      const [xrayGrant, singboxGrant] = await Promise.all([
-        api.createEnrollmentToken({
-          tenant_id: form.tenant_id,
-          node_group_id: group.id,
-          engine: "xray",
-        }),
-        api.createEnrollmentToken({
-          tenant_id: form.tenant_id,
-          node_group_id: group.id,
-          engine: "singbox",
-        }),
-      ]);
+      const bootstrap = await api.createBootstrapToken(node.id, {
+        tenant_id: form.tenant_id,
+        engines: ["xray", "singbox"],
+      });
       return {
-        group,
-        installBlock: buildInstallBlock(name, {
-          xray: xrayGrant.token,
-          singbox: singboxGrant.token,
-        }),
+        installBlock: buildInstallBlock(name, bootstrap.bootstrap_token),
       };
     },
     onSuccess: async (result) => {
       setError(null);
-      setMessage(`Сервер ${result.group.name} подготовлен.`);
+      setMessage(null);
       setInstallBlock(result.installBlock);
       setDialogOpen(false);
       setForm({
-        node_group_id: "",
+        node_id: "",
         tenant_id: "",
         name: "",
       });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["nodes"] }),
-        queryClient.invalidateQueries({ queryKey: ["node-groups"] }),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: ["nodes"] });
     },
     onError: (mutationError) => {
       setMessage(null);
@@ -209,23 +158,20 @@ export function NodesPage() {
 
   const updateNodeMutation = useMutation({
     mutationFn: () =>
-      api.updateNodeGroup(form.node_group_id, {
+      api.updateNode(form.node_id, {
         tenant_id: form.tenant_id,
         name: form.name.trim(),
       }),
-    onSuccess: async (group) => {
+    onSuccess: async () => {
       setError(null);
-      setMessage(`Сервер ${group.name} обновлён.`);
+      setMessage(null);
       setDialogOpen(false);
       setForm({
-        node_group_id: "",
+        node_id: "",
         tenant_id: "",
         name: "",
       });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["nodes"] }),
-        queryClient.invalidateQueries({ queryKey: ["node-groups"] }),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: ["nodes"] });
     },
     onError: (mutationError) => {
       setMessage(null);
@@ -234,15 +180,14 @@ export function NodesPage() {
   });
 
   const deleteNodeMutation = useMutation({
-    mutationFn: (target: ServerCard) => api.deleteNodeGroup(target.id, target.tenant_id),
+    mutationFn: (target: Node) => api.deleteNode(target.id, target.tenant_id),
     onSuccess: async () => {
       setError(null);
-      setMessage("Сервер удалён.");
+      setMessage(null);
       setDeleteTarget(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["nodes"] }),
-        queryClient.invalidateQueries({ queryKey: ["node-groups"] }),
-        queryClient.invalidateQueries({ queryKey: ["node-group-domains"] }),
+        queryClient.invalidateQueries({ queryKey: ["node-domains"] }),
         queryClient.invalidateQueries({ queryKey: ["server-endpoints"] }),
       ]);
     },
@@ -256,20 +201,20 @@ export function NodesPage() {
     setDialogMode("create");
     setInstallBlock(null);
     setForm({
-      node_group_id: "",
+      node_id: "",
       tenant_id: "",
       name: "",
     });
     setDialogOpen(true);
   }
 
-  function openEditDialog(server: ServerCard) {
+  function openEditDialog(node: Node) {
     setDialogMode("edit");
     setInstallBlock(null);
     setForm({
-      node_group_id: server.id,
-      tenant_id: server.tenant_id,
-      name: server.name,
+      node_id: node.id,
+      tenant_id: node.tenant_id,
+      name: node.name,
     });
     setDialogOpen(true);
   }
@@ -286,8 +231,8 @@ export function NodesPage() {
     return <AuthRequired title={t("nodes.unauthorized")} />;
   }
 
-  const onlineServers = servers.filter((server) => overallStatus(server) === "online").length;
-  const pendingServers = servers.filter((server) => overallStatus(server) === "pending").length;
+  const onlineNodes = nodes.filter((node) => overallStatus(node) === "online").length;
+  const pendingNodes = nodes.filter((node) => overallStatus(node) === "pending").length;
 
   return (
     <div className="space-y-8">
@@ -297,9 +242,7 @@ export function NodesPage() {
             {t("nav_group.infrastructure")}
           </div>
           <h1 className="mt-4 text-4xl font-bold text-[#1d271a]">{t("nodes.title")}</h1>
-          <p className="mt-3 max-w-4xl text-base text-[#485644]">
-            {t("nodes.subtitle")}
-          </p>
+          <p className="mt-3 max-w-4xl text-base text-[#485644]">{t("nodes.subtitle")}</p>
         </div>
         <Button onClick={openCreateDialog} type="button">
           {t("nodes.groups.create")}
@@ -312,8 +255,10 @@ export function NodesPage() {
       {installBlock ? (
         <Card className="space-y-4">
           <div>
-            <div className="text-xs uppercase tracking-[0.25em] text-foreground/80">Install</div>
-            <h2 className="mt-3 text-2xl font-semibold">Готовый install-блок</h2>
+            <div className="text-xs uppercase tracking-[0.25em] text-foreground/80">
+              {t("nodes.create.title")}
+            </div>
+            <h2 className="mt-3 text-2xl font-semibold">{t("nodes.create.token_hint")}</h2>
           </div>
           <Textarea className="min-h-48 font-mono text-xs" readOnly value={installBlock} />
         </Card>
@@ -322,17 +267,17 @@ export function NodesPage() {
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard
           label={t("nodes.stat.total")}
-          value={servers.length.toString()}
+          value={nodes.length.toString()}
           hint={t("nodes.stat.total_hint")}
         />
         <MetricCard
           label={t("nodes.stat.online")}
-          value={onlineServers.toString()}
+          value={onlineNodes.toString()}
           hint={t("nodes.stat.online_hint")}
         />
         <MetricCard
           label={t("nodes.stat.pending")}
-          value={pendingServers.toString()}
+          value={pendingNodes.toString()}
           hint={t("nodes.stat.pending_hint")}
         />
       </div>
@@ -343,21 +288,20 @@ export function NodesPage() {
             <h2 className="mt-2 text-xl font-bold text-[#1d271a]">{t("nodes.list.title")}</h2>
           </div>
           <div className="rounded-2xl bg-muted px-4 py-3 text-sm text-foreground/80">
-            Всего: {servers.length}
+            {t("common.total")}: {nodes.length}
           </div>
         </div>
 
-        {servers.length > 0 ? (
+        {nodes.length > 0 ? (
           <div className="space-y-3">
-            {servers.map((server) => {
-              const status = overallStatus(server);
-
+            {nodes.map((node) => {
+              const status = overallStatus(node);
               return (
-                <div key={server.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
+                <div key={node.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-3">
-                        <div className="text-lg font-semibold">{server.name}</div>
+                        <div className="text-lg font-semibold">{formatNodeName(node.name)}</div>
                         <Badge
                           tone={
                             status === "online"
@@ -371,15 +315,13 @@ export function NodesPage() {
                         </Badge>
                       </div>
                       <div className="mt-2 text-sm text-foreground/80">
-                        Тенант: {tenantLabel(server.tenant_id, tenantNames)}
+                        {tenantLabel(node.tenant_id, tenantNames)}
                       </div>
-                      <div className="mt-1 font-mono text-xs text-foreground/90">
-                        {server.id}
-                      </div>
+                      <div className="mt-1 font-mono text-xs text-foreground/90">{node.id}</div>
 
                       <div className="mt-4 grid gap-3 md:grid-cols-2">
                         {(["xray", "singbox"] as const).map((engine) => {
-                          const runtime = server.runtimes[engine];
+                          const runtime = runtimeByEngine(node, engine);
                           return (
                             <div
                               key={engine}
@@ -387,13 +329,15 @@ export function NodesPage() {
                             >
                               <div className="flex items-center justify-between gap-3">
                                 <div className="text-sm font-semibold">{engine}</div>
-                                <Badge tone={runtimeTone(runtime)}>{runtimeLabel(runtime)}</Badge>
+                                <Badge tone={runtimeTone(runtime)}>
+                                  {runtimeLabel(runtime, t("nodes.runtime.missing"))}
+                                </Badge>
                               </div>
                               <div className="mt-2 text-sm text-foreground/80">
-                                {runtime ? `version ${runtime.version}` : "runtime ещё не зарегистрирован"}
+                                {runtime ? runtime.version : t("nodes.runtime.missing")}
                               </div>
                               <div className="mt-2 text-xs text-foreground/90">
-                                Последний сигнал: {formatDate(runtime?.last_seen_at ?? null)}
+                                {t("nodes.list.last_seen")}: {formatDate(runtime?.last_seen_at ?? null)}
                               </div>
                             </div>
                           );
@@ -402,11 +346,11 @@ export function NodesPage() {
                     </div>
 
                     <div className="flex flex-wrap gap-3">
-                      <Button type="button" variant="secondary" onClick={() => openEditDialog(server)}>
-                        Редактировать
+                      <Button type="button" variant="secondary" onClick={() => openEditDialog(node)}>
+                        {t("common.actions.edit")}
                       </Button>
-                      <Button type="button" variant="danger" onClick={() => setDeleteTarget(server)}>
-                        Удалить
+                      <Button type="button" variant="danger" onClick={() => setDeleteTarget(node)}>
+                        {t("common.actions.delete")}
                       </Button>
                     </div>
                   </div>
@@ -424,12 +368,8 @@ export function NodesPage() {
       <Dialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        title={dialogMode === "create" ? "Новая серверная нода" : "Редактирование ноды"}
-        description={
-          dialogMode === "create"
-            ? "Панель создаст серверную группу и сразу подготовит install-блок для обоих runtime."
-            : "Измени название серверной ноды. Привязка к тенанту остаётся прежней."
-        }
+        title={dialogMode === "create" ? t("nodes.groups.create") : t("common.actions.edit")}
+        description={t("nodes.subtitle")}
       >
         <form
           className="grid gap-3"
@@ -445,7 +385,7 @@ export function NodesPage() {
                 setForm((current) => ({ ...current, tenant_id: event.target.value }))
               }
             >
-              <option value="">Выбери тенант</option>
+              <option value="">{t("nodes.create.select_tenant")}</option>
               {tenantOptions.map((tenant) => (
                 <option key={tenant.tenant_id} value={tenant.tenant_id}>
                   {tenant.label}
@@ -454,28 +394,19 @@ export function NodesPage() {
             </Select>
           ) : (
             <div className="rounded-[24px] bg-[#f2efe4] px-4 py-3 text-sm text-foreground/90">
-              Тенант: {tenantLabel(form.tenant_id, tenantNames)}
+              {tenantLabel(form.tenant_id, tenantNames)}
             </div>
           )}
 
           <Input
-            placeholder="Имя VPS/VDS сервера"
+            placeholder={t("nodes.groups.name")}
             value={form.name}
             onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
           />
 
-          <div className="rounded-[24px] bg-[#f2efe4] p-4 text-sm text-foreground/90">
-            <div>Одна серверная нода получает сразу два runtime: xray и singbox.</div>
-            {dialogMode === "create" ? (
-              <div className="mt-1">После создания можно сразу запускать готовый install-блок.</div>
-            ) : (
-              <div className="mt-1">Доменные правила и точки входа сохранятся за этой нодой.</div>
-            )}
-          </div>
-
           <div className="flex justify-end gap-3">
             <Button type="button" variant="secondary" onClick={() => setDialogOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button
               disabled={
@@ -488,11 +419,11 @@ export function NodesPage() {
             >
               {dialogMode === "create"
                 ? createNodeMutation.isPending
-                  ? "Создаю..."
-                  : "Создать"
+                  ? t("nodes.groups.creating")
+                  : t("common.actions.create")
                 : updateNodeMutation.isPending
-                  ? "Сохраняю..."
-                  : "Сохранить"}
+                  ? t("common.save")
+                  : t("common.save")}
             </Button>
           </div>
         </form>
@@ -501,14 +432,10 @@ export function NodesPage() {
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         onClose={() => setDeleteTarget(null)}
-        title="Удалить ноду"
-        description={
-          deleteTarget
-            ? `Нода ${deleteTarget.name} будет удалена вместе с runtime, endpoint-ами и связанными данными.`
-            : ""
-        }
-        confirmLabel="Удалить"
-        pendingLabel="Удаляю..."
+        title={t("common.actions.delete")}
+        description={deleteTarget?.name ?? ""}
+        confirmLabel={t("common.actions.delete")}
+        pendingLabel={t("subscriptions.delete.pending")}
         isPending={deleteNodeMutation.isPending}
         onConfirm={() => {
           if (deleteTarget) {

@@ -11,11 +11,15 @@ use anyhow::anyhow;
 use clap::Parser;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use reqwest::Url;
 use tokio::fs;
 use uuid::Uuid;
 
 use crate::{
-    client::{RegisterNodeRequest, ack_rollout, build_client, heartbeat, pull_rollouts, register},
+    client::{
+        BootstrapAgentRequest, RegisterRuntimeRequest, RuntimeIdentity, ack_rollout, bootstrap,
+        build_client, heartbeat, pull_rollouts,
+    },
     runtime::{
         RuntimeSettings, apply_rollout, parse_engine, parse_protocols, parse_runtime_controller,
     },
@@ -33,22 +37,14 @@ struct AgentArgs {
     name: String,
     #[arg(long, env = "ANNEAL_AGENT_VERSION", default_value = "0.1.0")]
     version: String,
-    #[arg(long, env = "ANNEAL_AGENT_ENGINE", default_value = "xray")]
-    engine: String,
-    #[arg(long, env = "ANNEAL_AGENT_ENGINES")]
-    engines: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_PROTOCOLS", default_value = "vless_reality")]
-    protocols: String,
+    #[arg(long, env = "ANNEAL_AGENT_ENGINES", default_value = "xray,singbox")]
+    engines: String,
     #[arg(long, env = "ANNEAL_AGENT_PROTOCOLS_XRAY")]
     xray_protocols: Option<String>,
     #[arg(long, env = "ANNEAL_AGENT_PROTOCOLS_SINGBOX")]
     singbox_protocols: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_ENROLLMENT_TOKEN")]
-    enrollment_token: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_ENROLLMENT_TOKENS")]
-    enrollment_tokens: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_NODE_ID")]
-    node_id: Option<Uuid>,
+    #[arg(long, env = "ANNEAL_AGENT_BOOTSTRAP_TOKEN")]
+    bootstrap_token: Option<String>,
     #[arg(long, env = "ANNEAL_AGENT_NODE_STATE_PATH")]
     node_state_path: Option<PathBuf>,
     #[arg(
@@ -103,17 +99,24 @@ struct AgentArgs {
 
 #[derive(Debug, Clone)]
 struct ManagedRuntime {
-    node_id: Uuid,
+    identity: RuntimeIdentity,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct AgentState {
-    node_ids: HashMap<String, Uuid>,
+    runtimes: HashMap<String, StoredRuntimeState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredRuntimeState {
+    node_id: Uuid,
+    node_token: String,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = AgentArgs::parse();
+    validate_server_url(&args.server_url)?;
     let client = build_client()?;
     let runtime = RuntimeSettings {
         config_root: args.config_root.clone(),
@@ -132,13 +135,11 @@ async fn main() -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| runtime.config_root.join("agent-state.json"));
     let configured_engines = parse_engines(&args)?;
-    let mut enrollment_tokens = parse_enrollment_tokens(&args)?;
     let mut state = load_state(&state_path).await?;
     let runtimes = register_runtimes(
         &client,
         &args,
         &configured_engines,
-        &mut enrollment_tokens,
         &mut state,
     )
     .await?;
@@ -146,17 +147,19 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         for managed in &runtimes {
-            heartbeat(&client, &args.server_url, managed.node_id, &args.version).await?;
-            let rollouts = pull_rollouts(&client, &args.server_url, managed.node_id).await?;
+            heartbeat(&client, &args.server_url, &managed.identity, &args.version).await?;
+            let rollouts = pull_rollouts(&client, &args.server_url, &managed.identity).await?;
             for rollout in rollouts {
                 let result = apply_rollout(&runtime, &rollout).await;
                 ack_rollout(
                     &client,
                     &args.server_url,
-                    managed.node_id,
+                    &managed.identity,
                     rollout.id,
                     result.is_ok(),
-                    result.err().map(|error| error.to_string()),
+                    result
+                        .err()
+                        .map(|error| classify_rollout_error(&error).to_owned()),
                 )
                 .await?;
             }
@@ -174,124 +177,108 @@ async fn register_runtimes(
     client: &Client,
     args: &AgentArgs,
     configured_engines: &[anneal_core::ProxyEngine],
-    enrollment_tokens: &mut HashMap<String, String>,
     state: &mut AgentState,
 ) -> anyhow::Result<Vec<ManagedRuntime>> {
-    let legacy_engine = parse_engine(&args.engine)?;
-    let legacy_mode = args.engines.is_none();
     let mut runtimes = Vec::with_capacity(configured_engines.len());
+    let mut pending_bootstrap = Vec::new();
 
     for engine in configured_engines {
         let key = engine_key(*engine);
         let protocols = protocols_for_engine(args, *engine)?;
-        let persisted_node_id = state.node_ids.get(key).copied().or_else(|| {
-            if legacy_mode && *engine == legacy_engine {
-                args.node_id
-            } else {
-                None
+        let persisted_identity = state.runtimes.get(key).cloned();
+        if let Some(identity) = persisted_identity {
+            if identity.node_token.trim().is_empty() {
+                return Err(anyhow!("missing node token for persisted runtime {key}"));
             }
-        });
-        let node_id = if let Some(node_id) = persisted_node_id {
-            node_id
-        } else {
-            let enrollment_token = enrollment_tokens.remove(key).or_else(|| {
-                if legacy_mode && *engine == legacy_engine {
-                    args.enrollment_token.clone()
-                } else {
-                    None
-                }
+            runtimes.push(ManagedRuntime {
+                identity: RuntimeIdentity {
+                    node_id: identity.node_id,
+                    node_token: identity.node_token,
+                },
             });
-            let enrollment_token = enrollment_token
-                .ok_or_else(|| anyhow!("missing enrollment token for runtime {key}"))?;
+        } else {
             let name = if configured_engines.len() == 1 {
                 args.name.clone()
             } else {
                 format!("{}-{key}", args.name)
             };
-            let node_id = register(
-                client,
-                &args.server_url,
-                RegisterNodeRequest {
-                    enrollment_token,
-                    name,
-                    version: args.version.clone(),
-                    engine: *engine,
-                    protocols: protocols.clone(),
+            pending_bootstrap.push(RegisterRuntimeRequest {
+                name,
+                version: args.version.clone(),
+                engine: *engine,
+                protocols,
+            });
+        }
+    }
+
+    if !pending_bootstrap.is_empty() {
+        let bootstrap_token = args
+            .bootstrap_token
+            .clone()
+            .ok_or_else(|| anyhow!("missing ANNEAL_AGENT_BOOTSTRAP_TOKEN"))?;
+        let grants = bootstrap(
+            client,
+            &args.server_url,
+            BootstrapAgentRequest {
+                bootstrap_token,
+                runtimes: pending_bootstrap,
+            },
+        )
+        .await?;
+        for grant in grants {
+            let key = engine_key(grant.engine).to_owned();
+            let stored = StoredRuntimeState {
+                node_id: grant.node_id,
+                node_token: grant.node_token.clone(),
+            };
+            state.runtimes.insert(key, stored.clone());
+            runtimes.push(ManagedRuntime {
+                identity: RuntimeIdentity {
+                    node_id: stored.node_id,
+                    node_token: stored.node_token,
                 },
-            )
-            .await?;
-            state.node_ids.insert(key.into(), node_id);
-            node_id
-        };
-        runtimes.push(ManagedRuntime { node_id });
+            });
+        }
     }
 
     Ok(runtimes)
 }
 
 fn parse_engines(args: &AgentArgs) -> anyhow::Result<Vec<anneal_core::ProxyEngine>> {
-    if let Some(value) = &args.engines {
-        let mut parsed = Vec::new();
-        for item in value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            let engine = parse_engine(item)?;
-            if !parsed.contains(&engine) {
-                parsed.push(engine);
-            }
+    let mut parsed = Vec::new();
+    for item in args
+        .engines
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        let engine = parse_engine(item)?;
+        if !parsed.contains(&engine) {
+            parsed.push(engine);
         }
-        if parsed.is_empty() {
-            return Err(anyhow!(
-                "ANNEAL_AGENT_ENGINES must contain at least one runtime"
-            ));
-        }
-        return Ok(parsed);
     }
-    Ok(vec![parse_engine(&args.engine)?])
+    if parsed.is_empty() {
+        return Err(anyhow!(
+            "ANNEAL_AGENT_ENGINES must contain at least one runtime"
+        ));
+    }
+    Ok(parsed)
 }
 
 fn protocols_for_engine(
     args: &AgentArgs,
     engine: anneal_core::ProxyEngine,
 ) -> anyhow::Result<Vec<anneal_core::ProtocolKind>> {
-    let explicit = match engine {
+    if let Some(value) = match engine {
         anneal_core::ProxyEngine::Xray => args.xray_protocols.as_deref(),
         anneal_core::ProxyEngine::Singbox => args.singbox_protocols.as_deref(),
-    };
-    if let Some(value) = explicit {
+    } {
         return parse_protocols(value);
     }
-    if args.engines.is_some() {
-        return parse_protocols(match engine {
-            anneal_core::ProxyEngine::Xray => XRAY_DEFAULT_PROTOCOLS,
-            anneal_core::ProxyEngine::Singbox => SINGBOX_DEFAULT_PROTOCOLS,
-        });
-    }
-    parse_protocols(&args.protocols)
-}
-
-fn parse_enrollment_tokens(args: &AgentArgs) -> anyhow::Result<HashMap<String, String>> {
-    let mut tokens = HashMap::new();
-    if let Some(value) = &args.enrollment_tokens {
-        for item in value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            let (engine, token) = item
-                .split_once(':')
-                .ok_or_else(|| anyhow!("invalid enrollment token pair: {item}"))?;
-            let key = engine_key(parse_engine(engine)?);
-            let token = token.trim();
-            if token.is_empty() {
-                return Err(anyhow!("empty enrollment token for runtime {key}"));
-            }
-            tokens.insert(key.into(), token.into());
-        }
-    }
-    Ok(tokens)
+    parse_protocols(match engine {
+        anneal_core::ProxyEngine::Xray => XRAY_DEFAULT_PROTOCOLS,
+        anneal_core::ProxyEngine::Singbox => SINGBOX_DEFAULT_PROTOCOLS,
+    })
 }
 
 async fn load_state(path: &Path) -> anyhow::Result<AgentState> {
@@ -314,5 +301,53 @@ fn engine_key(engine: anneal_core::ProxyEngine) -> &'static str {
     match engine {
         anneal_core::ProxyEngine::Xray => "xray",
         anneal_core::ProxyEngine::Singbox => "singbox",
+    }
+}
+
+fn validate_server_url(server_url: &str) -> anyhow::Result<()> {
+    let url = Url::parse(server_url)?;
+    if url.scheme() != "https" {
+        return Err(anyhow!("ANNEAL_AGENT_SERVER_URL must use https"));
+    }
+    Ok(())
+}
+
+fn classify_rollout_error(error: &anyhow::Error) -> &'static str {
+    let message = error.to_string();
+    if message.contains("validation") || message.contains("valid json") {
+        return "config_invalid";
+    }
+    if message.contains("restart") {
+        return "restart_failed";
+    }
+    if message.contains("health-check") {
+        return "healthcheck_failed";
+    }
+    if message.contains("rollback") || message.contains("restoring backup") {
+        return "rollback_failed";
+    }
+    "restart_failed"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_rollout_error, validate_server_url};
+
+    #[test]
+    fn rejects_non_https_control_plane_url() {
+        let error = validate_server_url("http://panel.example.com").expect_err("must fail");
+        assert!(error.to_string().contains("https"));
+    }
+
+    #[test]
+    fn rollout_errors_are_redacted_to_codes() {
+        assert_eq!(
+            classify_rollout_error(&anyhow::anyhow!("runtime validation failed: stderr")),
+            "config_invalid"
+        );
+        assert_eq!(
+            classify_rollout_error(&anyhow::anyhow!("health-check failed for xray")),
+            "healthcheck_failed"
+        );
     }
 }

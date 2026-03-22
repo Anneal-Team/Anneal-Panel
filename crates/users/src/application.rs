@@ -26,6 +26,12 @@ pub trait UserRepository: Send + Sync {
     async fn list_resellers(&self) -> ApplicationResult<Vec<User>>;
     async fn update_user(&self, user: User) -> ApplicationResult<User>;
     async fn update_reseller_bundle(&self, tenant: Tenant, user: User) -> ApplicationResult<User>;
+    async fn update_user_and_revoke_sessions(&self, user: User) -> ApplicationResult<User>;
+    async fn update_reseller_bundle_and_revoke_sessions(
+        &self,
+        tenant: Tenant,
+        user: User,
+    ) -> ApplicationResult<User>;
     async fn delete_user(&self, user_id: Uuid) -> ApplicationResult<()>;
     async fn delete_tenant(&self, tenant_id: Uuid) -> ApplicationResult<()>;
     async fn update_password_hash(
@@ -92,6 +98,20 @@ where
 
     async fn update_reseller_bundle(&self, tenant: Tenant, user: User) -> ApplicationResult<User> {
         (*self).update_reseller_bundle(tenant, user).await
+    }
+
+    async fn update_user_and_revoke_sessions(&self, user: User) -> ApplicationResult<User> {
+        (*self).update_user_and_revoke_sessions(user).await
+    }
+
+    async fn update_reseller_bundle_and_revoke_sessions(
+        &self,
+        tenant: Tenant,
+        user: User,
+    ) -> ApplicationResult<User> {
+        (*self)
+            .update_reseller_bundle_and_revoke_sessions(tenant, user)
+            .await
     }
 
     async fn delete_user(&self, user_id: Uuid) -> ApplicationResult<()> {
@@ -346,6 +366,7 @@ where
         {
             return Err(ApplicationError::Conflict("email already exists".into()));
         }
+        let previous_status = user.status;
         user.email = command.email;
         user.display_name = command.display_name;
         user.role = command.role;
@@ -354,7 +375,13 @@ where
             user.password_hash = password_hash;
         }
         user.updated_at = Utc::now();
-        let updated = self.repository.update_user(user).await?;
+        let should_revoke_sessions =
+            previous_status == UserStatus::Active && user.status != UserStatus::Active;
+        let updated = if should_revoke_sessions {
+            self.repository.update_user_and_revoke_sessions(user).await?
+        } else {
+            self.repository.update_user(user).await?
+        };
         self.attach_tenant_name(updated).await
     }
 
@@ -432,6 +459,7 @@ where
             .ok_or_else(|| ApplicationError::NotFound("tenant not found".into()))?;
         tenant.name = command.tenant_name;
         tenant.updated_at = Utc::now();
+        let previous_status = user.status;
         user.email = command.email;
         user.display_name = command.display_name;
         user.status = command.status;
@@ -439,7 +467,15 @@ where
             user.password_hash = password_hash;
         }
         user.updated_at = Utc::now();
-        let updated = self.repository.update_reseller_bundle(tenant, user).await?;
+        let should_revoke_sessions =
+            previous_status == UserStatus::Active && user.status != UserStatus::Active;
+        let updated = if should_revoke_sessions {
+            self.repository
+                .update_reseller_bundle_and_revoke_sessions(tenant, user)
+                .await?
+        } else {
+            self.repository.update_reseller_bundle(tenant, user).await?
+        };
         self.attach_tenant_name(updated).await
     }
 
@@ -620,6 +656,18 @@ impl UserRepository for InMemoryUserRepository {
             .expect("lock")
             .insert(user.id, user.clone());
         Ok(user)
+    }
+
+    async fn update_user_and_revoke_sessions(&self, user: User) -> ApplicationResult<User> {
+        self.update_user(user).await
+    }
+
+    async fn update_reseller_bundle_and_revoke_sessions(
+        &self,
+        tenant: Tenant,
+        user: User,
+    ) -> ApplicationResult<User> {
+        self.update_reseller_bundle(tenant, user).await
     }
 
     async fn delete_user(&self, user_id: Uuid) -> ApplicationResult<()> {

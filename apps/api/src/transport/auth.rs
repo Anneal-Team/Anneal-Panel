@@ -126,9 +126,17 @@ pub async fn login(
             response
         }
         Err(ApiError(anneal_core::ApplicationError::Unauthorized)) => {
-            record_auth_failure(&state.pool, &login_scope)
+            let locked = record_auth_failure(&state.pool, &login_scope)
                 .await
                 .map_err(ApiError)?;
+            write_auth_failure_audit(&state, None, None, "login", &login_scope)
+                .await
+                .map_err(ApiError)?;
+            if locked {
+                write_auth_lockout_audit(&state, None, None, "login", &login_scope)
+                    .await
+                    .map_err(ApiError)?;
+            }
             return Err(ApiError(anneal_core::ApplicationError::Unauthorized));
         }
         Err(error) => return Err(error),
@@ -235,9 +243,23 @@ pub async fn verify_totp(
             tokens
         }
         Err(ApiError(anneal_core::ApplicationError::Unauthorized)) => {
-            record_auth_failure(&state.pool, &totp_scope)
+            let locked = record_auth_failure(&state.pool, &totp_scope)
                 .await
                 .map_err(ApiError)?;
+            write_auth_failure_audit(&state, Some(claims.sub), claims.tenant_id, "totp_verify", &totp_scope)
+                .await
+                .map_err(ApiError)?;
+            if locked {
+                write_auth_lockout_audit(
+                    &state,
+                    Some(claims.sub),
+                    claims.tenant_id,
+                    "totp_verify",
+                    &totp_scope,
+                )
+                .await
+                .map_err(ApiError)?;
+            }
             return Err(ApiError(anneal_core::ApplicationError::Unauthorized));
         }
         Err(error) => return Err(error),
@@ -418,7 +440,7 @@ async fn clear_auth_failures(pool: &PgPool, scope: &str) -> anneal_core::Applica
     Ok(())
 }
 
-async fn record_auth_failure(pool: &PgPool, scope: &str) -> anneal_core::ApplicationResult<()> {
+async fn record_auth_failure(pool: &PgPool, scope: &str) -> anneal_core::ApplicationResult<bool> {
     let mut transaction = pool
         .begin()
         .await
@@ -432,7 +454,7 @@ async fn record_auth_failure(pool: &PgPool, scope: &str) -> anneal_core::Applica
     .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
     let now = Utc::now();
     let window_start = now - Duration::minutes(AUTH_FAILURE_WINDOW_MINUTES);
-    match row {
+    let locked = match row {
         Some((failures, last_failed_at, locked_until)) => {
             let next_failures = if locked_until.is_some_and(|value| value > now)
                 || last_failed_at < window_start
@@ -459,6 +481,7 @@ async fn record_auth_failure(pool: &PgPool, scope: &str) -> anneal_core::Applica
             .execute(&mut *transaction)
             .await
             .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
+            next_locked_until.is_some()
         }
         None => {
             sqlx::query(
@@ -472,11 +495,60 @@ async fn record_auth_failure(pool: &PgPool, scope: &str) -> anneal_core::Applica
             .execute(&mut *transaction)
             .await
             .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
+            false
         }
-    }
+    };
     transaction
         .commit()
         .await
         .map_err(|error| anneal_core::ApplicationError::Infrastructure(error.to_string()))?;
-    Ok(())
+    Ok(locked)
+}
+
+async fn write_auth_failure_audit(
+    state: &AppState,
+    actor_user_id: Option<uuid::Uuid>,
+    tenant_id: Option<uuid::Uuid>,
+    stage: &str,
+    scope: &str,
+) -> anneal_core::ApplicationResult<()> {
+    state
+        .audit_service()
+        .write(
+            actor_user_id,
+            tenant_id,
+            "auth.failure",
+            "auth",
+            actor_user_id,
+            json!({ "stage": stage, "scope": scope }),
+        )
+        .await
+        .map(|_| ())
+}
+
+async fn write_auth_lockout_audit(
+    state: &AppState,
+    actor_user_id: Option<uuid::Uuid>,
+    tenant_id: Option<uuid::Uuid>,
+    stage: &str,
+    scope: &str,
+) -> anneal_core::ApplicationResult<()> {
+    state
+        .audit_service()
+        .write(
+            actor_user_id,
+            tenant_id,
+            "auth.lockout",
+            "auth",
+            actor_user_id,
+            json!({
+                "stage": stage,
+                "scope": scope,
+                "limit": AUTH_FAILURE_LIMIT,
+                "window_minutes": AUTH_FAILURE_WINDOW_MINUTES,
+                "lockout_minutes": AUTH_LOCKOUT_MINUTES
+            }),
+        )
+        .await
+        .map(|_| ())
 }
