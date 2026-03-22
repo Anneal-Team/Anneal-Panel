@@ -59,21 +59,23 @@ async fn backfill_devices(
     let rows = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
         "select id, device_token, device_token_hash from devices",
     )
-        .fetch_all(&mut **transaction)
-        .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
     for (id, device_token, device_token_hash) in rows {
         let plaintext = secret_box.decrypt(&device_token)?;
         let protected = secret_box.encrypt(&plaintext)?;
         let hash = token_hasher.hash(&plaintext);
         if protected != device_token || device_token_hash.as_deref() != Some(hash.as_str()) {
-            sqlx::query("update devices set device_token = $2, device_token_hash = $3 where id = $1")
-                .bind(id)
-                .bind(protected)
-                .bind(hash)
-                .execute(&mut **transaction)
-                .await
-                .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+            sqlx::query(
+                "update devices set device_token = $2, device_token_hash = $3 where id = $1",
+            )
+            .bind(id)
+            .bind(protected)
+            .bind(hash)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         }
     }
     Ok(())
@@ -129,12 +131,11 @@ async fn backfill_config_revisions(
     transaction: &mut Transaction<'_, Postgres>,
     secret_box: &SecretBox,
 ) -> ApplicationResult<()> {
-    let rows = sqlx::query_as::<_, (Uuid, String)>(
-        "select id, rendered_config from config_revisions",
-    )
-    .fetch_all(&mut **transaction)
-    .await
-    .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+    let rows =
+        sqlx::query_as::<_, (Uuid, String)>("select id, rendered_config from config_revisions")
+            .fetch_all(&mut **transaction)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
     for (id, rendered_config) in rows {
         let protected = secret_box.encrypt(&secret_box.decrypt(&rendered_config)?)?;
         if protected != rendered_config {
@@ -153,12 +154,11 @@ async fn backfill_deployment_rollouts(
     transaction: &mut Transaction<'_, Postgres>,
     secret_box: &SecretBox,
 ) -> ApplicationResult<()> {
-    let rows = sqlx::query_as::<_, (Uuid, String)>(
-        "select id, rendered_config from deployment_rollouts",
-    )
-    .fetch_all(&mut **transaction)
-    .await
-    .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+    let rows =
+        sqlx::query_as::<_, (Uuid, String)>("select id, rendered_config from deployment_rollouts")
+            .fetch_all(&mut **transaction)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
     for (id, rendered_config) in rows {
         let protected = secret_box.encrypt(&secret_box.decrypt(&rendered_config)?)?;
         if protected != rendered_config {

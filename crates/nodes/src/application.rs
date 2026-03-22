@@ -17,25 +17,28 @@ use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::domain::{
-    ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, EnrollmentGrant, NodeRuntime,
-    NodeBootstrapGrant, NodeBootstrapRuntimeGrant, NodeBootstrapSession, NodeCapability,
-    NodeEndpoint, NodeEndpointDraft, NodeEnrollmentToken, ServerNode, NodeDomain,
-    NodeDomainDraft, NodeDomainMode, RuntimeRegistration, RuntimeRegistrationGrant,
-    NodeTokenRotationGrant,
+    ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, EnrollmentGrant, NodeBootstrapGrant,
+    NodeBootstrapRuntimeGrant, NodeBootstrapSession, NodeCapability, NodeDomain, NodeDomainDraft,
+    NodeDomainMode, NodeEndpoint, NodeEndpointDraft, NodeEnrollmentToken, NodeRuntime,
+    NodeTokenRotationGrant, RuntimeRegistration, RuntimeRegistrationGrant, ServerNode,
 };
 
 #[async_trait]
 pub trait NodeRepository: Send + Sync {
     async fn create_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode>;
-    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>>;
-    async fn find_server_node(&self, server_node_id: Uuid) -> ApplicationResult<Option<ServerNode>>;
+    async fn list_server_nodes(
+        &self,
+        tenant_id: Option<Uuid>,
+    ) -> ApplicationResult<Vec<ServerNode>>;
+    async fn find_server_node(&self, server_node_id: Uuid)
+    -> ApplicationResult<Option<ServerNode>>;
     async fn update_server_node(&self, group: ServerNode) -> ApplicationResult<ServerNode>;
     async fn delete_server_node(&self, server_node_id: Uuid) -> ApplicationResult<()>;
-    async fn list_node_runtimes_for_server(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>>;
-    async fn list_node_domains(
+    async fn list_node_runtimes_for_server(
         &self,
         server_node_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeDomain>>;
+    ) -> ApplicationResult<Vec<NodeRuntime>>;
+    async fn list_node_domains(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeDomain>>;
     async fn replace_node_domains(
         &self,
         server_node_id: Uuid,
@@ -147,11 +150,17 @@ where
         (*self).create_server_node(group).await
     }
 
-    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>> {
+    async fn list_server_nodes(
+        &self,
+        tenant_id: Option<Uuid>,
+    ) -> ApplicationResult<Vec<ServerNode>> {
         (*self).list_server_nodes(tenant_id).await
     }
 
-    async fn find_server_node(&self, server_node_id: Uuid) -> ApplicationResult<Option<ServerNode>> {
+    async fn find_server_node(
+        &self,
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Option<ServerNode>> {
         (*self).find_server_node(server_node_id).await
     }
 
@@ -163,14 +172,14 @@ where
         (*self).delete_server_node(server_node_id).await
     }
 
-    async fn list_node_runtimes_for_server(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>> {
+    async fn list_node_runtimes_for_server(
+        &self,
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeRuntime>> {
         (*self).list_node_runtimes_for_server(server_node_id).await
     }
 
-    async fn list_node_domains(
-        &self,
-        server_node_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeDomain>> {
+    async fn list_node_domains(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeDomain>> {
         (*self).list_node_domains(server_node_id).await
     }
 
@@ -179,9 +188,7 @@ where
         server_node_id: Uuid,
         domains: &[NodeDomain],
     ) -> ApplicationResult<Vec<NodeDomain>> {
-        (*self)
-            .replace_node_domains(server_node_id, domains)
-            .await
+        (*self).replace_node_domains(server_node_id, domains).await
     }
 
     async fn create_enrollment_token(
@@ -236,7 +243,9 @@ where
         node_id: Uuid,
         node_token_hash: &str,
     ) -> ApplicationResult<()> {
-        (*self).update_node_token_hash(node_id, node_token_hash).await
+        (*self)
+            .update_node_token_hash(node_id, node_token_hash)
+            .await
     }
 
     async fn update_node_heartbeat(
@@ -407,9 +416,7 @@ where
         }
         let node_name = node_name.trim().to_owned();
         if node_name.is_empty() {
-            return Err(ApplicationError::Validation(
-                "node name is required".into(),
-            ));
+            return Err(ApplicationError::Validation("node name is required".into()));
         }
         let now = Utc::now();
         let expires_at = now + Duration::minutes(15);
@@ -587,8 +594,12 @@ where
             })
             .collect::<Vec<_>>();
         let node = self.repository.create_node(node, &protocols).await?;
-        self.sync_server_node_endpoints(record.server_node_id).await?;
-        Ok(RuntimeRegistrationGrant { runtime: node, node_token })
+        self.sync_server_node_endpoints(record.server_node_id)
+            .await?;
+        Ok(RuntimeRegistrationGrant {
+            runtime: node,
+            node_token,
+        })
     }
 
     pub async fn bootstrap_nodes(
@@ -610,15 +621,12 @@ where
             .collect::<HashMap<_, _>>();
         let mut grants = Vec::with_capacity(session.engines.len());
         for engine in &session.engines {
-            let mut registration = registrations
-                .get(engine)
-                .cloned()
-                .ok_or_else(|| {
-                    ApplicationError::Validation(format!(
-                        "missing bootstrap registration for {}",
-                        engine_name(*engine)
-                    ))
-                })?;
+            let mut registration = registrations.get(engine).cloned().ok_or_else(|| {
+                ApplicationError::Validation(format!(
+                    "missing bootstrap registration for {}",
+                    engine_name(*engine)
+                ))
+            })?;
             registration.name =
                 bootstrap_node_name(&session.node_name, *engine, session.engines.len());
             let grant = self
@@ -693,7 +701,7 @@ where
             node.name.clone(),
             vec![node.engine],
         )
-            .await
+        .await
     }
 
     pub async fn list_nodes(&self, actor: &Actor) -> ApplicationResult<Vec<NodeRuntime>> {
@@ -972,11 +980,7 @@ where
             return Err(ApplicationError::Forbidden);
         }
         let rollout_failure_reason = failure_reason.clone();
-        let applied_at = if success {
-            Some(Utc::now())
-        } else {
-            None
-        };
+        let applied_at = if success { Some(Utc::now()) } else { None };
         let status = if success {
             DeploymentStatus::Applied
         } else {
@@ -1028,7 +1032,10 @@ where
             .collect::<Vec<_>>();
         let node = self.repository.create_node(node, &protocols).await?;
         self.sync_server_node_endpoints(server_node_id).await?;
-        Ok(RuntimeRegistrationGrant { runtime: node, node_token })
+        Ok(RuntimeRegistrationGrant {
+            runtime: node,
+            node_token,
+        })
     }
 
     pub fn resolve_status(
@@ -1043,7 +1050,11 @@ where
         }
     }
 
-    async fn authenticate_node(&self, node_id: Uuid, node_token: &str) -> ApplicationResult<NodeRuntime> {
+    async fn authenticate_node(
+        &self,
+        node_id: Uuid,
+        node_token: &str,
+    ) -> ApplicationResult<NodeRuntime> {
         let node_token = node_token.trim();
         if node_token.is_empty() {
             return Err(ApplicationError::Unauthorized);
@@ -1060,14 +1071,14 @@ where
     }
 
     async fn sync_server_node_endpoints(&self, server_node_id: Uuid) -> ApplicationResult<()> {
-        let nodes = self.repository.list_node_runtimes_for_server(server_node_id).await?;
+        let nodes = self
+            .repository
+            .list_node_runtimes_for_server(server_node_id)
+            .await?;
         if nodes.is_empty() {
             return Ok(());
         }
-        let domains = self
-            .repository
-            .list_node_domains(server_node_id)
-            .await?;
+        let domains = self.repository.list_node_domains(server_node_id).await?;
         let mut capabilities_by_node = HashMap::new();
         let mut existing_endpoints_by_node = HashMap::new();
         for node in &nodes {
@@ -1128,7 +1139,10 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(group)
     }
 
-    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>> {
+    async fn list_server_nodes(
+        &self,
+        tenant_id: Option<Uuid>,
+    ) -> ApplicationResult<Vec<ServerNode>> {
         Ok(self
             .groups
             .read()
@@ -1139,7 +1153,10 @@ impl NodeRepository for InMemoryNodeRepository {
             .collect())
     }
 
-    async fn find_server_node(&self, server_node_id: Uuid) -> ApplicationResult<Option<ServerNode>> {
+    async fn find_server_node(
+        &self,
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Option<ServerNode>> {
         Ok(self
             .groups
             .read()
@@ -1190,7 +1207,10 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(())
     }
 
-    async fn list_node_runtimes_for_server(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>> {
+    async fn list_node_runtimes_for_server(
+        &self,
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeRuntime>> {
         Ok(self
             .nodes
             .read()
@@ -1201,10 +1221,7 @@ impl NodeRepository for InMemoryNodeRepository {
             .collect())
     }
 
-    async fn list_node_domains(
-        &self,
-        server_node_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeDomain>> {
+    async fn list_node_domains(&self, server_node_id: Uuid) -> ApplicationResult<Vec<NodeDomain>> {
         Ok(self
             .domains
             .read()
@@ -1457,7 +1474,12 @@ impl NodeRepository for InMemoryNodeRepository {
     }
 
     async fn find_rollout(&self, rollout_id: Uuid) -> ApplicationResult<Option<DeploymentRollout>> {
-        Ok(self.rollouts.read().expect("lock").get(&rollout_id).cloned())
+        Ok(self
+            .rollouts
+            .read()
+            .expect("lock")
+            .get(&rollout_id)
+            .cloned())
     }
 
     async fn list_rollouts(
@@ -2406,7 +2428,7 @@ mod tests {
 
     use crate::{
         application::{InMemoryNodeRepository, NodeRepository, NodeService},
-        domain::{NodeEndpointDraft, NodeDomainDraft, NodeDomainMode, RuntimeRegistration},
+        domain::{NodeDomainDraft, NodeDomainMode, NodeEndpointDraft, RuntimeRegistration},
     };
 
     fn draft_from_endpoint(endpoint: &crate::domain::NodeEndpoint) -> NodeEndpointDraft {
@@ -3331,7 +3353,10 @@ mod tests {
             .pull_rollouts(first_node.id, &second_node.node_token, 10)
             .await
             .expect_err("pull must reject foreign token");
-        assert!(matches!(pull_error, anneal_core::ApplicationError::Forbidden));
+        assert!(matches!(
+            pull_error,
+            anneal_core::ApplicationError::Forbidden
+        ));
 
         let ack_error = service
             .acknowledge_rollout(
@@ -3343,7 +3368,10 @@ mod tests {
             )
             .await
             .expect_err("ack must reject foreign token");
-        assert!(matches!(ack_error, anneal_core::ApplicationError::Forbidden));
+        assert!(matches!(
+            ack_error,
+            anneal_core::ApplicationError::Forbidden
+        ));
 
         let acknowledged = service
             .acknowledge_rollout(
@@ -3468,7 +3496,10 @@ mod tests {
             .heartbeat(node.id, &node.node_token, "1.0.1")
             .await
             .expect_err("old token must fail");
-        assert!(matches!(old_error, anneal_core::ApplicationError::Unauthorized));
+        assert!(matches!(
+            old_error,
+            anneal_core::ApplicationError::Unauthorized
+        ));
 
         let updated = service
             .heartbeat(rotated.node_id, &rotated.node_token, "1.0.1")
@@ -3554,8 +3585,3 @@ mod tests {
         );
     }
 }
-
-
-
-
-

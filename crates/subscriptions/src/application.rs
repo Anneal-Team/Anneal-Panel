@@ -23,11 +23,8 @@ use crate::domain::{
 #[async_trait]
 pub trait SubscriptionRepository: Send + Sync {
     async fn tenant_owns_user(&self, tenant_id: Uuid, user_id: Uuid) -> ApplicationResult<bool>;
-    async fn tenant_owns_device(
-        &self,
-        tenant_id: Uuid,
-        device_id: Uuid,
-    ) -> ApplicationResult<bool>;
+    async fn tenant_owns_device(&self, tenant_id: Uuid, device_id: Uuid)
+    -> ApplicationResult<bool>;
     async fn create_device(&self, device: Device) -> ApplicationResult<Device>;
     async fn create_subscription(
         &self,
@@ -167,8 +164,7 @@ impl<R> SubscriptionService<R> {
         Self::with_token_hasher(
             repository,
             rbac,
-            TokenHasher::new("anneal-subscription-default-token-hash-key")
-                .expect("token hasher"),
+            TokenHasher::new("anneal-subscription-default-token-hash-key").expect("token hasher"),
         )
     }
 
@@ -384,7 +380,11 @@ where
                 target_tenant_id: Some(tenant_id),
             },
         )?;
-        if !self.repository.tenant_owns_device(tenant_id, device_id).await? {
+        if !self
+            .repository
+            .tenant_owns_device(tenant_id, device_id)
+            .await?
+        {
             return Err(ApplicationError::Forbidden);
         }
         let token = generate_token();
@@ -448,8 +448,7 @@ impl<R, C> UnifiedSubscriptionService<R, C> {
         Self::with_token_hasher(
             subscriptions,
             catalog,
-            TokenHasher::new("anneal-subscription-default-token-hash-key")
-                .expect("token hasher"),
+            TokenHasher::new("anneal-subscription-default-token-hash-key").expect("token hasher"),
         )
     }
 
@@ -791,7 +790,6 @@ fn parse_link_token(link_token: &str) -> ApplicationResult<Uuid> {
     Uuid::parse_str(link_token)
         .map_err(|_| ApplicationError::NotFound("subscription not found".into()))
 }
-
 
 fn decide_quota_state(traffic_limit_bytes: i64, used_bytes: i64) -> QuotaState {
     let ratio = if traffic_limit_bytes > 0 {
@@ -1201,4 +1199,3 @@ mod tests {
         assert!(matches!(error, ApplicationError::Forbidden));
     }
 }
-

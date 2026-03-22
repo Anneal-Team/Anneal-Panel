@@ -9,9 +9,7 @@ use serde_json::json;
 use utoipa::ToSchema;
 
 use anneal_config_engine::SubscriptionDocumentFormat;
-use anneal_subscriptions::{
-    CreateSubscriptionCommand, UpdateSubscriptionCommand,
-};
+use anneal_subscriptions::{CreateSubscriptionCommand, UpdateSubscriptionCommand};
 
 use crate::{
     app_state::AppState, error::ApiError, extractors::authenticated_actor,
@@ -166,7 +164,9 @@ pub async fn list_devices(
         .list_devices(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(devices.into_iter().map(DeviceResponse::from).collect()))
+    Ok(Json(
+        devices.into_iter().map(DeviceResponse::from).collect(),
+    ))
 }
 
 #[utoipa::path(get, path = "/api/v1/subscriptions")]
@@ -324,10 +324,11 @@ pub async fn resolve_subscription(
     Query(query): Query<ResolveSubscriptionQuery>,
 ) -> Result<Response, ApiError> {
     match detect_delivery_mode(&headers, &query) {
-        DeliveryMode::Page => Ok(
-            Redirect::temporary(&format_public_page_url(&state.settings.public_base_url, &token))
-                .into_response(),
-        ),
+        DeliveryMode::Page => Ok(Redirect::temporary(&format_public_page_url(
+            &state.settings.public_base_url,
+            &token,
+        ))
+        .into_response()),
         DeliveryMode::Bundle => {
             let bundle = state
                 .unified_subscription_service()
@@ -537,7 +538,10 @@ mod tests {
     #[test]
     fn browser_request_prefers_page_mode() {
         let mut headers = HeaderMap::new();
-        headers.insert("accept", HeaderValue::from_static("text/html,application/xhtml+xml"));
+        headers.insert(
+            "accept",
+            HeaderValue::from_static("text/html,application/xhtml+xml"),
+        );
         headers.insert("user-agent", HeaderValue::from_static("Mozilla/5.0"));
 
         let mode = detect_delivery_mode(&headers, &ResolveSubscriptionQuery::default());
@@ -548,7 +552,10 @@ mod tests {
     #[test]
     fn known_client_prefers_bundle_mode() {
         let mut headers = HeaderMap::new();
-        headers.insert("accept", HeaderValue::from_static("text/html,application/xhtml+xml"));
+        headers.insert(
+            "accept",
+            HeaderValue::from_static("text/html,application/xhtml+xml"),
+        );
         headers.insert("user-agent", HeaderValue::from_static("Hiddify"));
 
         let mode = detect_delivery_mode(&headers, &ResolveSubscriptionQuery::default());
@@ -559,7 +566,10 @@ mod tests {
     #[test]
     fn raw_query_forces_bundle_mode() {
         let mut headers = HeaderMap::new();
-        headers.insert("accept", HeaderValue::from_static("text/html,application/xhtml+xml"));
+        headers.insert(
+            "accept",
+            HeaderValue::from_static("text/html,application/xhtml+xml"),
+        );
         headers.insert("user-agent", HeaderValue::from_static("Mozilla/5.0"));
 
         let mode = detect_delivery_mode(

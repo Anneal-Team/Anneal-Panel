@@ -378,7 +378,9 @@ where
         let should_revoke_sessions =
             previous_status == UserStatus::Active && user.status != UserStatus::Active;
         let updated = if should_revoke_sessions {
-            self.repository.update_user_and_revoke_sessions(user).await?
+            self.repository
+                .update_user_and_revoke_sessions(user)
+                .await?
         } else {
             self.repository.update_user(user).await?
         };

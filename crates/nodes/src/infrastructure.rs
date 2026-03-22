@@ -7,8 +7,8 @@ use anneal_core::{ApplicationError, ApplicationResult, DeploymentStatus, NodeSta
 use crate::{
     application::NodeRepository,
     domain::{
-        ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, NodeRuntime, NodeCapability,
-        NodeBootstrapSession, NodeEndpoint, NodeEnrollmentToken, ServerNode, NodeDomain,
+        ConfigRevision, DeliveryNodeEndpoint, DeploymentRollout, NodeBootstrapSession,
+        NodeCapability, NodeDomain, NodeEndpoint, NodeEnrollmentToken, NodeRuntime, ServerNode,
     },
 };
 
@@ -66,7 +66,10 @@ impl NodeRepository for PgNodeRepository {
         Ok(group)
     }
 
-    async fn list_server_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<ServerNode>> {
+    async fn list_server_nodes(
+        &self,
+        tenant_id: Option<Uuid>,
+    ) -> ApplicationResult<Vec<ServerNode>> {
         let rows = if let Some(tenant_id) = tenant_id {
             sqlx::query_as::<_, ServerNode>(
                 "select * from node_groups where tenant_id = $1 order by name asc",
@@ -111,7 +114,10 @@ impl NodeRepository for PgNodeRepository {
         Ok(())
     }
 
-    async fn list_node_runtimes_for_server(&self, node_group_id: Uuid) -> ApplicationResult<Vec<NodeRuntime>> {
+    async fn list_node_runtimes_for_server(
+        &self,
+        node_group_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeRuntime>> {
         sqlx::query_as::<_, NodeRuntime>(
             "select * from nodes where node_group_id = $1 order by engine::text asc, name asc",
         )
@@ -121,10 +127,7 @@ impl NodeRepository for PgNodeRepository {
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn list_node_domains(
-        &self,
-        node_group_id: Uuid,
-    ) -> ApplicationResult<Vec<NodeDomain>> {
+    async fn list_node_domains(&self, node_group_id: Uuid) -> ApplicationResult<Vec<NodeDomain>> {
         sqlx::query_as::<_, NodeDomain>(
             "select * from node_group_domains where node_group_id = $1 order by created_at asc",
         )
@@ -409,10 +412,12 @@ impl NodeRepository for PgNodeRepository {
 
     async fn list_nodes(&self, tenant_id: Option<Uuid>) -> ApplicationResult<Vec<NodeRuntime>> {
         let rows = if let Some(tenant_id) = tenant_id {
-            sqlx::query_as::<_, NodeRuntime>("select * from nodes where tenant_id = $1 order by name asc")
-                .bind(tenant_id)
-                .fetch_all(&self.pool)
-                .await
+            sqlx::query_as::<_, NodeRuntime>(
+                "select * from nodes where tenant_id = $1 order by name asc",
+            )
+            .bind(tenant_id)
+            .fetch_all(&self.pool)
+            .await
         } else {
             sqlx::query_as::<_, NodeRuntime>("select * from nodes order by name asc")
                 .fetch_all(&self.pool)
@@ -619,12 +624,13 @@ impl NodeRepository for PgNodeRepository {
     }
 
     async fn find_rollout(&self, rollout_id: Uuid) -> ApplicationResult<Option<DeploymentRollout>> {
-        let rollout =
-            sqlx::query_as::<_, DeploymentRollout>("select * from deployment_rollouts where id = $1")
-            .bind(rollout_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let rollout = sqlx::query_as::<_, DeploymentRollout>(
+            "select * from deployment_rollouts where id = $1",
+        )
+        .bind(rollout_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         rollout
             .map(|rollout| self.decrypt_rollout(rollout))
             .transpose()
@@ -701,7 +707,3 @@ impl NodeRepository for PgNodeRepository {
         Ok(())
     }
 }
-
-
-
-

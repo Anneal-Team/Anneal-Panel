@@ -50,12 +50,12 @@ impl SecretBox {
         let (nonce, ciphertext) = payload.split_once(':').ok_or_else(|| {
             ApplicationError::Infrastructure("invalid encrypted secret payload".into())
         })?;
-        let nonce = URL_SAFE_NO_PAD
-            .decode(nonce)
-            .map_err(|_| ApplicationError::Infrastructure("invalid encrypted secret nonce".into()))?;
-        let nonce: [u8; 12] = nonce
-            .try_into()
-            .map_err(|_| ApplicationError::Infrastructure("invalid encrypted secret nonce".into()))?;
+        let nonce = URL_SAFE_NO_PAD.decode(nonce).map_err(|_| {
+            ApplicationError::Infrastructure("invalid encrypted secret nonce".into())
+        })?;
+        let nonce: [u8; 12] = nonce.try_into().map_err(|_| {
+            ApplicationError::Infrastructure("invalid encrypted secret nonce".into())
+        })?;
         let nonce_block: Nonce = nonce.into();
         let ciphertext = URL_SAFE_NO_PAD.decode(ciphertext).map_err(|_| {
             ApplicationError::Infrastructure("invalid encrypted secret ciphertext".into())
@@ -112,10 +112,9 @@ mod tests {
 
     #[test]
     fn encrypts_and_decrypts_roundtrip() {
-        let secret_box = SecretBox::new(
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        )
-        .expect("secret box");
+        let secret_box =
+            SecretBox::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .expect("secret box");
         let encrypted = secret_box.encrypt("secret-value").expect("encrypt");
 
         assert!(encrypted.starts_with("enc:v1:"));
@@ -128,10 +127,9 @@ mod tests {
 
     #[test]
     fn decrypt_accepts_legacy_plaintext() {
-        let secret_box = SecretBox::new(
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        )
-        .expect("secret box");
+        let secret_box =
+            SecretBox::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .expect("secret box");
 
         assert_eq!(
             secret_box.decrypt("legacy-plaintext").expect("plaintext"),

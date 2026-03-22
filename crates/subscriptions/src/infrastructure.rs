@@ -25,11 +25,13 @@ impl PgSubscriptionRepository {
         Ok(device)
     }
 
-    fn decrypt_subscription(&self, mut subscription: Subscription) -> ApplicationResult<Subscription> {
+    fn decrypt_subscription(
+        &self,
+        mut subscription: Subscription,
+    ) -> ApplicationResult<Subscription> {
         subscription.access_key = self.secret_box.decrypt(&subscription.access_key)?;
         Ok(subscription)
     }
-
 }
 
 #[async_trait]
@@ -410,9 +412,8 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         let Some(link) = link else {
             return Ok(None);
         };
-        let subscription =
-            sqlx::query_as::<_, Subscription>(
-                r#"
+        let subscription = sqlx::query_as::<_, Subscription>(
+            r#"
                 select
                     s.*,
                     active_link.id::text as current_token
@@ -427,11 +428,11 @@ impl SubscriptionRepository for PgSubscriptionRepository {
                 ) active_link on true
                 where s.id = $1 and d.suspended = false
                 "#,
-            )
-                .bind(link.subscription_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        )
+        .bind(link.subscription_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         let subscription = subscription
             .map(|subscription| self.decrypt_subscription(subscription))
             .transpose()?;

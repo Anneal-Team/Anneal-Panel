@@ -172,8 +172,9 @@ pub async fn update_user(
         )
         .await
         .map_err(ApiError)?;
-    let sessions_revoked_on_suspend = matches!(previous_status, Some(anneal_core::UserStatus::Active))
-        && user.status != anneal_core::UserStatus::Active;
+    let sessions_revoked_on_suspend =
+        matches!(previous_status, Some(anneal_core::UserStatus::Active))
+            && user.status != anneal_core::UserStatus::Active;
     state
         .audit_service()
         .write(
@@ -323,8 +324,9 @@ pub async fn update_reseller(
         )
         .await
         .map_err(ApiError)?;
-    let sessions_revoked_on_suspend = matches!(previous_status, Some(anneal_core::UserStatus::Active))
-        && reseller.status != anneal_core::UserStatus::Active;
+    let sessions_revoked_on_suspend =
+        matches!(previous_status, Some(anneal_core::UserStatus::Active))
+            && reseller.status != anneal_core::UserStatus::Active;
     state
         .audit_service()
         .write(

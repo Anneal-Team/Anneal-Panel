@@ -246,9 +246,15 @@ pub async fn verify_totp(
             let locked = record_auth_failure(&state.pool, &totp_scope)
                 .await
                 .map_err(ApiError)?;
-            write_auth_failure_audit(&state, Some(claims.sub), claims.tenant_id, "totp_verify", &totp_scope)
-                .await
-                .map_err(ApiError)?;
+            write_auth_failure_audit(
+                &state,
+                Some(claims.sub),
+                claims.tenant_id,
+                "totp_verify",
+                &totp_scope,
+            )
+            .await
+            .map_err(ApiError)?;
             if locked {
                 write_auth_lockout_audit(
                     &state,
@@ -416,7 +422,10 @@ fn totp_scope(user_id: uuid::Uuid) -> String {
     format!("totp:{user_id}")
 }
 
-async fn ensure_auth_scope_available(pool: &PgPool, scope: &str) -> anneal_core::ApplicationResult<()> {
+async fn ensure_auth_scope_available(
+    pool: &PgPool,
+    scope: &str,
+) -> anneal_core::ApplicationResult<()> {
     let locked_until = sqlx::query_scalar::<_, Option<chrono::DateTime<Utc>>>(
         "select locked_until from auth_rate_limits where scope = $1",
     )
@@ -456,13 +465,12 @@ async fn record_auth_failure(pool: &PgPool, scope: &str) -> anneal_core::Applica
     let window_start = now - Duration::minutes(AUTH_FAILURE_WINDOW_MINUTES);
     let locked = match row {
         Some((failures, last_failed_at, locked_until)) => {
-            let next_failures = if locked_until.is_some_and(|value| value > now)
-                || last_failed_at < window_start
-            {
-                1
-            } else {
-                failures + 1
-            };
+            let next_failures =
+                if locked_until.is_some_and(|value| value > now) || last_failed_at < window_start {
+                    1
+                } else {
+                    failures + 1
+                };
             let next_locked_until = (next_failures >= AUTH_FAILURE_LIMIT)
                 .then_some(now + Duration::minutes(AUTH_LOCKOUT_MINUTES));
             sqlx::query(

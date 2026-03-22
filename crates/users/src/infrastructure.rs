@@ -215,16 +215,21 @@ impl UserRepository for PgUserRepository {
                 .await
         }
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        rows.into_iter().map(|user| self.decrypt_user(user)).collect()
+        rows.into_iter()
+            .map(|user| self.decrypt_user(user))
+            .collect()
     }
 
     async fn list_resellers(&self) -> ApplicationResult<Vec<User>> {
-        let rows = sqlx::query_as::<_, User>("select * from users where role = $1 order by email asc")
-            .bind(UserRole::Reseller)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        rows.into_iter().map(|user| self.decrypt_user(user)).collect()
+        let rows =
+            sqlx::query_as::<_, User>("select * from users where role = $1 order by email asc")
+                .bind(UserRole::Reseller)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        rows.into_iter()
+            .map(|user| self.decrypt_user(user))
+            .collect()
     }
 
     async fn update_user(&self, user: User) -> ApplicationResult<User> {

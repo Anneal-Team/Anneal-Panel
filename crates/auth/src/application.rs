@@ -333,9 +333,7 @@ where
             "totp_verify" => PreAuthPurpose::TotpVerify,
             _ => return Err(ApplicationError::Unauthorized),
         };
-        let challenge = self
-            .consume_active_challenge(claims, purpose)
-            .await?;
+        let challenge = self.consume_active_challenge(claims, purpose).await?;
         let user = self
             .users
             .get_user_by_id(claims.sub)
@@ -1027,7 +1025,10 @@ mod tests {
             )
             .await
             .expect_err("suspended login must fail");
-        assert!(matches!(login_error, anneal_core::ApplicationError::Unauthorized));
+        assert!(matches!(
+            login_error,
+            anneal_core::ApplicationError::Unauthorized
+        ));
 
         let refresh_error = auth
             .refresh(
@@ -1039,6 +1040,9 @@ mod tests {
             )
             .await
             .expect_err("refresh must fail");
-        assert!(matches!(refresh_error, anneal_core::ApplicationError::Unauthorized));
+        assert!(matches!(
+            refresh_error,
+            anneal_core::ApplicationError::Unauthorized
+        ));
     }
 }

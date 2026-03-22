@@ -12,4 +12,3 @@ pub use domain::{
     NodeTokenRotationGrant, RuntimeRegistration, RuntimeRegistrationGrant, ServerNode,
 };
 pub use infrastructure::PgNodeRepository;
-

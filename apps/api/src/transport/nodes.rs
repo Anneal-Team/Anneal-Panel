@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use anneal_core::{ProtocolKind, ProxyEngine};
-use anneal_nodes::{NodeEndpointDraft, NodeDomainDraft, RuntimeRegistration};
+use anneal_nodes::{NodeDomainDraft, NodeEndpointDraft, RuntimeRegistration};
 
 use crate::{
     app_state::AppState, error::ApiError, extractors::authenticated_actor,
@@ -431,10 +431,7 @@ pub async fn list_node_domains(
         .await
         .map_err(ApiError)?;
     Ok(Json(
-        domains
-            .into_iter()
-            .map(NodeDomainResponse::from)
-            .collect(),
+        domains.into_iter().map(NodeDomainResponse::from).collect(),
     ))
 }
 
@@ -483,10 +480,7 @@ pub async fn replace_node_domains(
         .await
         .map_err(ApiError)?;
     Ok(Json(
-        domains
-            .into_iter()
-            .map(NodeDomainResponse::from)
-            .collect(),
+        domains.into_iter().map(NodeDomainResponse::from).collect(),
     ))
 }
 
@@ -506,7 +500,9 @@ pub async fn create_bootstrap_session(
         .into_iter()
         .find(|node| node.id == node_id)
         .ok_or_else(|| {
-            ApiError(anneal_core::ApplicationError::NotFound("node not found".into()))
+            ApiError(anneal_core::ApplicationError::NotFound(
+                "node not found".into(),
+            ))
         })?;
     let grant = state
         .node_service()
@@ -835,6 +831,3 @@ fn bearer_node_token(headers: &HeaderMap) -> anneal_core::ApplicationResult<Stri
         .map(ToOwned::to_owned)
         .ok_or(anneal_core::ApplicationError::Unauthorized)
 }
-
-
-

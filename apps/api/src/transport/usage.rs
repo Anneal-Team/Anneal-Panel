@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use anneal_core::{ApplicationError, QuotaState};
-use anneal_nodes::{NodeRuntime, NodeRepository};
+use anneal_nodes::{NodeRepository, NodeRuntime};
 use anneal_notifications::NotificationKind;
 use anneal_platform::NotificationJob;
 use anneal_rbac::{AccessScope, Permission};
@@ -68,7 +68,9 @@ pub async fn ingest_usage(
     headers: HeaderMap,
     Json(request): Json<UsageBulkRequest>,
 ) -> Result<Json<HashMap<Uuid, anneal_usage::QuotaDecision>>, ApiError> {
-    let node = authenticated_node(&headers, &state).await.map_err(ApiError)?;
+    let node = authenticated_node(&headers, &state)
+        .await
+        .map_err(ApiError)?;
     let samples = validate_usage_samples(&state, &node, &request.samples)
         .await
         .map_err(ApiError)?;
@@ -154,7 +156,10 @@ pub async fn ingest_usage(
     Ok(Json(decisions))
 }
 
-async fn authenticated_node(headers: &HeaderMap, state: &AppState) -> anneal_core::ApplicationResult<NodeRuntime> {
+async fn authenticated_node(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> anneal_core::ApplicationResult<NodeRuntime> {
     let token = bearer_token(headers)?;
     state
         .nodes
@@ -240,5 +245,3 @@ fn bearer_token(headers: &HeaderMap) -> anneal_core::ApplicationResult<&str> {
         .strip_prefix("Bearer ")
         .ok_or(ApplicationError::Unauthorized)
 }
-
-

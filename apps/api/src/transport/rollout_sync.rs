@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use anneal_config_engine::{CanonicalConfig, ClientCredential, ConfigRenderer, InboundProfile};
 use anneal_core::DeploymentStatus;
-use anneal_nodes::{ConfigRevision, DeploymentRollout, NodeRuntime, NodeEndpoint, NodeRepository};
+use anneal_nodes::{ConfigRevision, DeploymentRollout, NodeEndpoint, NodeRepository, NodeRuntime};
 use anneal_platform::DeploymentJob;
 use anneal_subscriptions::SubscriptionRepository;
 use apalis::prelude::TaskSink;
@@ -32,14 +32,14 @@ pub async fn queue_tenant_rollouts_for_current_state(
         .subscriptions
         .list_subscriptions(Some(tenant_id))
         .await?
-    .into_iter()
-    .filter(|subscription| !subscription.suspended && subscription.expires_at > Utc::now())
-    .map(|subscription| ClientCredential {
-        email: subscription.name,
-        uuid: subscription.id.to_string(),
-        password: Some(subscription.access_key),
-    })
-    .collect::<Vec<_>>();
+        .into_iter()
+        .filter(|subscription| !subscription.suspended && subscription.expires_at > Utc::now())
+        .map(|subscription| ClientCredential {
+            email: subscription.name,
+            uuid: subscription.id.to_string(),
+            password: Some(subscription.access_key),
+        })
+        .collect::<Vec<_>>();
 
     if credentials.is_empty() {
         return Ok(());
@@ -165,5 +165,3 @@ fn map_endpoint_to_profile(
         tls_key_path: endpoint.tls_key_path.clone(),
     })
 }
-
-

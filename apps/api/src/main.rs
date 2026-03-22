@@ -118,7 +118,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/agent/heartbeat", post(nodes::heartbeat))
         .route("/api/v1/agent/jobs/pull", post(nodes::pull_rollouts))
         .route("/api/v1/agent/jobs/{id}/ack", post(nodes::ack_rollout))
-        .route("/api/v1/agent/node-token/rotate", post(nodes::rotate_node_token))
+        .route(
+            "/api/v1/agent/node-token/rotate",
+            post(nodes::rotate_node_token),
+        )
         .route("/api/v1/agent/usage/bulk", post(usage::ingest_usage))
         .route("/api/v1/usage", get(usage::list_usage))
         .route("/api/v1/devices", get(subscriptions::list_devices))

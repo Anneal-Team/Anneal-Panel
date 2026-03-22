@@ -10,8 +10,8 @@ use std::{
 use anyhow::anyhow;
 use clap::Parser;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -136,13 +136,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| runtime.config_root.join("agent-state.json"));
     let configured_engines = parse_engines(&args)?;
     let mut state = load_state(&state_path).await?;
-    let runtimes = register_runtimes(
-        &client,
-        &args,
-        &configured_engines,
-        &mut state,
-    )
-    .await?;
+    let runtimes = register_runtimes(&client, &args, &configured_engines, &mut state).await?;
     store_state(&state_path, &state).await?;
 
     loop {

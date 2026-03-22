@@ -7,8 +7,8 @@ use crate::transport::{
     },
     nodes::{
         AckRolloutRequest, BootstrapAgentRequest, BootstrapRuntimeRequest,
-        CreateBootstrapSessionRequest, CreateNodeRequest, HeartbeatRequest,
-        DeploymentRolloutResponse, NodeDomainRequest, NodeDomainResponse, NodeEndpointRequest,
+        CreateBootstrapSessionRequest, CreateNodeRequest, DeploymentRolloutResponse,
+        HeartbeatRequest, NodeDomainRequest, NodeDomainResponse, NodeEndpointRequest,
         NodeEndpointResponse, NodeResponse, NodeRuntimeResponse, PullRolloutsRequest,
         ReissueBootstrapRequest, ReplaceNodeDomainsRequest, ReplaceNodeEndpointsRequest,
         RotateNodeTokenRequest, UpdateNodeRequest,
