@@ -6,7 +6,7 @@ use argon2::{
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use rand::{Rng, distributions::Alphanumeric};
+use rand::{Rng, distr::Alphanumeric};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use totp_rs::{Algorithm as TotpAlgorithm, Secret, TOTP};
@@ -263,7 +263,7 @@ impl SessionRepository for PgSessionRepository {
 }
 
 pub fn generate_refresh_token() -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(64)
         .map(char::from)

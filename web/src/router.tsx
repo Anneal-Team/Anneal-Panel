@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Button } from "@/components/ui/button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { api } from "@/lib/api";
 import { DashboardPage } from "@/routes/dashboard";

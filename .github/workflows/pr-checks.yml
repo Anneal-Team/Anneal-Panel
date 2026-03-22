@@ -1,0 +1,83 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Validate shell scripts
+        run: |
+          find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done
+      - name: Run ShellCheck
+        run: |
+          find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
+            shellcheck -x -e SC1091 "$file"
+          done
+
+  actions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest
+
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run cargo tests
+        run: cargo test --locked
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build web
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Package release assets
+        run: bash scripts/package-release.sh
+      - name: Upload packaged assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-packages
+          path: dist/*

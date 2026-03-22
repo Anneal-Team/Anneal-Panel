@@ -16,7 +16,9 @@ use uuid::Uuid;
 
 use crate::{
     client::{RegisterNodeRequest, ack_rollout, heartbeat, pull_rollouts, register},
-    runtime::{RuntimeSettings, apply_rollout, parse_engine, parse_protocols},
+    runtime::{
+        RuntimeSettings, apply_rollout, parse_engine, parse_protocols, parse_runtime_controller,
+    },
 };
 
 const XRAY_DEFAULT_PROTOCOLS: &str = "vless_reality,vmess,trojan,shadowsocks_2022";
@@ -73,6 +75,12 @@ struct AgentArgs {
     singbox_binary: PathBuf,
     #[arg(
         long,
+        env = "ANNEAL_AGENT_RUNTIME_CONTROLLER",
+        default_value = "systemctl"
+    )]
+    runtime_controller: String,
+    #[arg(
+        long,
         env = "ANNEAL_AGENT_SYSTEMCTL_BINARY",
         default_value = "/usr/bin/systemctl"
     )]
@@ -111,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
         config_root: args.config_root.clone(),
         xray_binary: args.xray_binary.clone(),
         singbox_binary: args.singbox_binary.clone(),
+        runtime_controller: parse_runtime_controller(&args.runtime_controller)?,
         systemctl_binary: args.systemctl_binary.clone(),
         xray_service: args.xray_service.clone(),
         singbox_service: args.singbox_service.clone(),

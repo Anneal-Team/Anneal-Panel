@@ -6,6 +6,12 @@ use anyhow::{Context, anyhow};
 use tokio::{fs, net::TcpStream, process::Command, time::Duration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeController {
+    Systemctl,
+    Supervisorctl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HealthTargetKind {
     Tcp,
     Udp,
@@ -23,6 +29,7 @@ pub struct RuntimeSettings {
     pub config_root: PathBuf,
     pub xray_binary: PathBuf,
     pub singbox_binary: PathBuf,
+    pub runtime_controller: RuntimeController,
     pub systemctl_binary: PathBuf,
     pub xray_service: String,
     pub singbox_service: String,
@@ -95,6 +102,14 @@ pub fn parse_protocols(value: &str) -> anyhow::Result<Vec<ProtocolKind>> {
             other => Err(anyhow!("unsupported protocol: {other}")),
         })
         .collect()
+}
+
+pub fn parse_runtime_controller(value: &str) -> anyhow::Result<RuntimeController> {
+    match value {
+        "systemctl" => Ok(RuntimeController::Systemctl),
+        "supervisorctl" | "supervisor" => Ok(RuntimeController::Supervisorctl),
+        _ => Err(anyhow!("unsupported runtime controller: {value}")),
+    }
 }
 
 fn resolve_target_path(config_root: &Path, target_path: &str) -> PathBuf {
@@ -188,12 +203,20 @@ async fn restart_runtime(settings: &RuntimeSettings, engine: ProxyEngine) -> any
         return Ok(());
     }
     let service = runtime_service(settings, engine);
-    let output = Command::new(&settings.systemctl_binary)
-        .arg("restart")
-        .arg(service)
-        .output()
-        .await
-        .with_context(|| format!("failed to start systemctl for {service}"))?;
+    let output = match settings.runtime_controller {
+        RuntimeController::Systemctl => Command::new(&settings.systemctl_binary)
+            .arg("restart")
+            .arg(service)
+            .output()
+            .await
+            .with_context(|| format!("failed to start systemctl for {service}"))?,
+        RuntimeController::Supervisorctl => Command::new(&settings.systemctl_binary)
+            .arg("restart")
+            .arg(service)
+            .output()
+            .await
+            .with_context(|| format!("failed to start supervisorctl for {service}"))?,
+    };
     if output.status.success() {
         return Ok(());
     }
@@ -224,13 +247,26 @@ async fn health_check_runtime(
 }
 
 async fn is_service_active(settings: &RuntimeSettings, service: &str) -> anyhow::Result<bool> {
-    let output = Command::new(&settings.systemctl_binary)
-        .arg("is-active")
-        .arg(service)
-        .output()
-        .await
-        .with_context(|| format!("failed to query systemctl is-active for {service}"))?;
-    Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "active")
+    let output = match settings.runtime_controller {
+        RuntimeController::Systemctl => Command::new(&settings.systemctl_binary)
+            .arg("is-active")
+            .arg(service)
+            .output()
+            .await
+            .with_context(|| format!("failed to query systemctl is-active for {service}"))?,
+        RuntimeController::Supervisorctl => Command::new(&settings.systemctl_binary)
+            .arg("status")
+            .arg(service)
+            .output()
+            .await
+            .with_context(|| format!("failed to query supervisorctl status for {service}"))?,
+    };
+    Ok(match settings.runtime_controller {
+        RuntimeController::Systemctl => {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "active"
+        }
+        RuntimeController::Supervisorctl => supervisor_service_is_running(&output.stdout),
+    })
 }
 
 fn extract_health_targets(rendered_config: &str) -> anyhow::Result<Vec<HealthTarget>> {
@@ -305,7 +341,7 @@ async fn check_udp_target(port: u16) -> bool {
         .unwrap_or(false)
 }
 
-fn runtime_binary<'a>(settings: &'a RuntimeSettings, engine: ProxyEngine) -> &'a Path {
+fn runtime_binary(settings: &RuntimeSettings, engine: ProxyEngine) -> &Path {
     match engine {
         ProxyEngine::Xray => &settings.xray_binary,
         ProxyEngine::Singbox => &settings.singbox_binary,
@@ -319,11 +355,15 @@ fn runtime_service(settings: &RuntimeSettings, engine: ProxyEngine) -> &str {
     }
 }
 
+fn supervisor_service_is_running(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout).contains(" RUNNING ")
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::decorate_path;
+    use super::{decorate_path, parse_runtime_controller, supervisor_service_is_running};
 
     #[test]
     fn decorated_path_preserves_json_extension() {
@@ -341,5 +381,20 @@ mod tests {
             decorate_path(target, "previous"),
             Path::new("/var/lib/anneal/runtime/config.previous")
         );
+    }
+
+    #[test]
+    fn runtime_controller_accepts_supervisorctl() {
+        assert!(parse_runtime_controller("supervisorctl").is_ok());
+    }
+
+    #[test]
+    fn supervisor_running_status_is_detected() {
+        assert!(supervisor_service_is_running(
+            b"xray                             RUNNING   pid 17, uptime 0:00:15\n"
+        ));
+        assert!(!supervisor_service_is_running(
+            b"xray                             STOPPED   Not started\n"
+        ));
     }
 }

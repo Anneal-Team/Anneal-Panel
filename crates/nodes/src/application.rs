@@ -1,4 +1,7 @@
-use std::{collections::{BTreeSet, HashMap}, sync::RwLock};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::RwLock,
+};
 
 use anneal_config_engine::SecurityKind;
 use anneal_core::{
@@ -9,7 +12,7 @@ use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use rand::{Rng, distributions::Alphanumeric, rngs::OsRng};
+use rand::{Rng, distr::Alphanumeric};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -157,7 +160,9 @@ where
         node_group_id: Uuid,
         domains: &[NodeGroupDomain],
     ) -> ApplicationResult<Vec<NodeGroupDomain>> {
-        (*self).replace_node_group_domains(node_group_id, domains).await
+        (*self)
+            .replace_node_group_domains(node_group_id, domains)
+            .await
     }
 
     async fn create_enrollment_token(
@@ -332,7 +337,9 @@ where
         }
         group.name = name.trim().to_owned();
         if group.name.is_empty() {
-            return Err(ApplicationError::Validation("node group name is required".into()));
+            return Err(ApplicationError::Validation(
+                "node group name is required".into(),
+            ));
         }
         group.updated_at = Utc::now();
         self.repository.update_node_group(group).await
@@ -732,19 +739,30 @@ where
         if nodes.is_empty() {
             return Ok(());
         }
-        let domains = self.repository.list_node_group_domains(node_group_id).await?;
+        let domains = self
+            .repository
+            .list_node_group_domains(node_group_id)
+            .await?;
         let mut capabilities_by_node = HashMap::new();
         let mut existing_endpoints_by_node = HashMap::new();
         for node in &nodes {
-            capabilities_by_node.insert(node.id, self.repository.list_node_capabilities(node.id).await?);
-            existing_endpoints_by_node.insert(node.id, self.repository.list_node_endpoints(node.id).await?);
+            capabilities_by_node.insert(
+                node.id,
+                self.repository.list_node_capabilities(node.id).await?,
+            );
+            existing_endpoints_by_node
+                .insert(node.id, self.repository.list_node_endpoints(node.id).await?);
         }
         let mut resolved_domains = Vec::with_capacity(domains.len());
         for domain in domains {
             let public_hosts = resolve_public_hosts(&domain).await;
-            resolved_domains.push(ResolvedNodeGroupDomain { domain, public_hosts });
+            resolved_domains.push(ResolvedNodeGroupDomain {
+                domain,
+                public_hosts,
+            });
         }
-        let generated = build_group_generated_endpoints(&nodes, &capabilities_by_node, &resolved_domains)?;
+        let generated =
+            build_group_generated_endpoints(&nodes, &capabilities_by_node, &resolved_domains)?;
         for node in nodes {
             let mut endpoints = generated.get(&node.id).cloned().unwrap_or_default();
             reconcile_generated_endpoints(
@@ -796,7 +814,12 @@ impl NodeRepository for InMemoryNodeRepository {
     }
 
     async fn find_node_group(&self, node_group_id: Uuid) -> ApplicationResult<Option<NodeGroup>> {
-        Ok(self.groups.read().expect("lock").get(&node_group_id).cloned())
+        Ok(self
+            .groups
+            .read()
+            .expect("lock")
+            .get(&node_group_id)
+            .cloned())
     }
 
     async fn update_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
@@ -1115,7 +1138,7 @@ impl NodeRepository for InMemoryNodeRepository {
 }
 
 pub fn generate_token() -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(48)
         .map(char::from)
@@ -1183,7 +1206,7 @@ fn is_blank_option(value: &Option<String>) -> bool {
 }
 
 fn generate_reality_key_pair() -> (String, String) {
-    let private_key = StaticSecret::random_from_rng(OsRng);
+    let private_key = StaticSecret::from(rand::random::<[u8; 32]>());
     let public_key = PublicKey::from(&private_key);
     (
         URL_SAFE_NO_PAD.encode(public_key.as_bytes()),
@@ -1193,7 +1216,7 @@ fn generate_reality_key_pair() -> (String, String) {
 
 fn generate_reality_short_id() -> String {
     let mut bytes = [0_u8; 8];
-    rand::thread_rng().fill(&mut bytes);
+    rand::rng().fill(&mut bytes);
     bytes
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1253,11 +1276,7 @@ fn normalize_node_group_domains(
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|item| {
         let item = item.trim().to_owned();
-        if item.is_empty() {
-            None
-        } else {
-            Some(item)
-        }
+        if item.is_empty() { None } else { Some(item) }
     })
 }
 
@@ -1309,10 +1328,7 @@ fn endpoint_state_key(endpoint: &NodeEndpoint) -> String {
         endpoint.flow,
         endpoint.cipher,
         endpoint.alpn.join(","),
-        endpoint
-            .tls_certificate_path
-            .as_deref()
-            .unwrap_or_default(),
+        endpoint.tls_certificate_path.as_deref().unwrap_or_default(),
     )
 }
 
@@ -1428,7 +1444,11 @@ fn build_domain_endpoint_drafts(
                     reality_private_key: None,
                     reality_short_id: None,
                     fingerprint: template.fingerprint.map(str::to_owned),
-                    alpn: template.alpn.iter().map(|item| (*item).to_owned()).collect(),
+                    alpn: template
+                        .alpn
+                        .iter()
+                        .map(|item| (*item).to_owned())
+                        .collect(),
                     cipher: template.cipher.map(str::to_owned),
                     tls_certificate_path: if template.security == SecurityKind::Tls {
                         Some(DEFAULT_TLS_CERTIFICATE_PATH.into())
@@ -1800,7 +1820,9 @@ fn select_owner_node<'a>(
     capabilities_by_node: &HashMap<Uuid, Vec<NodeCapability>>,
 ) -> Option<&'a Node> {
     let priorities = match protocol {
-        ProtocolKind::Tuic | ProtocolKind::Hysteria2 => [ProxyEngine::Singbox, ProxyEngine::Singbox],
+        ProtocolKind::Tuic | ProtocolKind::Hysteria2 => {
+            [ProxyEngine::Singbox, ProxyEngine::Singbox]
+        }
         _ => [ProxyEngine::Xray, ProxyEngine::Singbox],
     };
     for engine in priorities {
@@ -1825,7 +1847,9 @@ fn node_supports_protocol(
     if capabilities.is_empty() {
         return engine_supports_protocol(node.engine, protocol);
     }
-    capabilities.iter().any(|capability| capability.protocol == protocol)
+    capabilities
+        .iter()
+        .any(|capability| capability.protocol == protocol)
 }
 
 fn validate_endpoint_draft(
@@ -2411,39 +2435,26 @@ mod tests {
             .await
             .expect("singbox endpoints");
 
-        assert!(
-            xray_endpoints.iter().any(|endpoint| {
-                endpoint.protocol == ProtocolKind::VlessReality
-                    && endpoint.security == SecurityKind::Tls
-                    && endpoint.transport == TransportKind::Ws
-                    && endpoint.public_host == "edge.example.com"
-            })
-        );
-        assert!(
-            xray_endpoints.iter().any(|endpoint| {
-                endpoint.protocol == ProtocolKind::Trojan
-                    && endpoint.transport == TransportKind::Grpc
-            })
-        );
-        assert!(
-            xray_endpoints.iter().any(|endpoint| {
-                endpoint.protocol == ProtocolKind::Shadowsocks2022
-                    && endpoint.public_port == 8388
-            })
-        );
-        assert!(
-            singbox_endpoints.iter().any(|endpoint| {
-                endpoint.protocol == ProtocolKind::Tuic
-                    && endpoint.public_port == 24443
-                    && endpoint.server_name.as_deref() == Some("edge.example.com")
-            })
-        );
-        assert!(
-            singbox_endpoints.iter().any(|endpoint| {
-                endpoint.protocol == ProtocolKind::Hysteria2
-                    && endpoint.public_port == 25443
-            })
-        );
+        assert!(xray_endpoints.iter().any(|endpoint| {
+            endpoint.protocol == ProtocolKind::VlessReality
+                && endpoint.security == SecurityKind::Tls
+                && endpoint.transport == TransportKind::Ws
+                && endpoint.public_host == "edge.example.com"
+        }));
+        assert!(xray_endpoints.iter().any(|endpoint| {
+            endpoint.protocol == ProtocolKind::Trojan && endpoint.transport == TransportKind::Grpc
+        }));
+        assert!(xray_endpoints.iter().any(|endpoint| {
+            endpoint.protocol == ProtocolKind::Shadowsocks2022 && endpoint.public_port == 8388
+        }));
+        assert!(singbox_endpoints.iter().any(|endpoint| {
+            endpoint.protocol == ProtocolKind::Tuic
+                && endpoint.public_port == 24443
+                && endpoint.server_name.as_deref() == Some("edge.example.com")
+        }));
+        assert!(singbox_endpoints.iter().any(|endpoint| {
+            endpoint.protocol == ProtocolKind::Hysteria2 && endpoint.public_port == 25443
+        }));
     }
 
     #[tokio::test]
@@ -2503,16 +2514,14 @@ mod tests {
             .expect("endpoints");
 
         assert_eq!(endpoints.len(), 2);
-        assert!(
-            endpoints.iter().all(|endpoint| {
-                endpoint.protocol == ProtocolKind::VlessReality
-                    && endpoint.security == SecurityKind::Reality
-                    && endpoint.transport == TransportKind::Tcp
-                    && endpoint.reality_public_key.is_some()
-                    && endpoint.reality_private_key.is_some()
-                    && endpoint.reality_short_id.is_some()
-            })
-        );
+        assert!(endpoints.iter().all(|endpoint| {
+            endpoint.protocol == ProtocolKind::VlessReality
+                && endpoint.security == SecurityKind::Reality
+                && endpoint.transport == TransportKind::Tcp
+                && endpoint.reality_public_key.is_some()
+                && endpoint.reality_private_key.is_some()
+                && endpoint.reality_short_id.is_some()
+        }));
         assert!(
             endpoints
                 .iter()

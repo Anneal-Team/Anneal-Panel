@@ -1,0 +1,17 @@
+{{SITE_ADDRESS}} {
+    encode gzip zstd
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    handle /s/* {
+        reverse_proxy api:8080
+    }
+
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

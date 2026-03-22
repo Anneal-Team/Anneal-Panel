@@ -1,0 +1,40 @@
+name: Release Master
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Package rolling release
+        run: bash scripts/package-release.sh
+      - name: Publish rolling release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: dist/*
+          name: Anneal Rolling
+          omitBodyDuringUpdate: true
+          prerelease: false
+          removeArtifacts: true
+          replacesArtifacts: true
+          tag: rolling

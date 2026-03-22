@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { formatBytes, formatDate, formatDeploymentStatus, formatNodeStatus, formatQuotaState } from "@/lib/format";
+import { useNow } from "@/lib/use-now";
 
 type AttentionItem = {
   id: string;
@@ -19,8 +20,8 @@ type AttentionItem = {
   tone: "warning" | "danger";
 };
 
-function isExpiringSoon(value: string) {
-  return new Date(value).getTime() - Date.now() < 3 * 24 * 60 * 60 * 1000;
+function isExpiringSoon(value: string, now: number) {
+  return new Date(value).getTime() - now < 3 * 24 * 60 * 60 * 1000;
 }
 
 function sumBytes(values: number[]) {
@@ -56,6 +57,7 @@ export function DashboardPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const session = api.readSession();
+  const now = useNow();
   const [passwordForm, setPasswordForm] = useState({
     current_password: "",
     new_password: "",
@@ -127,10 +129,10 @@ export function DashboardPage() {
   const activeSubscriptions = subscriptions.filter((subscription) => !subscription.suspended);
   const suspendedSubscriptions = subscriptions.filter((subscription) => subscription.suspended);
   const quotaProblems = subscriptions.filter((subscription) => subscription.quota_state !== "normal");
-  const expiringSoon = subscriptions.filter((subscription) => !subscription.suspended && isExpiringSoon(subscription.expires_at));
-  const activeSessions = sessions.filter(
-    (entry) => !entry.revoked_at && new Date(entry.expires_at).getTime() > Date.now(),
+  const expiringSoon = subscriptions.filter(
+    (subscription) => !subscription.suspended && isExpiringSoon(subscription.expires_at, now),
   );
+  const activeSessions = sessions.filter((entry) => !entry.revoked_at && new Date(entry.expires_at).getTime() > now);
   const failedRollouts = rollouts.filter((rollout) => rollout.status === "failed");
   const queuedRollouts = rollouts.filter((rollout) =>
     ["queued", "rendering", "validating", "ready"].includes(rollout.status),
