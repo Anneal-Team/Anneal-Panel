@@ -6,7 +6,7 @@ generate_hex() {
 }
 
 generate_secret() {
-  openssl rand -base64 "${1:-24}" | tr -d '\n' | tr '/+=' '_-.'
+  openssl rand -base64 "${1:-24}" | tr -d '\n' | tr '/+=' '._-'
 }
 
 command_exists() {
