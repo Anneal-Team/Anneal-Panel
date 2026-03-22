@@ -185,7 +185,7 @@ where
                 pre_auth_token: self.access_tokens.issue_pre_auth_token(&actor)?,
             });
         }
-        if user.totp_secret.is_some() {
+        if let Some(secret) = user.totp_secret.as_ref() {
             let code = match totp_code {
                 Some(code) => code,
                 None => {
@@ -194,7 +194,6 @@ where
                     });
                 }
             };
-            let secret = user.totp_secret.as_ref().expect("checked");
             if !self.totp.verify(secret, code, &user.email)? {
                 return Err(ApplicationError::Unauthorized);
             }

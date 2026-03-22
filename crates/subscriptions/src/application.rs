@@ -9,7 +9,7 @@ use anneal_nodes::{DeliveryNodeEndpoint, NodeEndpointCatalog};
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use chrono::Utc;
-use rand::{Rng, distributions::Alphanumeric};
+use rand::{Rng, distr::Alphanumeric};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -31,8 +31,14 @@ pub trait SubscriptionRepository: Send + Sync {
         &self,
         tenant_id: Option<Uuid>,
     ) -> ApplicationResult<Vec<Subscription>>;
-    async fn get_subscription(&self, subscription_id: Uuid) -> ApplicationResult<Option<Subscription>>;
-    async fn update_subscription(&self, subscription: Subscription) -> ApplicationResult<Subscription>;
+    async fn get_subscription(
+        &self,
+        subscription_id: Uuid,
+    ) -> ApplicationResult<Option<Subscription>>;
+    async fn update_subscription(
+        &self,
+        subscription: Subscription,
+    ) -> ApplicationResult<Subscription>;
     async fn delete_subscription(&self, subscription_id: Uuid) -> ApplicationResult<()>;
     async fn rotate_device_token(
         &self,
@@ -81,11 +87,17 @@ where
         (*self).list_subscriptions(tenant_id).await
     }
 
-    async fn get_subscription(&self, subscription_id: Uuid) -> ApplicationResult<Option<Subscription>> {
+    async fn get_subscription(
+        &self,
+        subscription_id: Uuid,
+    ) -> ApplicationResult<Option<Subscription>> {
         (*self).get_subscription(subscription_id).await
     }
 
-    async fn update_subscription(&self, subscription: Subscription) -> ApplicationResult<Subscription> {
+    async fn update_subscription(
+        &self,
+        subscription: Subscription,
+    ) -> ApplicationResult<Subscription> {
         (*self).update_subscription(subscription).await
     }
 
@@ -270,10 +282,8 @@ where
         subscription.traffic_limit_bytes = command.traffic_limit_bytes;
         subscription.expires_at = command.expires_at;
         subscription.suspended = command.suspended;
-        subscription.quota_state = decide_quota_state(
-            subscription.traffic_limit_bytes,
-            subscription.used_bytes,
-        );
+        subscription.quota_state =
+            decide_quota_state(subscription.traffic_limit_bytes, subscription.used_bytes);
         subscription.updated_at = Utc::now();
         self.repository.update_subscription(subscription).await
     }
@@ -513,7 +523,10 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
             .collect())
     }
 
-    async fn get_subscription(&self, subscription_id: Uuid) -> ApplicationResult<Option<Subscription>> {
+    async fn get_subscription(
+        &self,
+        subscription_id: Uuid,
+    ) -> ApplicationResult<Option<Subscription>> {
         Ok(self
             .subscriptions
             .read()
@@ -522,7 +535,10 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
             .cloned())
     }
 
-    async fn update_subscription(&self, subscription: Subscription) -> ApplicationResult<Subscription> {
+    async fn update_subscription(
+        &self,
+        subscription: Subscription,
+    ) -> ApplicationResult<Subscription> {
         self.subscriptions
             .write()
             .expect("lock")
@@ -624,7 +640,7 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
 }
 
 pub fn generate_token() -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(48)
         .map(char::from)

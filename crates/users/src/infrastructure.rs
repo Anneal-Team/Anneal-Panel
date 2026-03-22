@@ -117,7 +117,10 @@ impl UserRepository for PgUserRepository {
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn get_tenant_by_owner_user_id(&self, user_id: Uuid) -> ApplicationResult<Option<Tenant>> {
+    async fn get_tenant_by_owner_user_id(
+        &self,
+        user_id: Uuid,
+    ) -> ApplicationResult<Option<Tenant>> {
         sqlx::query_as::<_, Tenant>("select * from tenants where owner_user_id = $1")
             .bind(user_id)
             .fetch_optional(&self.pool)

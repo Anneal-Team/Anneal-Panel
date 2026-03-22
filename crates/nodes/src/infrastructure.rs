@@ -66,15 +66,13 @@ impl NodeRepository for PgNodeRepository {
     }
 
     async fn update_node_group(&self, group: NodeGroup) -> ApplicationResult<NodeGroup> {
-        sqlx::query(
-            "update node_groups set name = $2, updated_at = $3 where id = $1",
-        )
-        .bind(group.id)
-        .bind(&group.name)
-        .bind(group.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        sqlx::query("update node_groups set name = $2, updated_at = $3 where id = $1")
+            .bind(group.id)
+            .bind(&group.name)
+            .bind(group.updated_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         Ok(group)
     }
 

@@ -5,7 +5,9 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use anneal_core::UserRole;
-use anneal_users::{CreateResellerCommand, CreateUserCommand, UpdateResellerCommand, UpdateUserCommand};
+use anneal_users::{
+    CreateResellerCommand, CreateUserCommand, UpdateResellerCommand, UpdateUserCommand,
+};
 
 use crate::{app_state::AppState, error::ApiError, extractors::authenticated_actor};
 

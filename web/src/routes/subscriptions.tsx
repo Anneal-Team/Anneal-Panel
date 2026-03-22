@@ -13,6 +13,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, type Subscription } from "@/lib/api";
 import { formatBytes, formatDate, formatQuotaState } from "@/lib/format";
+import { useNow } from "@/lib/use-now";
 
 type CreateSubscriptionForm = {
   tenant_id: string;
@@ -45,12 +46,12 @@ function gigabytesFromBytes(value: number) {
   return (value / 1024 / 1024 / 1024).toFixed(value >= 100 * 1024 * 1024 * 1024 ? 0 : 1);
 }
 
-function daysToExpiresAt(days: string) {
+function daysToExpiresAt(days: string, now: number) {
   const parsed = Number(days);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return null;
   }
-  return new Date(Date.now() + parsed * 24 * 60 * 60 * 1000);
+  return new Date(now + parsed * 24 * 60 * 60 * 1000);
 }
 
 function toDateTimeLocalValue(value: string) {
@@ -100,6 +101,7 @@ export function SubscriptionsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const session = api.readSession();
+  const now = useNow();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deliveryUrl, setDeliveryUrl] = useState<string | null>(null);
@@ -137,7 +139,7 @@ export function SubscriptionsPage() {
     return new Map((usersQuery.data ?? []).map((user) => [user.id, user.display_name] as const));
   }, [usersQuery.data]);
 
-  const expiresAt = daysToExpiresAt(createForm.package_days);
+  const expiresAt = daysToExpiresAt(createForm.package_days, now);
 
   const createSubscriptionMutation = useMutation({
     mutationFn: () => {
@@ -296,8 +298,7 @@ export function SubscriptionsPage() {
                 subscription.traffic_limit_bytes > 0
                   ? Math.min(subscription.used_bytes / subscription.traffic_limit_bytes, 1)
                   : 1;
-              const expiresSoon =
-                new Date(subscription.expires_at).getTime() - Date.now() < 3 * 24 * 60 * 60 * 1000;
+              const expiresSoon = new Date(subscription.expires_at).getTime() - now < 3 * 24 * 60 * 60 * 1000;
               const currentDeliveryUrl = deliveryUrlFor(subscription);
 
               return (

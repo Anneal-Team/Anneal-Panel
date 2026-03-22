@@ -173,7 +173,10 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         Ok(rows)
     }
 
-    async fn get_subscription(&self, subscription_id: Uuid) -> ApplicationResult<Option<Subscription>> {
+    async fn get_subscription(
+        &self,
+        subscription_id: Uuid,
+    ) -> ApplicationResult<Option<Subscription>> {
         sqlx::query_as::<_, Subscription>(
             r#"
             select
@@ -196,7 +199,10 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 
-    async fn update_subscription(&self, subscription: Subscription) -> ApplicationResult<Subscription> {
+    async fn update_subscription(
+        &self,
+        subscription: Subscription,
+    ) -> ApplicationResult<Subscription> {
         sqlx::query(
             r#"
             update subscriptions
@@ -225,13 +231,12 @@ impl SubscriptionRepository for PgSubscriptionRepository {
             .begin()
             .await
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
-        let device_id = sqlx::query_scalar::<_, Uuid>(
-            "select device_id from subscriptions where id = $1",
-        )
-        .bind(subscription_id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let device_id =
+            sqlx::query_scalar::<_, Uuid>("select device_id from subscriptions where id = $1")
+                .bind(subscription_id)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         sqlx::query("delete from subscriptions where id = $1")
             .bind(subscription_id)
             .execute(&mut *transaction)
