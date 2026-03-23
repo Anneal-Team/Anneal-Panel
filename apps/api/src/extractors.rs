@@ -19,7 +19,7 @@ pub fn authenticated_actor(headers: &HeaderMap, state: &AppState) -> Application
 
 pub fn pre_auth_claims(headers: &HeaderMap, state: &AppState) -> ApplicationResult<AccessClaims> {
     let claims = bearer_claims(headers, state)?;
-    if claims.kind != "pre_auth" && claims.kind != "access" {
+    if claims.kind != "pre_auth" {
         return Err(ApplicationError::Unauthorized);
     }
     Ok(claims)

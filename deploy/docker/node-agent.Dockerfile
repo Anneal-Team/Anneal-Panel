@@ -20,6 +20,5 @@ RUN curl -fsSL "$XRAY_RELEASE_URL" -o /tmp/xray.zip \
     && install -m 0755 /tmp/xray-dist/xray /usr/local/bin/xray \
     && install -m 0755 "$(find /tmp/singbox-dist -type f -name hiddify-core | head -n 1)" /usr/local/bin/hiddify-core \
     && chmod +x /usr/local/bin/xray /usr/local/bin/hiddify-core \
-    && mkdir -p /var/lib/anneal/xray /var/lib/anneal/singbox /var/lib/anneal/tls \
-    && openssl req -x509 -nodes -newkey rsa:2048 -keyout /var/lib/anneal/tls/server.key -out /var/lib/anneal/tls/server.crt -subj "/CN=anneal.local" -days 3650 >/dev/null 2>&1
+    && mkdir -p /var/lib/anneal/xray /var/lib/anneal/singbox /var/lib/anneal/tls
 CMD ["node-agent", "--once"]

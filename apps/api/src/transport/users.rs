@@ -7,9 +7,41 @@ use uuid::Uuid;
 use anneal_core::UserRole;
 use anneal_users::{
     CreateResellerCommand, CreateUserCommand, UpdateResellerCommand, UpdateUserCommand,
+    UserRepository,
 };
 
 use crate::{app_state::AppState, error::ApiError, extractors::authenticated_actor};
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserResponse {
+    pub id: Uuid,
+    pub tenant_id: Option<Uuid>,
+    pub tenant_name: Option<String>,
+    pub email: String,
+    pub display_name: String,
+    pub role: UserRole,
+    pub status: anneal_core::UserStatus,
+    pub totp_confirmed: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<anneal_users::User> for UserResponse {
+    fn from(value: anneal_users::User) -> Self {
+        Self {
+            id: value.id,
+            tenant_id: value.tenant_id,
+            tenant_name: value.tenant_name,
+            email: value.email,
+            display_name: value.display_name,
+            role: value.role,
+            status: value.status,
+            totp_confirmed: value.totp_confirmed,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateUserRequest {
@@ -51,7 +83,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<CreateUserRequest>,
-) -> Result<Json<anneal_users::User>, ApiError> {
+) -> Result<Json<UserResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let password_hash = state
         .auth_service()
@@ -84,21 +116,21 @@ pub async fn create_user(
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(user))
+    Ok(Json(user.into()))
 }
 
 #[utoipa::path(get, path = "/api/v1/users")]
 pub async fn list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<anneal_users::User>>, ApiError> {
+) -> Result<Json<Vec<UserResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let users = state
         .user_service()
         .list_users(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(users))
+    Ok(Json(users.into_iter().map(UserResponse::from).collect()))
 }
 
 #[utoipa::path(patch, path = "/api/v1/users/{id}", request_body = UpdateUserRequest)]
@@ -107,8 +139,14 @@ pub async fn update_user(
     headers: HeaderMap,
     axum::extract::Path(user_id): axum::extract::Path<Uuid>,
     Json(request): Json<UpdateUserRequest>,
-) -> Result<Json<anneal_users::User>, ApiError> {
+) -> Result<Json<UserResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let previous_status = state
+        .users
+        .get_user_by_id(user_id)
+        .await
+        .map_err(ApiError)?
+        .map(|user| user.status);
     let password_hash = match request.password {
         Some(password) if !password.trim().is_empty() => Some(
             state
@@ -134,6 +172,9 @@ pub async fn update_user(
         )
         .await
         .map_err(ApiError)?;
+    let sessions_revoked_on_suspend =
+        matches!(previous_status, Some(anneal_core::UserStatus::Active))
+            && user.status != anneal_core::UserStatus::Active;
     state
         .audit_service()
         .write(
@@ -146,7 +187,21 @@ pub async fn update_user(
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(user))
+    if sessions_revoked_on_suspend {
+        state
+            .audit_service()
+            .write(
+                Some(actor.user_id),
+                user.tenant_id.or(actor.tenant_id),
+                "auth.session.revoked_on_suspend",
+                "user",
+                Some(user.id),
+                json!({ "email": user.email, "status": user.status }),
+            )
+            .await
+            .map_err(ApiError)?;
+    }
+    Ok(Json(user.into()))
 }
 
 #[utoipa::path(delete, path = "/api/v1/users/{id}")]
@@ -181,7 +236,7 @@ pub async fn create_reseller(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<CreateResellerRequest>,
-) -> Result<Json<anneal_users::User>, ApiError> {
+) -> Result<Json<UserResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let password_hash = state
         .auth_service()
@@ -213,21 +268,21 @@ pub async fn create_reseller(
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(reseller))
+    Ok(Json(reseller.into()))
 }
 
 #[utoipa::path(get, path = "/api/v1/resellers")]
 pub async fn list_resellers(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<anneal_users::User>>, ApiError> {
+) -> Result<Json<Vec<UserResponse>>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
     let users = state
         .user_service()
         .list_resellers(&actor)
         .await
         .map_err(ApiError)?;
-    Ok(Json(users))
+    Ok(Json(users.into_iter().map(UserResponse::from).collect()))
 }
 
 #[utoipa::path(patch, path = "/api/v1/resellers/{id}", request_body = UpdateResellerRequest)]
@@ -236,8 +291,14 @@ pub async fn update_reseller(
     headers: HeaderMap,
     axum::extract::Path(user_id): axum::extract::Path<Uuid>,
     Json(request): Json<UpdateResellerRequest>,
-) -> Result<Json<anneal_users::User>, ApiError> {
+) -> Result<Json<UserResponse>, ApiError> {
     let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let previous_status = state
+        .users
+        .get_user_by_id(user_id)
+        .await
+        .map_err(ApiError)?
+        .map(|user| user.status);
     let password_hash = match request.password {
         Some(password) if !password.trim().is_empty() => Some(
             state
@@ -263,6 +324,9 @@ pub async fn update_reseller(
         )
         .await
         .map_err(ApiError)?;
+    let sessions_revoked_on_suspend =
+        matches!(previous_status, Some(anneal_core::UserStatus::Active))
+            && reseller.status != anneal_core::UserStatus::Active;
     state
         .audit_service()
         .write(
@@ -275,7 +339,21 @@ pub async fn update_reseller(
         )
         .await
         .map_err(ApiError)?;
-    Ok(Json(reseller))
+    if sessions_revoked_on_suspend {
+        state
+            .audit_service()
+            .write(
+                Some(actor.user_id),
+                reseller.tenant_id,
+                "auth.session.revoked_on_suspend",
+                "user",
+                Some(reseller.id),
+                json!({ "email": reseller.email, "status": reseller.status }),
+            )
+            .await
+            .map_err(ApiError)?;
+    }
+    Ok(Json(reseller.into()))
 }
 
 #[utoipa::path(delete, path = "/api/v1/resellers/{id}")]

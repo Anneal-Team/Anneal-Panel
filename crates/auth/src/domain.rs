@@ -46,8 +46,37 @@ pub struct AccessClaims {
     pub role: UserRole,
     pub tenant_id: Option<Uuid>,
     pub kind: String,
+    pub challenge_id: Option<Uuid>,
+    pub purpose: Option<String>,
     pub exp: usize,
     pub iat: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreAuthPurpose {
+    TotpSetup,
+    TotpVerify,
+}
+
+impl PreAuthPurpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TotpSetup => "totp_setup",
+            Self::TotpVerify => "totp_verify",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PreAuthChallenge {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub purpose: String,
+    pub pending_totp_secret: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]

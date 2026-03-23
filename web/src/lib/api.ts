@@ -1,3 +1,5 @@
+import i18n from "./i18n";
+
 export type UserRole = "superadmin" | "admin" | "reseller" | "user";
 export type UserStatus = "active" | "suspended";
 export type ProxyEngine = "xray" | "singbox";
@@ -19,7 +21,7 @@ export type DeploymentStatus =
 export type QuotaState = "normal" | "warning80" | "warning95" | "exhausted";
 export type TransportKind = "tcp" | "ws" | "grpc" | "http_upgrade";
 export type SecurityKind = "none" | "tls" | "reality";
-export type NodeGroupDomainMode =
+export type NodeDomainMode =
   | "direct"
   | "legacy_direct"
   | "cdn"
@@ -54,8 +56,6 @@ export interface User {
   display_name: string;
   role: UserRole;
   status: UserStatus;
-  password_hash: string;
-  totp_secret: string | null;
   totp_confirmed: boolean;
   created_at: string;
   updated_at: string;
@@ -66,7 +66,6 @@ export interface Device {
   tenant_id: string;
   user_id: string;
   name: string;
-  device_token: string;
   suspended: boolean;
   created_at: string;
   updated_at: string;
@@ -79,7 +78,6 @@ export interface Subscription {
   device_id: string;
   name: string;
   note: string | null;
-  access_key: string;
   traffic_limit_bytes: number;
   used_bytes: number;
   quota_state: QuotaState;
@@ -87,36 +85,33 @@ export interface Subscription {
   expires_at: string;
   created_at: string;
   updated_at: string;
-  current_token: string | null;
-}
-
-export interface SubscriptionLink {
-  id: string;
-  subscription_id: string;
-  token: string;
-  revoked_at: string | null;
-  created_at: string;
+  delivery_url: string | null;
 }
 
 export interface CreateSubscriptionResponse {
   subscription: Subscription;
-  link: SubscriptionLink;
   delivery_url: string;
 }
 
-export interface NodeGroup {
-  id: string;
-  tenant_id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
+export interface RotateSubscriptionLinkResponse {
+  delivery_url: string;
 }
 
-export interface Node {
+export interface PublicSubscription {
+  name: string;
+  note: string | null;
+  traffic_limit_bytes: number;
+  used_bytes: number;
+  quota_state: QuotaState;
+  suspended: boolean;
+  expires_at: string;
+  delivery_url: string;
+}
+
+export interface NodeRuntime {
   id: string;
   tenant_id: string;
-  node_group_id: string;
-  name: string;
+  node_id: string;
   engine: ProxyEngine;
   version: string;
   status: "pending" | "online" | "offline";
@@ -125,10 +120,19 @@ export interface Node {
   updated_at: string;
 }
 
-export interface NodeGroupDomain {
+export interface Node {
   id: string;
-  node_group_id: string;
-  mode: NodeGroupDomainMode;
+  tenant_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  runtimes: NodeRuntime[];
+}
+
+export interface NodeDomain {
+  id: string;
+  node_id: string;
+  mode: NodeDomainMode;
   domain: string;
   alias: string | null;
   server_names: string[];
@@ -139,7 +143,7 @@ export interface NodeGroupDomain {
 
 export interface NodeEndpoint {
   id: string;
-  node_id: string;
+  node_runtime_id: string;
   protocol: ProtocolKind;
   listen_host: string;
   listen_port: number;
@@ -153,7 +157,6 @@ export interface NodeEndpoint {
   service_name: string | null;
   flow: string | null;
   reality_public_key: string | null;
-  reality_private_key: string | null;
   reality_short_id: string | null;
   fingerprint: string | null;
   alpn: string[];
@@ -165,12 +168,33 @@ export interface NodeEndpoint {
   updated_at: string;
 }
 
+export interface NodeEndpointInput {
+  protocol: ProtocolKind;
+  listen_host: string;
+  listen_port: number;
+  public_host: string;
+  public_port: number;
+  transport: TransportKind;
+  security: SecurityKind;
+  server_name: string | null;
+  host_header: string | null;
+  path: string | null;
+  service_name: string | null;
+  flow: string | null;
+  fingerprint: string | null;
+  alpn: string[];
+  cipher: string | null;
+  tls_certificate_path: string | null;
+  tls_key_path: string | null;
+  enabled: boolean;
+}
+
 export interface EnrollmentGrant {
   token: string;
   record: {
     id: string;
     tenant_id: string;
-    node_group_id: string;
+    node_id: string;
     token_hash: string;
     engine: ProxyEngine;
     expires_at: string;
@@ -182,11 +206,10 @@ export interface EnrollmentGrant {
 export interface DeploymentRollout {
   id: string;
   tenant_id: string;
-  node_id: string;
+  node_runtime_id: string;
   config_revision_id: string;
   engine: ProxyEngine;
   revision_name: string;
-  rendered_config: string;
   target_path: string;
   status: DeploymentStatus;
   failure_reason: string | null;
@@ -343,7 +366,7 @@ async function refreshAccessToken() {
   const session = getSession();
   if (!session.refreshToken) {
     clearSession();
-    throw new Error("Сессия истекла");
+    throw new Error(i18n.t("auth.session_expired"));
   }
   if (!refreshPromise) {
     refreshPromise = apiFetch<SessionTokens>(
@@ -494,6 +517,9 @@ export const api = {
   listSubscriptions() {
     return apiFetch<Subscription[]>("/subscriptions");
   },
+  getPublicSubscription(token: string) {
+    return publicFetch<PublicSubscription>(`/subscriptions/public/${token}`);
+  },
   createSubscription(input: {
     tenant_id: string;
     user_id: string;
@@ -529,63 +555,67 @@ export const api = {
     );
   },
   rotateSubscriptionLink(subscriptionId: string, tenantId: string) {
-    return apiFetch<SubscriptionLink>(
+    return apiFetch<RotateSubscriptionLinkResponse>(
       `/subscriptions/${subscriptionId}/rotate-link?tenant_id=${tenantId}`,
       { method: "POST" },
     );
   },
-  listNodeGroups() {
-    return apiFetch<NodeGroup[]>("/node-groups");
-  },
-  createNodeGroup(input: { tenant_id: string; name: string }) {
-    return apiFetch<NodeGroup>("/node-groups", {
+  createNode(input: { tenant_id: string; name: string }) {
+    return apiFetch<Node>("/nodes", {
       method: "POST",
       body: JSON.stringify(input),
     });
   },
-  updateNodeGroup(nodeGroupId: string, input: { tenant_id: string; name: string }) {
-    return apiFetch<NodeGroup>(`/node-groups/${nodeGroupId}`, {
+  updateNode(nodeId: string, input: { tenant_id: string; name: string }) {
+    return apiFetch<Node>(`/nodes/${nodeId}`, {
       method: "PATCH",
       body: JSON.stringify(input),
     });
   },
-  deleteNodeGroup(nodeGroupId: string, tenantId: string) {
-    return apiFetch<{ ok: true }>(`/node-groups/${nodeGroupId}?tenant_id=${tenantId}`, {
+  deleteNode(nodeId: string, tenantId: string) {
+    return apiFetch<{ ok: true }>(`/nodes/${nodeId}?tenant_id=${tenantId}`, {
       method: "DELETE",
     });
   },
   listNodes() {
     return apiFetch<Node[]>("/nodes");
   },
-  listNodeGroupDomains(nodeGroupId: string, tenantId: string) {
-    return apiFetch<NodeGroupDomain[]>(`/node-groups/${nodeGroupId}/domains?tenant_id=${tenantId}`);
+  listNodeDomains(nodeId: string, tenantId: string) {
+    return apiFetch<NodeDomain[]>(`/nodes/${nodeId}/domains?tenant_id=${tenantId}`);
   },
-  replaceNodeGroupDomains(
-    nodeGroupId: string,
+  replaceNodeDomains(
+    nodeId: string,
     input: {
       tenant_id: string;
-      domains: Omit<NodeGroupDomain, "id" | "node_group_id" | "created_at" | "updated_at">[];
+      domains: Omit<NodeDomain, "id" | "node_id" | "created_at" | "updated_at">[];
     },
   ) {
-    return apiFetch<NodeGroupDomain[]>(`/node-groups/${nodeGroupId}/domains`, {
+    return apiFetch<NodeDomain[]>(`/nodes/${nodeId}/domains`, {
       method: "POST",
       body: JSON.stringify(input),
     });
   },
-  listNodeEndpoints(nodeId: string, tenantId: string) {
-    return apiFetch<NodeEndpoint[]>(`/nodes/${nodeId}/endpoints?tenant_id=${tenantId}`);
+  listNodeRuntimeEndpoints(runtimeId: string, tenantId: string) {
+    return apiFetch<NodeEndpoint[]>(`/node-runtimes/${runtimeId}/endpoints?tenant_id=${tenantId}`);
   },
-  replaceNodeEndpoints(
-    nodeId: string,
-    input: { tenant_id: string; endpoints: Omit<NodeEndpoint, "id" | "node_id" | "created_at" | "updated_at">[] },
+  replaceNodeRuntimeEndpoints(
+    runtimeId: string,
+    input: { tenant_id: string; endpoints: NodeEndpointInput[] },
   ) {
-    return apiFetch<NodeEndpoint[]>(`/nodes/${nodeId}/endpoints`, {
+    return apiFetch<NodeEndpoint[]>(`/node-runtimes/${runtimeId}/endpoints`, {
       method: "POST",
       body: JSON.stringify(input),
     });
   },
-  createEnrollmentToken(input: { tenant_id: string; node_group_id: string; engine: ProxyEngine }) {
-    return apiFetch<EnrollmentGrant>("/nodes/enrollment-tokens", {
+  createBootstrapToken(nodeId: string, input: { tenant_id: string; engines: ProxyEngine[] }) {
+    return apiFetch<{
+      bootstrap_token: string;
+      tenant_id: string;
+      node_id: string;
+      node_name: string;
+      engines: ProxyEngine[];
+      expires_at: string;
+    }>(`/nodes/${nodeId}/bootstrap-sessions`, {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -603,3 +633,18 @@ export const api = {
     return apiFetch<AuditLog[]>("/audit");
   },
 };
+
+async function publicFetch<T>(path: string, init?: RequestInit) {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as T;
+}
+

@@ -23,20 +23,19 @@ impl From<ApplicationError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status = match self.0 {
-            ApplicationError::Unauthorized => StatusCode::UNAUTHORIZED,
-            ApplicationError::Forbidden => StatusCode::FORBIDDEN,
-            ApplicationError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            ApplicationError::Conflict(_) => StatusCode::CONFLICT,
-            ApplicationError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApplicationError::Infrastructure(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        let (status, message) = match self.0 {
+            ApplicationError::Unauthorized => {
+                (StatusCode::UNAUTHORIZED, String::from("unauthorized"))
+            }
+            ApplicationError::Forbidden => (StatusCode::FORBIDDEN, String::from("forbidden")),
+            ApplicationError::Validation(message) => (StatusCode::UNPROCESSABLE_ENTITY, message),
+            ApplicationError::Conflict(message) => (StatusCode::CONFLICT, message),
+            ApplicationError::NotFound(message) => (StatusCode::NOT_FOUND, message),
+            ApplicationError::Infrastructure(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                String::from("internal server error"),
+            ),
         };
-        (
-            status,
-            Json(ErrorResponse {
-                message: self.0.to_string(),
-            }),
-        )
-            .into_response()
+        (status, Json(ErrorResponse { message })).into_response()
     }
 }

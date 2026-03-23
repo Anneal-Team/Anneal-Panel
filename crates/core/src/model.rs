@@ -44,7 +44,7 @@ pub enum NodeStatus {
     Offline,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, ToSchema)]
 #[sqlx(type_name = "proxy_engine", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyEngine {

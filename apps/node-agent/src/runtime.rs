@@ -1,9 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::net::IpAddr;
+use std::path::{Component, Path, PathBuf};
 
 use anneal_core::{ProtocolKind, ProxyEngine};
 use anneal_nodes::DeploymentRollout;
 use anyhow::{Context, anyhow};
-use tokio::{fs, net::TcpStream, process::Command, time::Duration};
+use tokio::{
+    fs,
+    net::{TcpStream, UdpSocket},
+    process::Command,
+    time::Duration,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeController {
@@ -40,7 +46,7 @@ pub async fn apply_rollout(
     settings: &RuntimeSettings,
     rollout: &DeploymentRollout,
 ) -> anyhow::Result<()> {
-    let target_path = resolve_target_path(&settings.config_root, &rollout.target_path);
+    let target_path = resolve_target_path(&settings.config_root, &rollout.target_path)?;
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -112,13 +118,29 @@ pub fn parse_runtime_controller(value: &str) -> anyhow::Result<RuntimeController
     }
 }
 
-fn resolve_target_path(config_root: &Path, target_path: &str) -> PathBuf {
-    let raw = PathBuf::from(target_path);
-    if raw.is_absolute() {
-        raw
-    } else {
-        config_root.join(raw)
+fn resolve_target_path(config_root: &Path, target_path: &str) -> anyhow::Result<PathBuf> {
+    let target = target_path.trim();
+    if target.is_empty() {
+        return Err(anyhow!("rollout target path is required"));
     }
+
+    let raw = Path::new(target);
+    if raw.is_absolute() {
+        return Err(anyhow!("rollout target path must be relative"));
+    }
+
+    let mut resolved = PathBuf::from(config_root);
+    for component in raw.components() {
+        match component {
+            Component::Normal(part) => resolved.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(anyhow!("rollout target path must not escape config root"));
+            }
+        }
+    }
+
+    Ok(resolved)
 }
 
 fn decorate_path(target_path: &Path, suffix: &str) -> PathBuf {
@@ -294,7 +316,7 @@ fn extract_health_targets(rendered_config: &str) -> anyhow::Result<Vec<HealthTar
             };
             if let Some(port) = port {
                 targets.push(HealthTarget {
-                    host: normalize_health_host(listen),
+                    host: normalize_health_host(listen)?,
                     port,
                     kind,
                 });
@@ -304,10 +326,14 @@ fn extract_health_targets(rendered_config: &str) -> anyhow::Result<Vec<HealthTar
     Ok(targets)
 }
 
-fn normalize_health_host(value: &str) -> String {
+fn normalize_health_host(value: &str) -> anyhow::Result<String> {
+    let value = value.trim();
     match value {
-        "::" | "0.0.0.0" | "" => "127.0.0.1".into(),
-        other => other.into(),
+        "" | "0.0.0.0" | "::" | "127.0.0.1" | "::1" | "localhost" => Ok("127.0.0.1".into()),
+        other => match other.parse::<IpAddr>() {
+            Ok(address) if address.is_loopback() => Ok("127.0.0.1".into()),
+            _ => Err(anyhow!("health-check target must stay on loopback")),
+        },
     }
 }
 
@@ -315,7 +341,7 @@ async fn check_targets(targets: &[HealthTarget]) -> bool {
     for target in targets {
         let ok = match target.kind {
             HealthTargetKind::Tcp => check_tcp_target(&target.host, target.port).await,
-            HealthTargetKind::Udp => check_udp_target(target.port).await,
+            HealthTargetKind::Udp => check_udp_target(&target.host, target.port).await,
         };
         if !ok {
             return false;
@@ -330,15 +356,8 @@ async fn check_tcp_target(host: &str, port: u16) -> bool {
     result.is_ok() && result.ok().and_then(Result::ok).is_some()
 }
 
-async fn check_udp_target(port: u16) -> bool {
-    let command = format!("command -v ss >/dev/null 2>&1 && ss -lun | grep -q ':{port} '");
-    Command::new("sh")
-        .arg("-lc")
-        .arg(command)
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+async fn check_udp_target(host: &str, port: u16) -> bool {
+    UdpSocket::bind((host, port)).await.is_err()
 }
 
 fn runtime_binary(settings: &RuntimeSettings, engine: ProxyEngine) -> &Path {
@@ -363,7 +382,10 @@ fn supervisor_service_is_running(stdout: &[u8]) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::{decorate_path, parse_runtime_controller, supervisor_service_is_running};
+    use super::{
+        decorate_path, extract_health_targets, normalize_health_host, parse_runtime_controller,
+        resolve_target_path, supervisor_service_is_running,
+    };
 
     #[test]
     fn decorated_path_preserves_json_extension() {
@@ -381,6 +403,43 @@ mod tests {
             decorate_path(target, "previous"),
             Path::new("/var/lib/anneal/runtime/config.previous")
         );
+    }
+
+    #[test]
+    fn resolve_target_path_rejects_parent_escape() {
+        let result = resolve_target_path(Path::new("/var/lib/anneal"), "../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_target_path_rejects_absolute_paths() {
+        let result = resolve_target_path(Path::new("/var/lib/anneal"), "/etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn normalize_health_host_rejects_remote_targets() {
+        let result = normalize_health_host("8.8.8.8");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_health_targets_keeps_local_targets() {
+        let rendered_config = serde_json::json!({
+            "inbounds": [
+                {
+                    "listen": "127.0.0.1",
+                    "port": 8443,
+                    "protocol": "tcp"
+                }
+            ]
+        })
+        .to_string();
+
+        let targets = extract_health_targets(&rendered_config).expect("targets");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].host, "127.0.0.1");
+        assert_eq!(targets[0].port, 8443);
     }
 
     #[test]
