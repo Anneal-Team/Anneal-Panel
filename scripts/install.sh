@@ -177,6 +177,20 @@ prompt_text() {
   local title="$1"
   local prompt="$2"
   local default_value="${3:-}"
+  local value=""
+  if use_tui && has_tui_terminal && [[ "${ANNEAL_INSTALLER_TEXT_UI:-tty}" != "dialog" ]]; then
+    printf '\n%s\n' "$(installer_backtitle)" > /dev/tty
+    printf '%s\n\n' "${title}" > /dev/tty
+    printf '%s\n' "${prompt}" > /dev/tty
+    printf '%s\n\n' "$(text "Вставь значение и нажми Enter." "Paste the value and press Enter.")" > /dev/tty
+    if [[ -n "${default_value}" ]]; then
+      read -r -e -i "${default_value}" -p "> " value < /dev/tty > /dev/tty
+    else
+      read -r -e -p "> " value < /dev/tty > /dev/tty
+    fi
+    printf '%s\n' "${value}"
+    return
+  fi
   run_whiptail \
     --backtitle "$(installer_backtitle)" \
     --title "${title}" \
