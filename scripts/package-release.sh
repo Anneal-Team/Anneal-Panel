@@ -201,7 +201,10 @@ EOF
 write_checksums() {
   (
     cd "${BUNDLE_ROOT}"
-    find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+    local checksums_file
+    checksums_file="$(mktemp)"
+    find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "${checksums_file}"
+    mv "${checksums_file}" SHA256SUMS
   )
 }
 
