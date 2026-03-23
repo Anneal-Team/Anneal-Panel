@@ -2,8 +2,9 @@ name: Release Master
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - 'v*.*.*'
+      - '*.*.*'
   workflow_dispatch:
 
 permissions:
@@ -24,20 +25,50 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Package rolling release
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]] || {
+            echo "Release workflow must run on a semver tag." >&2
+            exit 1
+          }
+          version="$(awk '
+            $0 == "[workspace.package]" { in_section = 1; next }
+            /^\[/ { in_section = 0 }
+            in_section && $1 == "version" {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }
+          ' Cargo.toml)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          [[ "${tag_version}" == "${version}" ]] || {
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
+            exit 1
+          }
+          {
+            echo "bundle_label=${version}"
+            echo "release_name=Anneal ${version}"
+            echo "release_tag=${GITHUB_REF_NAME}"
+            echo "is_prerelease=false"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Package release bundle
+        env:
+          BUNDLE_VERSION_LABEL: ${{ steps.meta.outputs.bundle_label }}
         run: bash scripts/package-release.sh
-      - name: Publish rolling release
+      - name: Verify release bundle
+        run: bash scripts/verify-bundle.sh dist/*.tar.gz
+      - name: Publish release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: |
-            dist/*.tar.gz
-            dist/*.json
-            dist/SHA256SUMS
-          name: Anneal Rolling
+          artifacts: dist/*.tar.gz
+          name: ${{ steps.meta.outputs.release_name }}
           omitBodyDuringUpdate: true
-          prerelease: false
+          prerelease: ${{ steps.meta.outputs.is_prerelease }}
           removeArtifacts: true
           replacesArtifacts: true
-          tag: rolling
+          tag: ${{ steps.meta.outputs.release_tag }}

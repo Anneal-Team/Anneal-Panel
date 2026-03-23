@@ -66,7 +66,7 @@ Anneal — это панель управления, которая объеди
 
 ## 📦 Установка
 
-В Anneal есть интерактивный установщик, который скачивает готовые release-пакеты с GitHub и проводит установку через TUI-интерфейс.
+В Anneal есть интерактивный установщик, который скачивает один готовый релизный архив из GitHub Releases и проводит установку через TUI-интерфейс.
 
 - Файл установщика: [`scripts/install.sh`](./scripts/install.sh)
 - Прямая ссылка: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
@@ -77,11 +77,22 @@ Anneal — это панель управления, которая объеди
 curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
 ```
 
+Каналы релизов:
+- `rolling` из ветки `master`
+- semver-релизы из Git-тегов вроде `v0.1.0`
+
+Установка конкретной версии:
+
+```bash
+curl -fsSLo /tmp/anneal-install.sh https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh
+sudo ANNEAL_RELEASE_TAG=v0.1.0 bash /tmp/anneal-install.sh
+```
+
 Установщик:
 - спрашивает язык интерфейса: `Русский` или `English`
 - предлагает выбрать роль сервера: `Panel` или `Node`
 - предлагает выбрать тип установки: `Linux` или `Docker`
-- скачивает готовые release-артефакты вместо сборки проекта на сервере
+- скачивает один релизный архив вида `anneal-0.1.0-linux-amd64.tar.gz` вместо сборки проекта на сервере
 - автоматически генерирует пароли, токены и внутренние секреты
 - после установки показывает сводку для администратора
 - ставит login-menu с действиями status, update, restart и remove
@@ -92,7 +103,7 @@ curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scr
 Сервер ноды:
 - устанавливает отдельный VPS/VDS node server
 - это не ядро Xray или Sing-box, а отдельный сервер под управлением Anneal
-- скачивает runtime-пакеты и запускает их в native или Docker режиме
+- распаковывает runtime-бинарники из того же релизного архива и запускает их в native или Docker режиме
 
 Примеры запуска по роли:
 

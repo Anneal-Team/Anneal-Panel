@@ -66,7 +66,7 @@ Designed for multi-tenant environments where different teams, resellers and user
 
 ## 📦 Installation
 
-Anneal ships with an interactive installer that downloads ready-made release packages from GitHub and guides setup in TUI mode.
+Anneal ships with an interactive installer that downloads one ready-made release bundle archive from GitHub Releases and guides setup in TUI mode.
 
 - Installer file: [`scripts/install.sh`](./scripts/install.sh)
 - Direct link: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
@@ -77,11 +77,22 @@ Quick start:
 curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
 ```
 
+Release channels:
+- `rolling` from the `master` branch
+- semver releases from Git tags such as `v0.1.0`
+
+Pin a specific release:
+
+```bash
+curl -fsSLo /tmp/anneal-install.sh https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh
+sudo ANNEAL_RELEASE_TAG=v0.1.0 bash /tmp/anneal-install.sh
+```
+
 The installer:
 - asks for installer language: `Русский` or `English`
 - lets you choose server role: `Panel` or `Node`
 - lets you choose deployment type: `Linux` or `Docker`
-- downloads ready-made release artifacts instead of building the project on the server
+- downloads one release bundle such as `anneal-0.1.0-linux-amd64.tar.gz` instead of building the project on the server
 - generates passwords, tokens and internal secrets automatically
 - shows a final admin summary after installation
 - installs a post-login management menu with status, update, restart and removal actions
@@ -92,7 +103,7 @@ Panel server:
 Node server:
 - installs a separate VPS/VDS node server
 - this is not an Xray or Sing-box core itself, but a separate Anneal-managed server
-- downloads runtime packages and runs them in native or Docker mode
+- unpacks runtime binaries from the same release bundle and runs them in native or Docker mode
 
 Role-specific examples:
 
