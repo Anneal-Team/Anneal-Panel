@@ -77,9 +77,19 @@ Quick start:
 curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
 ```
 
-Release channels:
-- `rolling` from the `master` branch
-- semver releases from Git tags such as `v0.1.0`
+Release model:
+- the default installer resolves the latest GitHub Release automatically
+- semver releases are published from Git tags such as `v0.1.0`
+- set `ANNEAL_RELEASE_TAG=v0.1.0` to pin a specific release manually
+
+Supported distributions:
+- Debian 10, 11, 12, 13
+- Ubuntu 22.04 LTS, 24.04 LTS, 25.04, 25.10
+
+Package sources used by the installer:
+- PostgreSQL 17 comes from the official PGDG repository; Debian 10 uses the official PGDG archive
+- Caddy comes from the official Caddy APT repository
+- Docker mode uses the official Docker repository where available and falls back to distro packages on older platforms such as Debian 10
 
 Pin a specific release:
 

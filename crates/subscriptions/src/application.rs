@@ -229,19 +229,12 @@ where
                 target_tenant_id: Some(command.tenant_id),
             },
         )?;
-        if !self
-            .repository
-            .tenant_owns_user(command.tenant_id, command.user_id)
-            .await?
-        {
-            return Err(ApplicationError::Forbidden);
-        }
         let now = Utc::now();
         let device_token = generate_token();
         let device = Device {
             id: Uuid::new_v4(),
             tenant_id: command.tenant_id,
-            user_id: command.user_id,
+            user_id: actor.user_id,
             name: format!("{} access", command.name),
             device_token_hash: self.token_hasher.hash(&device_token),
             device_token,
@@ -252,7 +245,7 @@ where
         let subscription = Subscription {
             id: Uuid::new_v4(),
             tenant_id: command.tenant_id,
-            user_id: command.user_id,
+            user_id: actor.user_id,
             device_id: device.id,
             name: command.name,
             note: command.note,
@@ -894,7 +887,6 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1024,
@@ -1017,7 +1009,6 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
@@ -1138,7 +1129,6 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
@@ -1172,7 +1162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reseller_cannot_create_subscription_for_foreign_user() {
+    async fn subscription_is_attributed_to_actor() {
         let repository = InMemorySubscriptionRepository::default();
         let service = SubscriptionService::new(&repository, RbacService);
         let actor = Actor {
@@ -1181,12 +1171,11 @@ mod tests {
             role: UserRole::Reseller,
         };
 
-        let error = service
+        let (subscription, _) = service
             .create_subscription(
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: Uuid::new_v4(),
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1024,
@@ -1194,8 +1183,41 @@ mod tests {
                 },
             )
             .await
-            .expect_err("foreign user must be rejected");
+            .expect("subscription");
 
-        assert!(matches!(error, ApplicationError::Forbidden));
+        let devices = service.list_devices(&actor).await.expect("devices");
+
+        assert_eq!(subscription.user_id, actor.user_id);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].user_id, actor.user_id);
+    }
+
+    #[tokio::test]
+    async fn superadmin_can_create_subscription_for_arbitrary_tenant() {
+        let repository = InMemorySubscriptionRepository::default();
+        let service = SubscriptionService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: None,
+            role: UserRole::Superadmin,
+        };
+        let tenant_id = Uuid::new_v4();
+
+        let (subscription, _) = service
+            .create_subscription(
+                &actor,
+                CreateSubscriptionCommand {
+                    tenant_id,
+                    name: "main".into(),
+                    note: None,
+                    traffic_limit_bytes: 1024,
+                    expires_at: Utc::now() + Duration::days(30),
+                },
+            )
+            .await
+            .expect("subscription");
+
+        assert_eq!(subscription.tenant_id, tenant_id);
+        assert_eq!(subscription.user_id, actor.user_id);
     }
 }

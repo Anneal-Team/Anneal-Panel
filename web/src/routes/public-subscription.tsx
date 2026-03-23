@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { formatBytes, formatDate, formatQuotaState } from "@/lib/format";
+import { panelAssetUrl } from "@/lib/panel-base";
 import { useNow } from "@/lib/use-now";
 
 function statusTone(suspended: boolean, expired: boolean, quotaState: string) {
@@ -25,6 +26,7 @@ export function PublicSubscriptionPage() {
   const { token } = useParams({ from: "/import/$token" });
   const now = useNow();
   const [copied, setCopied] = useState(false);
+  const sidebarAssetUrl = panelAssetUrl("anneal-sidebar.svg");
   const subscriptionQuery = useQuery({
     queryKey: ["public-subscription", token],
     queryFn: () => api.getPublicSubscription(token),
@@ -93,7 +95,7 @@ export function PublicSubscriptionPage() {
       <div className="rounded-[32px] border border-white/60 bg-gradient-to-br from-[#f8f5f0] via-[#f2efe7] to-[#e8f0d9] p-6 shadow-panel md:p-8">
         <div className="flex flex-col gap-4">
           <div className="inline-flex w-fit items-center justify-center rounded-[20px] bg-[#141813] px-4 py-3 shadow-panel ring-1 ring-white/10">
-            <img src="/anneal-sidebar.svg" alt="Anneal" className="block h-7 w-auto object-contain" />
+            <img src={sidebarAssetUrl} alt="Anneal" className="block h-7 w-auto object-contain" />
           </div>
           <div>
             <div className="inline-block rounded-md bg-[#e2efca] px-3 py-1 text-xs font-bold uppercase tracking-widest text-[#384733]">

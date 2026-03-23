@@ -45,6 +45,7 @@ normalize_release_version() {
 github_api_get() {
   local url="$1"
   curl \
+    --fail \
     --retry 5 \
     --retry-all-errors \
     --location \
@@ -63,8 +64,9 @@ resolve_latest_release_tag() {
     exit 1
   }
   release_tag="$(
-    printf '%s\n' "${response}" |
-      sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
+    printf '%s' "${response}" |
+      tr -d '\r\n' |
+      sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
       head -n 1
   )"
   if [[ -z "${release_tag}" ]]; then
@@ -410,16 +412,115 @@ selected_engine() {
   [[ ",${ANNEAL_AGENT_ENGINES}," == *",${engine},"* ]]
 }
 
+role_includes_control_plane() {
+  case "${ROLE}" in
+    control-plane|all-in-one) return 0 ;;
+  esac
+  return 1
+}
+
+role_includes_node() {
+  case "${ROLE}" in
+    node|all-in-one) return 0 ;;
+  esac
+  return 1
+}
+
+normalize_domain_input() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  printf '%s' "${value}"
+}
+
+normalize_panel_path() {
+  local value="$1"
+  value="${value#/}"
+  value="${value%/}"
+  printf '%s' "${value}"
+}
+
+panel_path_prefix() {
+  if [[ -z "${ANNEAL_PANEL_PATH}" ]]; then
+    return
+  fi
+  printf '/%s' "${ANNEAL_PANEL_PATH}"
+}
+
+panel_base_href() {
+  local prefix
+  prefix="$(panel_path_prefix)"
+  if [[ -z "${prefix}" ]]; then
+    printf '%s' "/"
+    return
+  fi
+  printf '%s/' "${prefix}"
+}
+
+generate_panel_path() {
+  generate_hex 24
+}
+
+hydrate_control_plane_access_from_public_url() {
+  local without_scheme
+  local host
+  local path
+  if [[ -z "${ANNEAL_PUBLIC_BASE_URL}" ]]; then
+    return
+  fi
+  without_scheme="${ANNEAL_PUBLIC_BASE_URL#http://}"
+  without_scheme="${without_scheme#https://}"
+  host="${without_scheme%%/*}"
+  path=""
+  if [[ "${without_scheme}" == */* ]]; then
+    path="/${without_scheme#*/}"
+  fi
+  if [[ -z "${ANNEAL_DOMAIN}" ]]; then
+    ANNEAL_DOMAIN="${host}"
+  fi
+  if [[ -z "${ANNEAL_PANEL_PATH}" ]]; then
+    ANNEAL_PANEL_PATH="$(normalize_panel_path "${path}")"
+  fi
+}
+
 finalize_control_plane_defaults() {
+  hydrate_control_plane_access_from_public_url
   if [[ -z "${ANNEAL_DOMAIN}" ]]; then
     ANNEAL_DOMAIN="panel.example.com"
+  else
+    ANNEAL_DOMAIN="$(normalize_domain_input "${ANNEAL_DOMAIN}")"
+  fi
+  if [[ -z "${ANNEAL_PANEL_PATH}" ]]; then
+    ANNEAL_PANEL_PATH="$(generate_panel_path)"
   fi
   if [[ -z "${ANNEAL_PUBLIC_BASE_URL}" ]]; then
-    ANNEAL_PUBLIC_BASE_URL="https://${ANNEAL_DOMAIN}"
+    ANNEAL_PUBLIC_BASE_URL="https://${ANNEAL_DOMAIN}$(panel_path_prefix)"
   fi
   if [[ -z "${ANNEAL_SUPERADMIN_EMAIL}" ]]; then
     ANNEAL_SUPERADMIN_EMAIL="admin-$(generate_hex 3)@${ANNEAL_DOMAIN}"
   fi
+}
+
+finalize_single_server_defaults() {
+  finalize_control_plane_defaults
+  finalize_node_defaults
+  if [[ -z "${ANNEAL_RESELLER_TENANT_NAME}" ]]; then
+    ANNEAL_RESELLER_TENANT_NAME="Default Tenant"
+  fi
+  if [[ -z "${ANNEAL_RESELLER_DISPLAY_NAME}" ]]; then
+    ANNEAL_RESELLER_DISPLAY_NAME="Tenant Admin"
+  fi
+  if [[ -z "${ANNEAL_RESELLER_EMAIL}" ]]; then
+    ANNEAL_RESELLER_EMAIL="tenant-$(generate_hex 3)@${ANNEAL_DOMAIN}"
+  fi
+  if [[ -z "${ANNEAL_RESELLER_PASSWORD}" ]]; then
+    ANNEAL_RESELLER_PASSWORD="$(generate_secret 18)"
+  fi
+  if [[ -z "${ANNEAL_NODE_GROUP_NAME}" ]]; then
+    ANNEAL_NODE_GROUP_NAME="edge-$(generate_hex 3)"
+  fi
+  ANNEAL_AGENT_NAME="${ANNEAL_NODE_GROUP_NAME}"
 }
 
 finalize_node_defaults() {
@@ -450,6 +551,131 @@ validate_node_bootstrap() {
     show_error "$(text "URL control-plane должен начинаться с https://." "Control-plane URL must start with https://.")"
     exit 1
   fi
+}
+
+base32_secret_to_hex() {
+  local secret="$1"
+  local normalized
+  local remainder
+  normalized="$(printf '%s' "${secret}" | tr -d '[:space:]=' | tr '[:lower:]' '[:upper:]')"
+  remainder=$(( ${#normalized} % 8 ))
+  if [[ "${remainder}" -ne 0 ]]; then
+    normalized="${normalized}$(printf '=%.0s' $(seq 1 $((8 - remainder))))"
+  fi
+  if command_exists base32; then
+    printf '%s' "${normalized}" | base32 --decode | od -An -vtx1 | tr -d ' \n'
+    return
+  fi
+  if command_exists basenc; then
+    printf '%s' "${normalized}" | basenc --base32 -d | od -An -vtx1 | tr -d ' \n'
+    return
+  fi
+  show_error "$(text "Не найден base32/basenc для генерации TOTP." "base32/basenc was not found for TOTP generation.")"
+  exit 1
+}
+
+hex_to_binary() {
+  local hex="$1"
+  local escaped=""
+  local index
+  for ((index = 0; index < ${#hex}; index += 2)); do
+    escaped="${escaped}\\x${hex:index:2}"
+  done
+  printf '%b' "${escaped}"
+}
+
+generate_totp_code() {
+  local secret="$1"
+  local key_hex
+  local counter_hex
+  local digest_hex
+  local offset
+  local code_hex
+  local code
+  key_hex="$(base32_secret_to_hex "${secret}")"
+  counter_hex="$(printf '%016x' "$(( $(date +%s) / 30 ))")"
+  digest_hex="$(
+    hex_to_binary "${counter_hex}" |
+      openssl dgst -sha1 -mac HMAC -macopt "hexkey:${key_hex}" -binary |
+      od -An -vtx1 | tr -d ' \n'
+  )"
+  offset=$((16#${digest_hex:${#digest_hex}-1:1}))
+  code_hex="${digest_hex:$((offset * 2)):8}"
+  code=$(( (16#${code_hex} & 0x7fffffff) % 1000000 ))
+  printf '%06d' "${code}"
+}
+
+local_api_base_url() {
+  printf '%s' "http://127.0.0.1:8080/api/v1"
+}
+
+api_post_local_json() {
+  local path="$1"
+  local payload="$2"
+  curl -fsS "$(local_api_base_url)${path}" -H 'content-type: application/json' --data "${payload}"
+}
+
+api_post_local_auth_json() {
+  local access_token="$1"
+  local path="$2"
+  local payload="$3"
+  curl -fsS "$(local_api_base_url)${path}" -H 'content-type: application/json' -H "authorization: Bearer ${access_token}" --data "${payload}"
+}
+
+login_local_superadmin_access_token() {
+  local login_response
+  local status
+  local pre_auth_token
+  local totp_setup
+  local totp_secret
+  local totp_code
+  local verify_response
+  login_response="$(api_post_local_json "/auth/login" "$(jq -nc --arg email "${ANNEAL_SUPERADMIN_EMAIL}" --arg password "${ANNEAL_SUPERADMIN_PASSWORD}" '{email:$email, password:$password}')" )"
+  status="$(printf '%s' "${login_response}" | jq -r '.status')"
+  if [[ "${status}" == "authenticated" ]]; then
+    printf '%s' "${login_response}" | jq -r '.tokens.access_token'
+    return
+  fi
+  pre_auth_token="$(printf '%s' "${login_response}" | jq -r '.pre_auth_token')"
+  totp_setup="$(curl -fsS "$(local_api_base_url)/auth/totp/setup" -X POST -H "authorization: Bearer ${pre_auth_token}")"
+  totp_secret="$(printf '%s' "${totp_setup}" | jq -r '.secret')"
+  totp_code="$(generate_totp_code "${totp_secret}")"
+  verify_response="$(curl -fsS "$(local_api_base_url)/auth/totp/verify" -H 'content-type: application/json' -H "authorization: Bearer ${pre_auth_token}" --data "$(jq -nc --arg code "${totp_code}" '{code:$code}')" )"
+  printf '%s' "${verify_response}" | jq -r '.access_token'
+}
+
+wait_for_public_api() {
+  local health_url
+  health_url="${ANNEAL_PUBLIC_BASE_URL}/api/v1/health"
+  for _ in $(seq 1 120); do
+    if curl --silent --show-error --fail --resolve "${ANNEAL_DOMAIN}:443:127.0.0.1" "${health_url}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  show_error "$(text "Публичный HTTPS панели не поднялся вовремя." "Public panel HTTPS did not become ready in time.")"
+  exit 1
+}
+
+bootstrap_single_server_node() {
+  local access_token
+  local reseller_response
+  local tenant_id
+  local node_response
+  local node_id
+  local bootstrap_response
+  local engines_json
+  finalize_single_server_defaults
+  access_token="$(login_local_superadmin_access_token)"
+  reseller_response="$(api_post_local_auth_json "${access_token}" "/resellers" "$(jq -nc --arg tenant_name "${ANNEAL_RESELLER_TENANT_NAME}" --arg email "${ANNEAL_RESELLER_EMAIL}" --arg display_name "${ANNEAL_RESELLER_DISPLAY_NAME}" --arg password "${ANNEAL_RESELLER_PASSWORD}" '{tenant_name:$tenant_name, email:$email, display_name:$display_name, password:$password}')" )"
+  tenant_id="$(printf '%s' "${reseller_response}" | jq -r '.tenant_id')"
+  node_response="$(api_post_local_auth_json "${access_token}" "/nodes" "$(jq -nc --arg tenant_id "${tenant_id}" --arg name "${ANNEAL_NODE_GROUP_NAME}" '{tenant_id:$tenant_id, name:$name}')" )"
+  node_id="$(printf '%s' "${node_response}" | jq -r '.id')"
+  engines_json="$(jq -nc --arg engines "${ANNEAL_AGENT_ENGINES}" '$engines | split(",") | map(select(length > 0))')"
+  bootstrap_response="$(api_post_local_auth_json "${access_token}" "/nodes/${node_id}/bootstrap-sessions" "$(jq -nc --arg tenant_id "${tenant_id}" --argjson engines "${engines_json}" '{tenant_id:$tenant_id, engines:$engines}')" )"
+  ANNEAL_AGENT_NAME="${ANNEAL_NODE_GROUP_NAME}"
+  ANNEAL_AGENT_SERVER_URL="${ANNEAL_PUBLIC_BASE_URL}"
+  ANNEAL_AGENT_BOOTSTRAP_TOKEN="$(printf '%s' "${bootstrap_response}" | jq -r '.bootstrap_token')"
 }
 
 control_plane_summary() {
@@ -564,6 +790,148 @@ control_utility_source_url() {
   printf 'https://raw.githubusercontent.com/%s/%s/scripts/install.sh' "${ANNEAL_GITHUB_REPOSITORY}" "${ANNEAL_RELEASE_TAG}"
 }
 
+choose_role() {
+  local choice
+  if [[ -n "${ROLE}" ]]; then
+    return
+  fi
+  choice="$(prompt_menu \
+    "Anneal • Role" \
+    "$(text "Выбери, что устанавливается на этот сервер." "Choose what will be installed on this server.")" \
+    "All-in-one" "$(text "Панель и runtime-ядра на одном сервере" "Panel and runtime engines on one server")" \
+    "Panel" "$(text "Только control-plane: UI, API, worker и база" "Control-plane only: UI, API, worker and database")" \
+    "Node" "$(text "Отдельная node с runtime-ядрами" "Separate node with runtime engines")")"
+  case "${choice}" in
+    All-in-one) ROLE="all-in-one" ;;
+    Panel) ROLE="control-plane" ;;
+    Node) ROLE="node" ;;
+  esac
+}
+
+control_plane_summary() {
+  ensure_release_metadata
+  cat <<EOF
+Role: control-plane
+Mode: ${DEPLOYMENT_MODE}
+Domain: ${ANNEAL_DOMAIN}
+panel_url: ${ANNEAL_PUBLIC_BASE_URL}
+panel_path: $(panel_path_prefix)
+superadmin_email: ${ANNEAL_SUPERADMIN_EMAIL}
+release_tag: ${ANNEAL_RELEASE_TAG}
+version: ${ANNEAL_VERSION}
+EOF
+}
+
+all_in_one_summary() {
+  ensure_release_metadata
+  cat <<EOF
+Role: all-in-one
+Mode: ${DEPLOYMENT_MODE}
+Domain: ${ANNEAL_DOMAIN}
+panel_url: ${ANNEAL_PUBLIC_BASE_URL}
+panel_path: $(panel_path_prefix)
+superadmin_email: ${ANNEAL_SUPERADMIN_EMAIL}
+tenant_name: ${ANNEAL_RESELLER_TENANT_NAME}
+tenant_admin_email: ${ANNEAL_RESELLER_EMAIL}
+node_name: ${ANNEAL_NODE_GROUP_NAME}
+runtimes: ${ANNEAL_AGENT_ENGINES}
+release_tag: ${ANNEAL_RELEASE_TAG}
+version: ${ANNEAL_VERSION}
+EOF
+}
+
+configure_control_plane_tui() {
+  finalize_control_plane_defaults
+  ANNEAL_DOMAIN="$(prompt_text \
+    "Anneal • Control Plane" \
+    "$(text "Укажи домен или ссылку панели. Приватный путь будет сгенерирован автоматически." "Enter the panel domain or URL. The private path will be generated automatically.")" \
+    "${ANNEAL_DOMAIN}")"
+  finalize_control_plane_defaults
+  ANNEAL_SUPERADMIN_EMAIL="$(prompt_text \
+    "Anneal • Control Plane" \
+    "$(text "Email bootstrap-суперадмина." "Enter the bootstrap superadmin email.")" \
+    "${ANNEAL_SUPERADMIN_EMAIL}")"
+  ANNEAL_SUPERADMIN_DISPLAY_NAME="$(prompt_text \
+    "Anneal • Control Plane" \
+    "$(text "Отображаемое имя суперадмина." "Enter the superadmin display name.")" \
+    "${ANNEAL_SUPERADMIN_DISPLAY_NAME}")"
+  if ! prompt_confirm "$(text "Подтверждение" "Confirmation")" "$(control_plane_summary)"; then
+    exit 1
+  fi
+}
+
+configure_all_in_one_tui() {
+  finalize_single_server_defaults
+  ANNEAL_DOMAIN="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Укажи домен или ссылку панели. Приватный путь будет сгенерирован автоматически." "Enter the panel domain or URL. The private path will be generated automatically.")" \
+    "${ANNEAL_DOMAIN}")"
+  finalize_single_server_defaults
+  ANNEAL_SUPERADMIN_EMAIL="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Email bootstrap-суперадмина." "Enter the bootstrap superadmin email.")" \
+    "${ANNEAL_SUPERADMIN_EMAIL}")"
+  ANNEAL_SUPERADMIN_DISPLAY_NAME="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Отображаемое имя суперадмина." "Enter the superadmin display name.")" \
+    "${ANNEAL_SUPERADMIN_DISPLAY_NAME}")"
+  ANNEAL_RESELLER_TENANT_NAME="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Название tenant по умолчанию." "Enter the default tenant name.")" \
+    "${ANNEAL_RESELLER_TENANT_NAME}")"
+  ANNEAL_NODE_GROUP_NAME="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Имя локальной ноды." "Enter the local node name.")" \
+    "${ANNEAL_NODE_GROUP_NAME}")"
+  ANNEAL_AGENT_ENGINES="$(prompt_checklist \
+    "Anneal • Runtime packages" \
+    "$(text "Выбери runtime-пакеты для локальной ноды." "Choose runtime packages for the local node.")" \
+    "xray" "Xray" "ON" \
+    "singbox" "Sing-box" "ON")"
+  if ! prompt_confirm "$(text "Подтверждение" "Confirmation")" "$(all_in_one_summary)"; then
+    exit 1
+  fi
+}
+
+configure_installation() {
+  choose_language
+  if use_tui; then
+    ensure_whiptail
+    choose_role
+    choose_deployment_mode
+    case "${ROLE}" in
+      all-in-one) configure_all_in_one_tui ;;
+      control-plane) configure_control_plane_tui ;;
+      node) configure_node_tui ;;
+      *)
+        show_error "$(text "Неизвестная роль." "Unknown role.")"
+        exit 1
+        ;;
+    esac
+  else
+    [[ -n "${ROLE}" ]] || {
+      show_error "$(text "Передай --role all-in-one|control-plane|node." "Pass --role all-in-one|control-plane|node.")"
+      exit 1
+    }
+    [[ -n "${DEPLOYMENT_MODE}" ]] || {
+      show_error "$(text "Передай --mode native|docker." "Pass --mode native|docker.")"
+      exit 1
+    }
+    case "${ROLE}" in
+      all-in-one) finalize_single_server_defaults ;;
+      control-plane) finalize_control_plane_defaults ;;
+      node)
+        finalize_node_defaults
+        validate_node_bootstrap
+        ;;
+      *)
+        show_error "$(text "Неизвестная роль." "Unknown role.")"
+        exit 1
+        ;;
+    esac
+  fi
+}
+
 release_bundle_asset() {
   printf 'anneal-%s-%s.tar.gz' "${ANNEAL_VERSION}" "${ANNEAL_TARGET_TRIPLE}"
 }
@@ -668,40 +1036,193 @@ cleanup_temp_dir() {
   fi
 }
 
-setup_postgres_repository() {
-  if [[ -f /etc/apt/sources.list.d/pgdg.list ]]; then
+load_platform_info() {
+  if [[ -n "${ANNEAL_PLATFORM_ID:-}" ]]; then
     return
   fi
+  [[ -f /etc/os-release ]] || {
+    show_error "$(text "Не найден /etc/os-release." "The /etc/os-release file was not found.")"
+    exit 1
+  }
+  . /etc/os-release
+  ANNEAL_PLATFORM_ID="${ID:-}"
+  ANNEAL_PLATFORM_VERSION_ID="${VERSION_ID:-}"
+  ANNEAL_PLATFORM_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+}
+
+is_supported_debian_platform() {
+  load_platform_info
+  [[ "${ANNEAL_PLATFORM_ID}" == "debian" ]] || return 1
+  case "${ANNEAL_PLATFORM_VERSION_ID}" in
+    10|11|12|13) return 0 ;;
+  esac
+  return 1
+}
+
+is_supported_ubuntu_platform() {
+  load_platform_info
+  [[ "${ANNEAL_PLATFORM_ID}" == "ubuntu" ]] || return 1
+  case "${ANNEAL_PLATFORM_CODENAME}" in
+    jammy|noble|plucky|questing) return 0 ;;
+  esac
+  return 1
+}
+
+require_supported_platform() {
+  if is_supported_debian_platform || is_supported_ubuntu_platform; then
+    return
+  fi
+  show_error "$(text "Поддерживаются Debian 10/11/12/13 и Ubuntu 22.04/24.04/25.04/25.10." "Supported distributions are Debian 10/11/12/13 and Ubuntu 22.04/24.04/25.04/25.10.")"
+  exit 1
+}
+
+postgres_repository_base_url() {
+  load_platform_info
+  if [[ "${ANNEAL_PLATFORM_ID}" == "debian" && "${ANNEAL_PLATFORM_VERSION_ID}" == "10" ]]; then
+    printf '%s' "https://apt-archive.postgresql.org/pub/repos/apt"
+    return
+  fi
+  printf '%s' "https://apt.postgresql.org/pub/repos/apt"
+}
+
+docker_repository_base_url() {
+  load_platform_info
+  if [[ "${ANNEAL_PLATFORM_ID}" == "ubuntu" ]]; then
+    printf '%s' "https://download.docker.com/linux/ubuntu"
+    return
+  fi
+  printf '%s' "https://download.docker.com/linux/debian"
+}
+
+docker_repository_supported_platform() {
+  load_platform_info
+  if [[ "${ANNEAL_PLATFORM_ID}" == "debian" ]]; then
+    case "${ANNEAL_PLATFORM_VERSION_ID}" in
+      11|12|13) return 0 ;;
+    esac
+    return 1
+  fi
+  case "${ANNEAL_PLATFORM_CODENAME}" in
+    jammy|noble|questing) return 0 ;;
+  esac
+  return 1
+}
+
+apt_package_exists() {
+  local package_name="$1"
+  apt-cache show "${package_name}" >/dev/null 2>&1
+}
+
+setup_caddy_repository() {
+  local keyring_path
+  keyring_path="/usr/share/keyrings/caddy-stable-archive-keyring.asc"
+  install -d -m 0755 /usr/share/keyrings
+  curl --fail --retry 5 --retry-all-errors --location --silent --show-error \
+    https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+    -o "${keyring_path}"
+  chmod 0644 "${keyring_path}"
+  cat >/etc/apt/sources.list.d/caddy-stable.list <<EOF
+deb [signed-by=${keyring_path}] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+deb-src [signed-by=${keyring_path}] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+EOF
+}
+
+setup_postgres_repository() {
   local codename
+  local keyring_path
+  keyring_path="/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc"
+  load_platform_info
   codename="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
   install -d -m 0755 /usr/share/postgresql-common/pgdg
-  curl --retry 5 --retry-all-errors --location --silent --show-error \
-    https://www.postgresql.org/media/keys/ACCC4CF8.asc |
-    gpg --dearmor >/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+  curl --fail --retry 5 --retry-all-errors --location --silent --show-error \
+    https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    -o "${keyring_path}"
+  chmod 0644 "${keyring_path}"
   cat >/etc/apt/sources.list.d/pgdg.list <<EOF
-deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main
+deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] $(postgres_repository_base_url) ${codename}-pgdg main
 EOF
 }
 
 install_native_control_plane_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y ca-certificates curl gnupg tar openssl jq whiptail iproute2
+  require_supported_platform
   setup_postgres_repository
+  setup_caddy_repository
   apt-get update
-  apt-get install -y postgresql-17 postgresql-client-17 postgresql-contrib-17 caddy
+  apt-get install -y ca-certificates curl tar openssl jq whiptail iproute2 debian-keyring debian-archive-keyring apt-transport-https postgresql-17 postgresql-client-17 postgresql-contrib-17 caddy
 }
 
 install_native_node_packages() {
   export DEBIAN_FRONTEND=noninteractive
+  require_supported_platform
   apt-get update
   apt-get install -y curl tar ca-certificates openssl jq whiptail iproute2
 }
 
+setup_docker_repository() {
+  local keyring_path
+  load_platform_info
+  keyring_path="/etc/apt/keyrings/docker.asc"
+  install -d -m 0755 /etc/apt/keyrings
+  curl --fail --retry 5 --retry-all-errors --location --silent --show-error \
+    "$(docker_repository_base_url)/gpg" \
+    -o "${keyring_path}"
+  chmod 0644 "${keyring_path}"
+  cat >/etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: $(docker_repository_base_url)
+Suites: ${ANNEAL_PLATFORM_CODENAME}
+Components: stable
+Signed-By: ${keyring_path}
+EOF
+}
+
+remove_conflicting_docker_packages() {
+  local packages=()
+  local package_name
+  for package_name in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+    if dpkg -s "${package_name}" >/dev/null 2>&1; then
+      packages+=("${package_name}")
+    fi
+  done
+  if [[ "${#packages[@]}" -gt 0 ]]; then
+    apt-get remove -y "${packages[@]}"
+  fi
+}
+
+install_docker_packages_from_distro() {
+  local packages=(
+    curl
+    tar
+    ca-certificates
+    openssl
+    jq
+    whiptail
+    iproute2
+    docker.io
+  )
+  if apt_package_exists docker-compose-plugin; then
+    packages+=(docker-compose-plugin)
+  elif apt_package_exists docker-compose-v2; then
+    packages+=(docker-compose-v2)
+  elif apt_package_exists docker-compose; then
+    packages+=(docker-compose)
+  fi
+  apt-get update
+  apt-get install -y "${packages[@]}"
+}
+
 install_docker_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y curl tar ca-certificates openssl jq whiptail iproute2 docker.io docker-compose-plugin
+  require_supported_platform
+  if docker_repository_supported_platform; then
+    remove_conflicting_docker_packages
+    setup_docker_repository
+    apt-get update
+    apt-get install -y curl tar ca-certificates openssl jq whiptail iproute2 docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  else
+    install_docker_packages_from_distro
+  fi
   systemctl enable --now docker
 }
 
@@ -716,6 +1237,15 @@ compose_cmd() {
   fi
   show_error "$(text "Docker Compose не найден." "Docker Compose was not found.")"
   exit 1
+}
+
+disable_conflicting_caddy_services() {
+  local service
+  for service in caddy caddy-api; do
+    if systemctl list-unit-files "${service}.service" >/dev/null 2>&1; then
+      systemctl disable --now "${service}" >/dev/null 2>&1 || true
+    fi
+  done
 }
 
 parse_database_components() {
@@ -1001,12 +1531,12 @@ load_admin_summary() {
 
 install_control_utility() {
   install -d /usr/local/bin
-  if [[ -f "${SELF_SOURCE}" && "${SELF_SOURCE}" != /dev/stdin && "${SELF_SOURCE}" != /dev/fd/* ]]; then
-    install -m 0755 "${SELF_SOURCE}" "${CONTROL_UTILITY_PATH}"
-    return
-  fi
   if [[ -n "${RELEASE_BUNDLE_ROOT:-}" && -f "${RELEASE_BUNDLE_ROOT}/install.sh" ]]; then
     install -m 0755 "${RELEASE_BUNDLE_ROOT}/install.sh" "${CONTROL_UTILITY_PATH}"
+    return
+  fi
+  if [[ -f "${SELF_SOURCE}" && "${SELF_SOURCE}" != /dev/stdin && "${SELF_SOURCE}" != /dev/fd/* ]]; then
+    install -m 0755 "${SELF_SOURCE}" "${CONTROL_UTILITY_PATH}"
     return
   fi
   curl --retry 5 --retry-all-errors --location --silent --show-error \
@@ -1071,6 +1601,7 @@ install_native_control_plane() {
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-worker.service" /etc/systemd/system/anneal-worker.service
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-caddy.service" /etc/systemd/system/anneal-caddy.service
   chown -R "${ANNEAL_USER}:${ANNEAL_GROUP}" /opt/anneal /var/lib/anneal
+  disable_conflicting_caddy_services
   systemctl daemon-reload
   systemctl enable --now postgresql anneal-api anneal-worker anneal-caddy
   wait_for_api
@@ -1161,6 +1692,7 @@ status_summary() {
 restart_current_install() {
   if [[ "${DEPLOYMENT_MODE}" == "native" ]]; then
     if [[ "${ROLE}" == "control-plane" ]]; then
+      disable_conflicting_caddy_services
       systemctl restart anneal-api anneal-worker anneal-caddy
       return
     fi
@@ -1180,6 +1712,7 @@ update_native_control_plane() {
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-api.service" /etc/systemd/system/anneal-api.service
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-worker.service" /etc/systemd/system/anneal-worker.service
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-caddy.service" /etc/systemd/system/anneal-caddy.service
+  disable_conflicting_caddy_services
   systemctl daemon-reload
   restart_current_install
 }
@@ -1232,6 +1765,7 @@ drop_local_database_if_possible() {
 
 uninstall_native_current() {
   if [[ "${ROLE}" == "control-plane" ]]; then
+    disable_conflicting_caddy_services
     systemctl disable --now anneal-api anneal-worker anneal-caddy >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/anneal-api.service /etc/systemd/system/anneal-worker.service /etc/systemd/system/anneal-caddy.service
     load_admin_summary
@@ -1359,6 +1893,745 @@ run_install() {
   fi
 }
 
+primary_stack_role() {
+  if role_includes_control_plane; then
+    printf '%s' "control-plane"
+    return
+  fi
+  printf '%s' "node"
+}
+
+secondary_stack_role() {
+  if [[ "${ROLE}" == "all-in-one" ]]; then
+    printf '%s' "node"
+  fi
+}
+
+docker_stack_root_for_role() {
+  case "$1" in
+    control-plane) echo "/opt/anneal/docker/control-plane" ;;
+    node) echo "/opt/anneal/docker/node" ;;
+    *)
+      show_error "$(text "Неизвестная роль." "Unknown role.")"
+      exit 1
+      ;;
+  esac
+}
+
+docker_stack_root() {
+  docker_stack_root_for_role "$(primary_stack_role)"
+}
+
+configure_panel_web_root() {
+  local web_root="$1"
+  local index_file="${web_root}/index.html"
+  if [[ ! -f "${index_file}" ]]; then
+    return
+  fi
+  sed -i "s#<base href=\"[^\"]*\" />#<base href=\"$(panel_base_href)\" />#" "${index_file}"
+}
+
+render_control_plane_caddyfile() {
+  local output_path="$1"
+  local proxy_target="$2"
+  local web_root="$3"
+  local panel_prefix
+  panel_prefix="$(panel_path_prefix)"
+  if [[ -z "${panel_prefix}" ]]; then
+    cat >"${output_path}" <<EOF
+${ANNEAL_DOMAIN} {
+    encode gzip zstd
+
+    handle /api/* {
+        reverse_proxy ${proxy_target}
+    }
+
+    handle /s/* {
+        reverse_proxy ${proxy_target}
+    }
+
+    handle /swagger-ui* {
+        reverse_proxy ${proxy_target}
+    }
+
+    handle /api-doc/* {
+        reverse_proxy ${proxy_target}
+    }
+
+    handle {
+        root * ${web_root}
+        try_files {path} /index.html
+        file_server
+    }
+}
+EOF
+    return
+  fi
+  cat >"${output_path}" <<EOF
+${ANNEAL_DOMAIN} {
+    encode gzip zstd
+
+    redir ${panel_prefix} $(panel_base_href) 308
+
+    handle ${panel_prefix}/api/* {
+        uri strip_prefix ${panel_prefix}
+        reverse_proxy ${proxy_target}
+    }
+
+    handle ${panel_prefix}/s/* {
+        uri strip_prefix ${panel_prefix}
+        reverse_proxy ${proxy_target}
+    }
+
+    handle ${panel_prefix}/swagger-ui* {
+        uri strip_prefix ${panel_prefix}
+        reverse_proxy ${proxy_target}
+    }
+
+    handle ${panel_prefix}/api-doc/* {
+        uri strip_prefix ${panel_prefix}
+        reverse_proxy ${proxy_target}
+    }
+
+    handle_path ${panel_prefix}/* {
+        root * ${web_root}
+        try_files {path} /index.html
+        file_server
+    }
+
+    respond 404
+}
+EOF
+}
+
+render_native_caddyfile() {
+  render_control_plane_caddyfile /etc/anneal/Caddyfile 127.0.0.1:8080 /opt/anneal/web
+}
+
+write_control_plane_docker_files() {
+  local stack_root="$1"
+  cp "${stack_root}/control-plane.compose.yml" "${stack_root}/compose.yml"
+  render_control_plane_caddyfile "${stack_root}/Caddyfile" api:8080 /srv
+}
+
+write_all_in_one_env_native() {
+  cat >"${ENV_FILE}" <<EOF
+ANNEAL_BIND_ADDRESS=127.0.0.1:8080
+ANNEAL_DATABASE_URL=${ANNEAL_DATABASE_URL}
+ANNEAL_MIGRATIONS_DIR=/opt/anneal/migrations
+ANNEAL_BOOTSTRAP_TOKEN=${ANNEAL_BOOTSTRAP_TOKEN}
+ANNEAL_DATA_ENCRYPTION_KEY=${ANNEAL_DATA_ENCRYPTION_KEY}
+ANNEAL_TOKEN_HASH_KEY=${ANNEAL_TOKEN_HASH_KEY}
+ANNEAL_ACCESS_JWT_SECRET=${ANNEAL_ACCESS_JWT_SECRET}
+ANNEAL_PRE_AUTH_JWT_SECRET=${ANNEAL_PRE_AUTH_JWT_SECRET}
+ANNEAL_PUBLIC_BASE_URL=${ANNEAL_PUBLIC_BASE_URL}
+ANNEAL_CADDY_DOMAIN=${ANNEAL_DOMAIN}
+ANNEAL_OTLP_ENDPOINT=${ANNEAL_OTLP_ENDPOINT}
+ANNEAL_AGENT_SERVER_URL=${ANNEAL_AGENT_SERVER_URL}
+ANNEAL_AGENT_NAME=${ANNEAL_AGENT_NAME}
+ANNEAL_AGENT_VERSION=${ANNEAL_VERSION}
+ANNEAL_AGENT_ENGINES=${ANNEAL_AGENT_ENGINES}
+ANNEAL_AGENT_PROTOCOLS_XRAY=${ANNEAL_AGENT_PROTOCOLS_XRAY}
+ANNEAL_AGENT_PROTOCOLS_SINGBOX=${ANNEAL_AGENT_PROTOCOLS_SINGBOX}
+ANNEAL_AGENT_BOOTSTRAP_TOKEN=${ANNEAL_AGENT_BOOTSTRAP_TOKEN}
+ANNEAL_AGENT_CONFIG_ROOT=/var/lib/anneal
+ANNEAL_AGENT_XRAY_BINARY=/opt/anneal/bin/xray
+ANNEAL_AGENT_SINGBOX_BINARY=/opt/anneal/bin/hiddify-core
+ANNEAL_AGENT_RUNTIME_CONTROLLER=systemctl
+ANNEAL_AGENT_SYSTEMCTL_BINARY=/usr/bin/systemctl
+ANNEAL_AGENT_XRAY_SERVICE=anneal-xray.service
+ANNEAL_AGENT_SINGBOX_SERVICE=anneal-singbox.service
+EOF
+  chmod 600 "${ENV_FILE}"
+}
+
+save_install_metadata() {
+  local primary_role
+  local primary_stack_root
+  local secondary_role
+  local secondary_stack_root
+  primary_role="$(primary_stack_role)"
+  primary_stack_root="$(docker_stack_root_for_role "${primary_role}")"
+  secondary_role="$(secondary_stack_role)"
+  secondary_stack_root=""
+  if [[ -n "${secondary_role}" ]]; then
+    secondary_stack_root="$(docker_stack_root_for_role "${secondary_role}")"
+  fi
+  write_kv_file "${META_FILE}" \
+    ANNEAL_INSTALLER_LANG "${ANNEAL_INSTALLER_LANG}" \
+    ANNEAL_INSTALL_ROLE "${ROLE}" \
+    ANNEAL_DEPLOYMENT_MODE "${DEPLOYMENT_MODE}" \
+    ANNEAL_GITHUB_REPOSITORY "${ANNEAL_GITHUB_REPOSITORY}" \
+    ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
+    ANNEAL_RELEASE_BASE_URL "${ANNEAL_RELEASE_BASE_URL}" \
+    ANNEAL_VERSION "${ANNEAL_VERSION}" \
+    ANNEAL_TARGET_TRIPLE "${ANNEAL_TARGET_TRIPLE}" \
+    ANNEAL_DOMAIN "${ANNEAL_DOMAIN}" \
+    ANNEAL_PANEL_PATH "${ANNEAL_PANEL_PATH}" \
+    ANNEAL_PUBLIC_BASE_URL "${ANNEAL_PUBLIC_BASE_URL}" \
+    ANNEAL_AGENT_SERVER_URL "${ANNEAL_AGENT_SERVER_URL}" \
+    ANNEAL_AGENT_NAME "${ANNEAL_AGENT_NAME}" \
+    ANNEAL_AGENT_ENGINES "${ANNEAL_AGENT_ENGINES}" \
+    ANNEAL_RESELLER_TENANT_NAME "${ANNEAL_RESELLER_TENANT_NAME}" \
+    ANNEAL_RESELLER_EMAIL "${ANNEAL_RESELLER_EMAIL}" \
+    ANNEAL_RESELLER_DISPLAY_NAME "${ANNEAL_RESELLER_DISPLAY_NAME}" \
+    ANNEAL_RESELLER_PASSWORD "${ANNEAL_RESELLER_PASSWORD}" \
+    ANNEAL_NODE_GROUP_NAME "${ANNEAL_NODE_GROUP_NAME}" \
+    ANNEAL_STACK_ROOT "${primary_stack_root}" \
+    ANNEAL_COMPOSE_FILE "${primary_stack_root}/compose.yml" \
+    ANNEAL_SECONDARY_STACK_ROOT "${secondary_stack_root}" \
+    ANNEAL_SECONDARY_COMPOSE_FILE "${secondary_stack_root:+${secondary_stack_root}/compose.yml}"
+}
+
+save_admin_summary() {
+  if [[ "${ROLE}" == "all-in-one" ]]; then
+    write_kv_file "${SUMMARY_FILE}" \
+      ANNEAL_PUBLIC_BASE_URL "${ANNEAL_PUBLIC_BASE_URL}" \
+      ANNEAL_PANEL_PATH "${ANNEAL_PANEL_PATH}" \
+      ANNEAL_SUPERADMIN_EMAIL "${ANNEAL_SUPERADMIN_EMAIL}" \
+      ANNEAL_SUPERADMIN_PASSWORD "${ANNEAL_SUPERADMIN_PASSWORD}" \
+      ANNEAL_DATABASE_URL "${ANNEAL_DATABASE_URL}" \
+      ANNEAL_RESELLER_TENANT_NAME "${ANNEAL_RESELLER_TENANT_NAME}" \
+      ANNEAL_RESELLER_EMAIL "${ANNEAL_RESELLER_EMAIL}" \
+      ANNEAL_RESELLER_PASSWORD "${ANNEAL_RESELLER_PASSWORD}" \
+      ANNEAL_NODE_GROUP_NAME "${ANNEAL_NODE_GROUP_NAME}" \
+      ANNEAL_AGENT_ENGINES "${ANNEAL_AGENT_ENGINES}" \
+      ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
+      ANNEAL_VERSION "${ANNEAL_VERSION}"
+    return
+  fi
+  if [[ "${ROLE}" == "control-plane" ]]; then
+    write_kv_file "${SUMMARY_FILE}" \
+      ANNEAL_PUBLIC_BASE_URL "${ANNEAL_PUBLIC_BASE_URL}" \
+      ANNEAL_PANEL_PATH "${ANNEAL_PANEL_PATH}" \
+      ANNEAL_SUPERADMIN_EMAIL "${ANNEAL_SUPERADMIN_EMAIL}" \
+      ANNEAL_SUPERADMIN_PASSWORD "${ANNEAL_SUPERADMIN_PASSWORD}" \
+      ANNEAL_DATABASE_URL "${ANNEAL_DATABASE_URL}" \
+      ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
+      ANNEAL_VERSION "${ANNEAL_VERSION}"
+    return
+  fi
+  write_kv_file "${SUMMARY_FILE}" \
+    ANNEAL_AGENT_SERVER_URL "${ANNEAL_AGENT_SERVER_URL}" \
+    ANNEAL_AGENT_NAME "${ANNEAL_AGENT_NAME}" \
+    ANNEAL_AGENT_ENGINES "${ANNEAL_AGENT_ENGINES}" \
+    ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
+    ANNEAL_VERSION "${ANNEAL_VERSION}"
+}
+
+control_plane_install_message() {
+  cat <<EOF
+$(text "Установка завершена." "Installation completed.")
+
+panel_url: ${ANNEAL_PUBLIC_BASE_URL}
+panel_path: $(panel_path_prefix)
+admin_email: ${ANNEAL_SUPERADMIN_EMAIL}
+admin_password: ${ANNEAL_SUPERADMIN_PASSWORD}
+database_url: ${ANNEAL_DATABASE_URL}
+release_tag: ${ANNEAL_RELEASE_TAG}
+version: ${ANNEAL_VERSION}
+EOF
+}
+
+all_in_one_install_message() {
+  cat <<EOF
+$(text "Установка завершена." "Installation completed.")
+
+panel_url: ${ANNEAL_PUBLIC_BASE_URL}
+panel_path: $(panel_path_prefix)
+admin_email: ${ANNEAL_SUPERADMIN_EMAIL}
+admin_password: ${ANNEAL_SUPERADMIN_PASSWORD}
+tenant_name: ${ANNEAL_RESELLER_TENANT_NAME}
+tenant_admin_email: ${ANNEAL_RESELLER_EMAIL}
+tenant_admin_password: ${ANNEAL_RESELLER_PASSWORD}
+node_name: ${ANNEAL_NODE_GROUP_NAME}
+runtimes: ${ANNEAL_AGENT_ENGINES}
+release_tag: ${ANNEAL_RELEASE_TAG}
+version: ${ANNEAL_VERSION}
+EOF
+}
+
+install_native_control_plane() {
+  finalize_control_plane_defaults
+  [[ -n "${ANNEAL_DOMAIN}" ]] || {
+    show_error "$(text "Для control-plane нужен домен." "Control-plane requires a domain.")"
+    exit 1
+  }
+  prepare_deploy_assets
+  install_native_control_plane_packages
+  ensure_user
+  ensure_postgres
+  install_bundle_binary api
+  install_bundle_binary worker
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/web" /opt/anneal/web
+  configure_panel_web_root /opt/anneal/web
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/migrations" /opt/anneal/migrations
+  write_control_plane_env_native
+  render_native_caddyfile
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-api.service" /etc/systemd/system/anneal-api.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-worker.service" /etc/systemd/system/anneal-worker.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-caddy.service" /etc/systemd/system/anneal-caddy.service
+  chown -R "${ANNEAL_USER}:${ANNEAL_GROUP}" /opt/anneal /var/lib/anneal
+  disable_conflicting_caddy_services
+  systemctl daemon-reload
+  activate_native_services postgresql anneal-api anneal-worker anneal-caddy
+  wait_for_api
+  bootstrap_superadmin
+}
+
+install_native_node() {
+  finalize_node_defaults
+  prepare_deploy_assets
+  install_native_node_packages
+  ensure_user
+  install_bundle_binary node-agent
+  install_runtime_bundle_native
+  install_runtime_defaults
+  write_node_env_native
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-node-agent.service" /etc/systemd/system/anneal-node-agent.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-xray.service" /etc/systemd/system/anneal-xray.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-singbox.service" /etc/systemd/system/anneal-singbox.service
+  chown -R "${ANNEAL_USER}:${ANNEAL_GROUP}" /opt/anneal /var/lib/anneal
+  systemctl daemon-reload
+  activate_native_services anneal-xray anneal-singbox anneal-node-agent
+}
+
+install_native_all_in_one() {
+  finalize_single_server_defaults
+  prepare_deploy_assets
+  install_native_control_plane_packages
+  ensure_user
+  ensure_postgres
+  install_bundle_binary api
+  install_bundle_binary worker
+  install_bundle_binary node-agent
+  install_runtime_bundle_native
+  install_runtime_defaults
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/web" /opt/anneal/web
+  configure_panel_web_root /opt/anneal/web
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/migrations" /opt/anneal/migrations
+  write_all_in_one_env_native
+  render_native_caddyfile
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-api.service" /etc/systemd/system/anneal-api.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-worker.service" /etc/systemd/system/anneal-worker.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-caddy.service" /etc/systemd/system/anneal-caddy.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-node-agent.service" /etc/systemd/system/anneal-node-agent.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-xray.service" /etc/systemd/system/anneal-xray.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-singbox.service" /etc/systemd/system/anneal-singbox.service
+  chown -R "${ANNEAL_USER}:${ANNEAL_GROUP}" /opt/anneal /var/lib/anneal
+  disable_conflicting_caddy_services
+  systemctl daemon-reload
+  activate_native_services postgresql anneal-api anneal-worker anneal-caddy
+  wait_for_api
+  bootstrap_superadmin
+  bootstrap_single_server_node
+  wait_for_public_api
+  write_all_in_one_env_native
+  activate_native_services anneal-xray anneal-singbox anneal-node-agent
+}
+
+install_docker_control_plane() {
+  finalize_control_plane_defaults
+  [[ -n "${ANNEAL_DOMAIN}" ]] || {
+    show_error "$(text "Для control-plane нужен домен." "Control-plane requires a domain.")"
+    exit 1
+  }
+  prepare_deploy_assets
+  install_docker_packages
+  local stack_root
+  stack_root="$(docker_stack_root_for_role control-plane)"
+  sync_docker_stack_assets "${stack_root}"
+  configure_panel_web_root "${stack_root}/bundle/web"
+  write_control_plane_docker_files "${stack_root}"
+  write_control_plane_env_docker "${stack_root}"
+  compose_cmd -f "${stack_root}/compose.yml" --env-file "${stack_root}/.env" build
+  compose_cmd -f "${stack_root}/compose.yml" --env-file "${stack_root}/.env" up -d
+  wait_for_api
+  bootstrap_superadmin
+}
+
+install_docker_node() {
+  finalize_node_defaults
+  prepare_deploy_assets
+  install_docker_packages
+  local stack_root
+  stack_root="$(docker_stack_root_for_role node)"
+  sync_docker_stack_assets "${stack_root}"
+  write_node_docker_files "${stack_root}"
+  write_node_env_docker "${stack_root}"
+  compose_cmd -f "${stack_root}/compose.yml" --env-file "${stack_root}/.env" build
+  compose_cmd -f "${stack_root}/compose.yml" --env-file "${stack_root}/.env" up -d
+}
+
+install_docker_all_in_one() {
+  local control_stack_root
+  local node_stack_root
+  finalize_single_server_defaults
+  prepare_deploy_assets
+  install_docker_packages
+  control_stack_root="$(docker_stack_root_for_role control-plane)"
+  node_stack_root="$(docker_stack_root_for_role node)"
+  sync_docker_stack_assets "${control_stack_root}"
+  configure_panel_web_root "${control_stack_root}/bundle/web"
+  write_control_plane_docker_files "${control_stack_root}"
+  write_control_plane_env_docker "${control_stack_root}"
+  compose_cmd -f "${control_stack_root}/compose.yml" --env-file "${control_stack_root}/.env" build
+  compose_cmd -f "${control_stack_root}/compose.yml" --env-file "${control_stack_root}/.env" up -d
+  wait_for_api
+  bootstrap_superadmin
+  bootstrap_single_server_node
+  wait_for_public_api
+  sync_docker_stack_assets "${node_stack_root}"
+  write_node_docker_files "${node_stack_root}"
+  write_node_env_docker "${node_stack_root}"
+  compose_cmd -f "${node_stack_root}/compose.yml" --env-file "${node_stack_root}/.env" build
+  compose_cmd -f "${node_stack_root}/compose.yml" --env-file "${node_stack_root}/.env" up -d
+}
+
+docker_status_output() {
+  local stack_root="$1"
+  local label="$2"
+  local env_file="${stack_root}/.env"
+  if [[ ! -f "${env_file}" ]]; then
+    return
+  fi
+  printf '%s\n%s\n' "${label}" "$(compose_cmd -f "${stack_root}/compose.yml" --env-file "${env_file}" ps)"
+}
+
+status_summary() {
+  if [[ "${DEPLOYMENT_MODE}" == "native" ]]; then
+    {
+      if role_includes_control_plane; then
+        service_status_line postgresql
+        service_status_line anneal-api
+        service_status_line anneal-worker
+        service_status_line anneal-caddy
+      fi
+      if role_includes_node; then
+        service_status_line anneal-node-agent
+        service_status_line anneal-xray
+        service_status_line anneal-singbox
+      fi
+    }
+    return
+  fi
+  {
+    docker_status_output "${ANNEAL_STACK_ROOT}" "primary stack"
+    if [[ -n "${ANNEAL_SECONDARY_STACK_ROOT:-}" ]]; then
+      docker_status_output "${ANNEAL_SECONDARY_STACK_ROOT}" "secondary stack"
+    fi
+  }
+}
+
+restart_current_install() {
+  if [[ "${DEPLOYMENT_MODE}" == "native" ]]; then
+    if role_includes_control_plane; then
+      disable_conflicting_caddy_services
+      systemctl restart anneal-api anneal-worker anneal-caddy
+    fi
+    if role_includes_node; then
+      systemctl restart anneal-node-agent anneal-xray anneal-singbox
+    fi
+    return
+  fi
+  compose_cmd -f "${ANNEAL_COMPOSE_FILE}" --env-file "${ANNEAL_STACK_ROOT}/.env" restart
+  if [[ -n "${ANNEAL_SECONDARY_STACK_ROOT:-}" ]]; then
+    compose_cmd -f "${ANNEAL_SECONDARY_COMPOSE_FILE}" --env-file "${ANNEAL_SECONDARY_STACK_ROOT}/.env" restart
+  fi
+}
+
+update_native_control_plane() {
+  prepare_deploy_assets
+  install_bundle_binary api
+  install_bundle_binary worker
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/web" /opt/anneal/web
+  configure_panel_web_root /opt/anneal/web
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/migrations" /opt/anneal/migrations
+  render_native_caddyfile
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-api.service" /etc/systemd/system/anneal-api.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-worker.service" /etc/systemd/system/anneal-worker.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-caddy.service" /etc/systemd/system/anneal-caddy.service
+}
+
+update_native_node() {
+  prepare_deploy_assets
+  install_bundle_binary node-agent
+  install_runtime_bundle_native
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-node-agent.service" /etc/systemd/system/anneal-node-agent.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-xray.service" /etc/systemd/system/anneal-xray.service
+  install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-singbox.service" /etc/systemd/system/anneal-singbox.service
+}
+
+update_docker_stack() {
+  local role_name="$1"
+  local stack_root
+  stack_root="$(docker_stack_root_for_role "${role_name}")"
+  sync_docker_stack_assets "${stack_root}"
+  if [[ "${role_name}" == "control-plane" ]]; then
+    configure_panel_web_root "${stack_root}/bundle/web"
+    write_control_plane_docker_files "${stack_root}"
+  else
+    write_node_docker_files "${stack_root}"
+  fi
+  compose_cmd -f "${stack_root}/compose.yml" --env-file "${stack_root}/.env" build
+  compose_cmd -f "${stack_root}/compose.yml" --env-file "${stack_root}/.env" up -d
+}
+
+update_current_install() {
+  load_admin_summary
+  reset_release_metadata_to_latest
+  if [[ "${DEPLOYMENT_MODE}" == "native" ]]; then
+    if role_includes_control_plane; then
+      update_native_control_plane
+    fi
+    if role_includes_node; then
+      update_native_node
+    fi
+    disable_conflicting_caddy_services
+    systemctl daemon-reload
+    restart_current_install
+  else
+    update_docker_stack "$(primary_stack_role)"
+    if [[ "${ROLE}" == "all-in-one" ]]; then
+      update_docker_stack node
+    fi
+  fi
+  install_control_utility
+  install_profile_hook
+  save_install_metadata
+  save_admin_summary
+}
+
+uninstall_native_current() {
+  if role_includes_control_plane; then
+    disable_conflicting_caddy_services
+    systemctl disable --now anneal-api anneal-worker anneal-caddy >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/anneal-api.service /etc/systemd/system/anneal-worker.service /etc/systemd/system/anneal-caddy.service
+    load_admin_summary
+    [[ -n "${ANNEAL_DATABASE_URL:-}" ]] && drop_local_database_if_possible
+  fi
+  if role_includes_node; then
+    systemctl disable --now anneal-node-agent anneal-xray anneal-singbox >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/anneal-node-agent.service /etc/systemd/system/anneal-xray.service /etc/systemd/system/anneal-singbox.service
+  fi
+  systemctl daemon-reload
+}
+
+uninstall_docker_current() {
+  compose_cmd -f "${ANNEAL_COMPOSE_FILE}" --env-file "${ANNEAL_STACK_ROOT}/.env" down -v || true
+  rm -rf "${ANNEAL_STACK_ROOT}"
+  if [[ -n "${ANNEAL_SECONDARY_STACK_ROOT:-}" ]]; then
+    compose_cmd -f "${ANNEAL_SECONDARY_COMPOSE_FILE}" --env-file "${ANNEAL_SECONDARY_STACK_ROOT}/.env" down -v || true
+    rm -rf "${ANNEAL_SECONDARY_STACK_ROOT}"
+  fi
+}
+
+show_admin_details() {
+  load_admin_summary
+  if [[ "${ROLE}" == "all-in-one" ]]; then
+    show_info "$(text "Данные установки" "Install details")" "$(all_in_one_install_message)"
+    return
+  fi
+  if [[ "${ROLE}" == "control-plane" ]]; then
+    show_info "$(text "Данные администратора" "Administrator details")" "$(control_plane_install_message)"
+    return
+  fi
+  show_info "$(text "Данные ноды" "Node server details")" "$(node_install_message)"
+}
+
+run_install() {
+  configure_installation
+  case "${ROLE}:${DEPLOYMENT_MODE}" in
+    all-in-one:native) install_native_all_in_one ;;
+    all-in-one:docker) install_docker_all_in_one ;;
+    control-plane:native) install_native_control_plane ;;
+    control-plane:docker) install_docker_control_plane ;;
+    node:native) install_native_node ;;
+    node:docker) install_docker_node ;;
+    *)
+      show_error "$(text "Комбинация роли и режима не поддерживается." "Unsupported role and mode combination.")"
+      exit 1
+      ;;
+  esac
+  install_control_utility
+  install_profile_hook
+  save_install_metadata
+  save_admin_summary
+  clear
+  print_banner
+  case "${ROLE}" in
+    all-in-one) printf '%s\n' "$(all_in_one_install_message)" ;;
+    control-plane) printf '%s\n' "$(control_plane_install_message)" ;;
+    *) printf '%s\n' "$(node_install_message)" ;;
+  esac
+}
+
+logo_block() {
+  printf '%b' '\u2581\u2583\u2586\u2588 Anneal'
+}
+
+print_banner() {
+  printf '%b' '\033[38;5;64m\u2581\033[38;5;107m\u2583\033[38;5;149m\u2586\033[38;5;191m\u2588\033[0m \033[38;5;194mAnneal\033[0m'
+  printf '\n\n'
+}
+
+show_step() {
+  local message="$1"
+  printf '%s\n' "${message}"
+}
+
+activate_native_services() {
+  local services=("$@")
+  systemctl enable "${services[@]}" >/dev/null 2>&1
+  systemctl restart "${services[@]}"
+}
+
+wait_for_public_api() {
+  local health_url
+  health_url="${ANNEAL_PUBLIC_BASE_URL}/api/v1/health"
+  show_step "$(text "Жду публичный HTTPS панели..." "Waiting for the public panel HTTPS...")"
+  for _ in $(seq 1 120); do
+    if curl --silent --show-error --fail --insecure --connect-timeout 2 --max-time 5 --resolve "${ANNEAL_DOMAIN}:443:127.0.0.1" "${health_url}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  show_error "$(text "Публичный HTTPS панели не поднялся вовремя. Проверь Caddy через systemctl status anneal-caddy и journalctl -u anneal-caddy -n 100 --no-pager." "Public panel HTTPS did not become ready in time. Check Caddy with systemctl status anneal-caddy and journalctl -u anneal-caddy -n 100 --no-pager.")"
+  exit 1
+}
+
+wait_for_api() {
+  local url="http://127.0.0.1:8080/api/v1/health"
+  show_step "$(text "Жду готовность Anneal API на 127.0.0.1:8080..." "Waiting for Anneal API on 127.0.0.1:8080...")"
+  for _ in $(seq 1 120); do
+    if curl --silent --show-error --fail --connect-timeout 2 --max-time 5 "${url}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  show_error "$(text "API не поднялся вовремя. Проверь systemctl status anneal-api anneal-worker anneal-caddy --no-pager -l и journalctl -u anneal-api -n 100 --no-pager." "API did not become ready in time. Check systemctl status anneal-api anneal-worker anneal-caddy --no-pager -l and journalctl -u anneal-api -n 100 --no-pager.")"
+  exit 1
+}
+
+bootstrap_superadmin() {
+  local response_file
+  local status
+  show_step "$(text "Выполняю bootstrap супер-админа..." "Bootstrapping the superadmin...")"
+  response_file="$(mktemp)"
+  status="$(
+    curl -sS -o "${response_file}" -w '%{http_code}' \
+      http://127.0.0.1:8080/api/v1/bootstrap \
+      -H 'content-type: application/json' \
+      -H "x-bootstrap-token: ${ANNEAL_BOOTSTRAP_TOKEN}" \
+      --data "$(jq -nc --arg email "${ANNEAL_SUPERADMIN_EMAIL}" --arg display_name "${ANNEAL_SUPERADMIN_DISPLAY_NAME}" --arg password "${ANNEAL_SUPERADMIN_PASSWORD}" '{email:$email, display_name:$display_name, password:$password}')"
+  )"
+  if [[ "${status}" == "200" || "${status}" == "409" ]]; then
+    rm -f "${response_file}"
+    return
+  fi
+  cat "${response_file}" >&2
+  rm -f "${response_file}"
+  show_error "$(text "Не удалось выполнить bootstrap супер-админа." "Failed to bootstrap the superadmin.")"
+  exit 1
+}
+
+domain_prompt_default() {
+  local value="${ANNEAL_DOMAIN:-panel.example.com}"
+  normalize_domain_input "${value}"
+}
+
+finalize_control_plane_defaults() {
+  hydrate_control_plane_access_from_public_url
+  if [[ -z "${ANNEAL_DOMAIN}" ]]; then
+    ANNEAL_DOMAIN="panel.example.com"
+  else
+    ANNEAL_DOMAIN="$(normalize_domain_input "${ANNEAL_DOMAIN}")"
+  fi
+  if [[ -z "${ANNEAL_PANEL_PATH}" ]]; then
+    ANNEAL_PANEL_PATH="$(generate_panel_path)"
+  fi
+  ANNEAL_PUBLIC_BASE_URL="https://${ANNEAL_DOMAIN}$(panel_path_prefix)"
+  if [[ -z "${ANNEAL_SUPERADMIN_EMAIL}" ]]; then
+    ANNEAL_SUPERADMIN_EMAIL="admin-$(generate_hex 3)@${ANNEAL_DOMAIN}"
+  fi
+}
+
+finalize_single_server_defaults() {
+  finalize_control_plane_defaults
+  finalize_node_defaults
+  if [[ -z "${ANNEAL_RESELLER_TENANT_NAME}" ]]; then
+    ANNEAL_RESELLER_TENANT_NAME="Default Tenant"
+  fi
+  if [[ -z "${ANNEAL_RESELLER_DISPLAY_NAME}" ]]; then
+    ANNEAL_RESELLER_DISPLAY_NAME="Tenant Admin"
+  fi
+  if [[ -z "${ANNEAL_RESELLER_EMAIL}" ]]; then
+    ANNEAL_RESELLER_EMAIL="tenant-$(generate_hex 3)@${ANNEAL_DOMAIN}"
+  fi
+  if [[ -z "${ANNEAL_RESELLER_PASSWORD}" ]]; then
+    ANNEAL_RESELLER_PASSWORD="$(generate_secret 18)"
+  fi
+  if [[ -z "${ANNEAL_NODE_GROUP_NAME}" ]]; then
+    ANNEAL_NODE_GROUP_NAME="edge-$(generate_hex 3)"
+  fi
+  ANNEAL_AGENT_NAME="${ANNEAL_NODE_GROUP_NAME}"
+}
+
+configure_control_plane_tui() {
+  local domain_default
+  domain_default="$(domain_prompt_default)"
+  ANNEAL_DOMAIN="$(prompt_text \
+    "Anneal • Control Plane" \
+    "$(text "Укажи домен или ссылку панели. Приватный путь будет сгенерирован автоматически." "Enter the panel domain or URL. The private path will be generated automatically.")" \
+    "${domain_default}")"
+  finalize_control_plane_defaults
+  ANNEAL_SUPERADMIN_EMAIL="$(prompt_text \
+    "Anneal • Control Plane" \
+    "$(text "Email bootstrap-суперадмина." "Enter the bootstrap superadmin email.")" \
+    "${ANNEAL_SUPERADMIN_EMAIL}")"
+  ANNEAL_SUPERADMIN_DISPLAY_NAME="$(prompt_text \
+    "Anneal • Control Plane" \
+    "$(text "Отображаемое имя суперадмина." "Enter the superadmin display name.")" \
+    "${ANNEAL_SUPERADMIN_DISPLAY_NAME}")"
+  if ! prompt_confirm "$(text "Подтверждение" "Confirmation")" "$(control_plane_summary)"; then
+    exit 1
+  fi
+}
+
+configure_all_in_one_tui() {
+  local domain_default
+  domain_default="$(domain_prompt_default)"
+  ANNEAL_DOMAIN="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Укажи домен или ссылку панели. Приватный путь будет сгенерирован автоматически." "Enter the panel domain or URL. The private path will be generated automatically.")" \
+    "${domain_default}")"
+  finalize_single_server_defaults
+  ANNEAL_SUPERADMIN_EMAIL="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Email bootstrap-суперадмина." "Enter the bootstrap superadmin email.")" \
+    "${ANNEAL_SUPERADMIN_EMAIL}")"
+  ANNEAL_SUPERADMIN_DISPLAY_NAME="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Отображаемое имя суперадмина." "Enter the superadmin display name.")" \
+    "${ANNEAL_SUPERADMIN_DISPLAY_NAME}")"
+  ANNEAL_RESELLER_TENANT_NAME="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Название tenant по умолчанию." "Enter the default tenant name.")" \
+    "${ANNEAL_RESELLER_TENANT_NAME}")"
+  ANNEAL_NODE_GROUP_NAME="$(prompt_text \
+    "Anneal • All-in-one" \
+    "$(text "Имя локальной ноды." "Enter the local node name.")" \
+    "${ANNEAL_NODE_GROUP_NAME}")"
+  ANNEAL_AGENT_ENGINES="$(prompt_checklist \
+    "Anneal • Runtime packages" \
+    "$(text "Выбери runtime-пакеты для локальной ноды." "Choose runtime packages for the local node.")" \
+    "xray" "Xray" "ON" \
+    "singbox" "Sing-box" "ON")"
+  if ! prompt_confirm "$(text "Подтверждение" "Confirmation")" "$(all_in_one_summary)"; then
+    exit 1
+  fi
+}
+
 ACTION="${ACTION:-install}"
 ROLE="${ROLE:-}"
 DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-}"
@@ -1376,6 +2649,7 @@ ANNEAL_RELEASE_BASE_URL="${REQUESTED_RELEASE_BASE_URL}"
 ANNEAL_USER="${ANNEAL_USER:-anneal}"
 ANNEAL_GROUP="${ANNEAL_GROUP:-anneal}"
 ANNEAL_DOMAIN="${ANNEAL_DOMAIN:-}"
+ANNEAL_PANEL_PATH="${ANNEAL_PANEL_PATH:-}"
 ANNEAL_PUBLIC_BASE_URL="${ANNEAL_PUBLIC_BASE_URL:-}"
 ANNEAL_DB_NAME="${ANNEAL_DB_NAME:-anneal_$(generate_hex 4)}"
 ANNEAL_DB_USER="${ANNEAL_DB_USER:-anneal_$(generate_hex 4)}"
@@ -1391,6 +2665,11 @@ ANNEAL_PRE_AUTH_JWT_SECRET="${ANNEAL_PRE_AUTH_JWT_SECRET:-$(generate_hex 32)}"
 ANNEAL_SUPERADMIN_EMAIL="${ANNEAL_SUPERADMIN_EMAIL:-}"
 ANNEAL_SUPERADMIN_DISPLAY_NAME="${ANNEAL_SUPERADMIN_DISPLAY_NAME:-Superadmin}"
 ANNEAL_SUPERADMIN_PASSWORD="${ANNEAL_SUPERADMIN_PASSWORD:-$(generate_secret 18)}"
+ANNEAL_RESELLER_TENANT_NAME="${ANNEAL_RESELLER_TENANT_NAME:-}"
+ANNEAL_RESELLER_EMAIL="${ANNEAL_RESELLER_EMAIL:-}"
+ANNEAL_RESELLER_DISPLAY_NAME="${ANNEAL_RESELLER_DISPLAY_NAME:-}"
+ANNEAL_RESELLER_PASSWORD="${ANNEAL_RESELLER_PASSWORD:-}"
+ANNEAL_NODE_GROUP_NAME="${ANNEAL_NODE_GROUP_NAME:-}"
 ANNEAL_OTLP_ENDPOINT="${ANNEAL_OTLP_ENDPOINT:-}"
 ANNEAL_AGENT_SERVER_URL="${ANNEAL_AGENT_SERVER_URL:-}"
 ANNEAL_AGENT_NAME="${ANNEAL_AGENT_NAME:-}"
@@ -1411,6 +2690,8 @@ PROFILE_HOOK_PATH="/etc/profile.d/anneal-menu.sh"
 DEPLOY_ASSET_ROOT=""
 DEPLOY_TEMP_DIR=""
 RELEASE_BUNDLE_ROOT=""
+ANNEAL_SECONDARY_STACK_ROOT=""
+ANNEAL_SECONDARY_COMPOSE_FILE=""
 
 trap cleanup_temp_dir EXIT
 

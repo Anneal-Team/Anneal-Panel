@@ -1,4 +1,5 @@
 import i18n from "./i18n";
+import { panelBasePath } from "./panel-base";
 
 export type UserRole = "superadmin" | "admin" | "reseller" | "user";
 export type UserStatus = "active" | "suspended";
@@ -258,6 +259,17 @@ export interface SessionState {
   preAuthToken: string | null;
 }
 
+export interface AccessClaims {
+  sub: string;
+  role: UserRole;
+  tenant_id: string | null;
+  kind: string;
+  challenge_id: string | null;
+  purpose: string | null;
+  exp: number;
+  iat: number;
+}
+
 export interface RefreshSessionInfo {
   id: string;
   user_id: string;
@@ -274,7 +286,11 @@ const sessionStorageKey = "anneal.session";
 let refreshPromise: Promise<SessionTokens> | null = null;
 
 function getBaseUrl() {
-  return (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
+  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+  return `${panelBasePath() || ""}/api/v1`;
 }
 
 function getSession(): SessionState {
@@ -293,8 +309,29 @@ function setSession(next: SessionState) {
   window.localStorage.setItem(sessionStorageKey, JSON.stringify(next));
 }
 
+function decodeAccessClaims(token: string | null): AccessClaims | null {
+  if (!token) {
+    return null;
+  }
+  const [, payload] = token.split(".");
+  if (!payload) {
+    return null;
+  }
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(window.atob(padded)) as AccessClaims;
+  } catch {
+    return null;
+  }
+}
+
 export function readSession() {
   return getSession();
+}
+
+export function readAccessClaims() {
+  return decodeAccessClaims(getSession().accessToken);
 }
 
 export function storeAuthenticatedSession(tokens: SessionTokens) {
@@ -395,6 +432,7 @@ async function refreshAccessToken() {
 
 export const api = {
   readSession,
+  readAccessClaims,
   clearSession,
   storeAuthenticatedSession,
   storePreAuthToken,
@@ -522,7 +560,6 @@ export const api = {
   },
   createSubscription(input: {
     tenant_id: string;
-    user_id: string;
     name: string;
     note?: string | null;
     traffic_limit_bytes: number;

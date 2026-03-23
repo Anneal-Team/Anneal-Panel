@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { api } from "@/lib/api";
+import { panelAssetUrl, panelBasePath } from "@/lib/panel-base";
 import { DashboardPage } from "@/routes/dashboard";
 import { DevicesPage } from "@/routes/devices";
 import { LoginPage } from "@/routes/login";
@@ -68,13 +69,15 @@ function Shell() {
     await navigate({ to: "/login" });
   }
 
+  const sidebarAssetUrl = panelAssetUrl("anneal-sidebar.svg");
+
   return (
     <div className="min-h-screen bg-[#f8f5f0] text-foreground">
       <div className="mx-auto flex min-h-screen w-full flex-col px-4 py-4 md:flex-row md:items-stretch md:gap-6 xl:px-8 xl:py-6">
         {!isLoginPage && !isPublicImportPage ? (
           <aside className="mb-4 flex flex-col rounded-[24px] bg-[#141813] text-[#aebda4] py-8 px-4 shadow-panel md:sticky md:top-6 md:mb-0 md:h-[calc(100vh-3rem)] md:w-72 md:shrink-0 md:overflow-y-auto">
             <div className="mb-8 flex items-center justify-center">
-              <img src="/anneal-sidebar.svg" alt="Anneal Logo" className="block h-[52px] w-auto object-contain" />
+              <img src={sidebarAssetUrl} alt="Anneal Logo" className="block h-[52px] w-auto object-contain" />
             </div>
 
             <nav className="flex-1 space-y-8">
@@ -208,7 +211,10 @@ const routeTree = rootRoute.addChildren([
   notificationsRoute,
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({
+  routeTree,
+  basepath: panelBasePath() || "/",
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
