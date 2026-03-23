@@ -18,9 +18,6 @@ services:
     build:
       context: .
       dockerfile: api.Dockerfile
-      args:
-        RELEASE_BASE_URL: ${ANNEAL_RELEASE_BASE_URL}
-        TARGET_TRIPLE: ${ANNEAL_TARGET_TRIPLE}
     env_file:
       - .env
     depends_on:
@@ -34,9 +31,6 @@ services:
     build:
       context: .
       dockerfile: worker.Dockerfile
-      args:
-        RELEASE_BASE_URL: ${ANNEAL_RELEASE_BASE_URL}
-        TARGET_TRIPLE: ${ANNEAL_TARGET_TRIPLE}
     env_file:
       - .env
     depends_on:
@@ -48,9 +42,6 @@ services:
     build:
       context: .
       dockerfile: web.Dockerfile
-      args:
-        RELEASE_BASE_URL: ${ANNEAL_RELEASE_BASE_URL}
-        TARGET_TRIPLE: ${ANNEAL_TARGET_TRIPLE}
     depends_on:
       api:
         condition: service_started

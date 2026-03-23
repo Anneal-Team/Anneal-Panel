@@ -13,6 +13,34 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+detect_self_source() {
+  if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    printf '%s' "${BASH_SOURCE[0]}"
+    return
+  fi
+  if [[ -n "${0:-}" && "${0}" != "bash" && "${0}" != "-bash" ]]; then
+    printf '%s' "${0}"
+    return
+  fi
+  printf '%s' "/dev/stdin"
+}
+
+detect_script_dir() {
+  local source_path="$1"
+  case "${source_path}" in
+    /dev/stdin|/dev/fd/*)
+      pwd
+      ;;
+    *)
+      cd -- "$(dirname -- "${source_path}")" && pwd
+      ;;
+  esac
+}
+
+normalize_release_version() {
+  printf '%s' "${1#v}"
+}
+
 text() {
   local ru="$1"
   local en="$2"
@@ -27,9 +55,14 @@ setup_locale() {
   if [[ "${LANG:-}" != *UTF-8* && "${LANG:-}" != *utf8* ]]; then
     export LANG=C.UTF-8
   fi
+  if [[ "${LC_CTYPE:-}" != *UTF-8* && "${LC_CTYPE:-}" != *utf8* ]]; then
+    export LC_CTYPE="${LANG}"
+  fi
   if [[ "${LC_ALL:-}" != *UTF-8* && "${LC_ALL:-}" != *utf8* ]]; then
     export LC_ALL="${LANG}"
   fi
+  export LANGUAGE="${LANGUAGE:-${ANNEAL_INSTALLER_LANG:-en}}"
+  export NCURSES_NO_UTF8_ACS="${NCURSES_NO_UTF8_ACS:-1}"
 }
 
 setup_palette() {
@@ -343,7 +376,8 @@ $(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
 $(text "Домен" "Domain"): ${ANNEAL_DOMAIN}
 panel_url: ${ANNEAL_PUBLIC_BASE_URL}
 $(text "Email суперадмина" "Superadmin email"): ${ANNEAL_SUPERADMIN_EMAIL}
-$(text "Версия канала" "Release channel"): ${ANNEAL_RELEASE_TAG}
+$(text "Релиз" "Release"): ${ANNEAL_RELEASE_TAG}
+$(text "Версия" "Version"): ${ANNEAL_VERSION}
 EOF
 }
 
@@ -354,7 +388,8 @@ $(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
 $(text "Control Plane URL" "Control Plane URL"): ${ANNEAL_AGENT_SERVER_URL}
 $(text "Имя ноды" "Node name"): ${ANNEAL_AGENT_NAME}
 $(text "Runtime-пакеты" "Runtime packages"): ${ANNEAL_AGENT_ENGINES}
-$(text "Версия канала" "Release channel"): ${ANNEAL_RELEASE_TAG}
+$(text "Релиз" "Release"): ${ANNEAL_RELEASE_TAG}
+$(text "Версия" "Version"): ${ANNEAL_VERSION}
 EOF
 }
 
@@ -451,6 +486,14 @@ control_utility_source_url() {
   printf 'https://raw.githubusercontent.com/%s/%s/scripts/install.sh' "${ANNEAL_GITHUB_REPOSITORY}" "${ANNEAL_RELEASE_TAG}"
 }
 
+release_bundle_asset() {
+  if [[ "${ANNEAL_RELEASE_TAG}" == "rolling" ]]; then
+    printf 'anneal-rolling-%s.tar.gz' "${ANNEAL_TARGET_TRIPLE}"
+    return
+  fi
+  printf 'anneal-%s-%s.tar.gz' "${ANNEAL_VERSION}" "${ANNEAL_TARGET_TRIPLE}"
+}
+
 download_release_asset() {
   local asset="$1"
   local destination="$2"
@@ -459,15 +502,75 @@ download_release_asset() {
     -o "${destination}"
 }
 
+resolve_bundle_root() {
+  local extracted_root="$1"
+  local candidate
+  if [[ -f "${extracted_root}/release-manifest.json" ]]; then
+    printf '%s' "${extracted_root}"
+    return
+  fi
+  shopt -s nullglob
+  local entries=("${extracted_root}"/*)
+  shopt -u nullglob
+  if [[ "${#entries[@]}" -eq 1 && -d "${entries[0]}" && -f "${entries[0]}/release-manifest.json" ]]; then
+    printf '%s' "${entries[0]}"
+    return
+  fi
+  for candidate in "${entries[@]}"; do
+    if [[ -d "${candidate}" && -f "${candidate}/release-manifest.json" ]]; then
+      printf '%s' "${candidate}"
+      return
+    fi
+  done
+  show_error "$(text "Не удалось определить корень release bundle." "Failed to resolve the release bundle root.")"
+  exit 1
+}
+
+load_release_bundle_metadata() {
+  local bundle_root="$1"
+  local version
+  version="$(
+    sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "${bundle_root}/release-manifest.json" |
+      head -n 1
+  )"
+  if [[ -z "${version}" ]]; then
+    show_error "$(text "Не удалось прочитать версию release bundle." "Failed to read the release bundle version.")"
+    exit 1
+  fi
+  ANNEAL_VERSION="${version}"
+}
+
 prepare_deploy_assets() {
-  if [[ -d "${SCRIPT_DIR}/../deploy" && -f "${SCRIPT_DIR}/../deploy/systemd/anneal-api.service" ]]; then
-    DEPLOY_ASSET_ROOT="${SCRIPT_DIR}/../deploy"
+  local bundle_archive
+  if [[ -n "${RELEASE_BUNDLE_ROOT:-}" && -d "${RELEASE_BUNDLE_ROOT}" ]]; then
+    DEPLOY_ASSET_ROOT="${RELEASE_BUNDLE_ROOT}/deploy"
     return
   fi
   DEPLOY_TEMP_DIR="$(mktemp -d)"
-  download_release_asset "deploy-bundle.tar.gz" "${DEPLOY_TEMP_DIR}/deploy-bundle.tar.gz"
-  tar -xzf "${DEPLOY_TEMP_DIR}/deploy-bundle.tar.gz" -C "${DEPLOY_TEMP_DIR}"
-  DEPLOY_ASSET_ROOT="${DEPLOY_TEMP_DIR}/deploy"
+  bundle_archive="${DEPLOY_TEMP_DIR}/release-bundle.tar.gz"
+  if [[ -f "${SCRIPT_DIR}/../dist/$(release_bundle_asset)" ]]; then
+    cp "${SCRIPT_DIR}/../dist/$(release_bundle_asset)" "${bundle_archive}"
+  else
+    download_release_asset "$(release_bundle_asset)" "${bundle_archive}"
+  fi
+  tar -xzf "${bundle_archive}" -C "${DEPLOY_TEMP_DIR}"
+  RELEASE_BUNDLE_ROOT="$(resolve_bundle_root "${DEPLOY_TEMP_DIR}")"
+  load_release_bundle_metadata "${RELEASE_BUNDLE_ROOT}"
+  DEPLOY_ASSET_ROOT="${RELEASE_BUNDLE_ROOT}/deploy"
+}
+
+sync_directory_contents() {
+  local source="$1"
+  local destination="$2"
+  install -d "${destination}"
+  rm -rf "${destination:?}"/*
+  cp -a "${source}"/. "${destination}/"
+}
+
+install_bundle_binary() {
+  local source_name="$1"
+  local target_name="${2:-$1}"
+  install -m 0755 "${RELEASE_BUNDLE_ROOT}/bin/${source_name}" "/opt/anneal/bin/${target_name}"
 }
 
 cleanup_temp_dir() {
@@ -493,9 +596,11 @@ EOF
 
 install_native_control_plane_packages() {
   export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y ca-certificates curl gnupg tar openssl jq whiptail iproute2
   setup_postgres_repository
   apt-get update
-  apt-get install -y curl tar unzip ca-certificates gnupg lsb-release openssl jq whiptail iproute2 postgresql-17 postgresql-client-17 postgresql-contrib-17 caddy
+  apt-get install -y postgresql-17 postgresql-client-17 postgresql-contrib-17 caddy
 }
 
 install_native_node_packages() {
@@ -554,37 +659,6 @@ ensure_user() {
   install -d -o "${ANNEAL_USER}" -g "${ANNEAL_GROUP}" /opt/anneal/bin /opt/anneal/web /opt/anneal/migrations /etc/anneal /var/lib/anneal
 }
 
-extract_archive() {
-  local archive="$1"
-  local destination="$2"
-  case "${archive}" in
-    *.zip) unzip -oq "${archive}" -d "${destination}" ;;
-    *.tar.gz) tar -xzf "${archive}" -C "${destination}" ;;
-    *)
-      show_error "$(text "Неподдерживаемый архив: ${archive}" "Unsupported archive: ${archive}")"
-      exit 1
-      ;;
-  esac
-}
-
-install_archive_contents() {
-  local archive="$1"
-  local destination="$2"
-  local temp_dir
-  temp_dir="$(mktemp -d)"
-  extract_archive "${archive}" "${temp_dir}"
-  shopt -s dotglob nullglob
-  local extracted=("${temp_dir}"/*)
-  rm -rf "${destination:?}"/*
-  if [[ "${#extracted[@]}" -eq 1 && -d "${extracted[0]}" ]]; then
-    cp -a "${extracted[0]}"/. "${destination}/"
-  else
-    cp -a "${temp_dir}"/. "${destination}/"
-  fi
-  shopt -u dotglob nullglob
-  rm -rf "${temp_dir}"
-}
-
 install_runtime_defaults() {
   install -d -o "${ANNEAL_USER}" -g "${ANNEAL_GROUP}" /var/lib/anneal/xray /var/lib/anneal/singbox /var/lib/anneal/tls
   cat >/var/lib/anneal/xray/config.json <<EOF
@@ -604,9 +678,8 @@ EOF
 }
 
 install_runtime_bundle_native() {
-  download_release_asset "runtime-bundle-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/runtime-bundle.tar.gz
-  install_archive_contents /tmp/runtime-bundle.tar.gz /opt/anneal/bin
-  chmod +x /opt/anneal/bin/xray /opt/anneal/bin/hiddify-core
+  install -m 0755 "${RELEASE_BUNDLE_ROOT}/runtime/xray" /opt/anneal/bin/xray
+  install -m 0755 "${RELEASE_BUNDLE_ROOT}/runtime/hiddify-core" /opt/anneal/bin/hiddify-core
 }
 
 docker_stack_root() {
@@ -624,6 +697,12 @@ sync_docker_stack_assets() {
   local stack_root="$1"
   mkdir -p "${stack_root}"
   cp -a "${DEPLOY_ASSET_ROOT}/docker/prebuilt"/. "${stack_root}/"
+  rm -rf "${stack_root}/bundle"
+  mkdir -p "${stack_root}/bundle"
+  cp -a "${RELEASE_BUNDLE_ROOT}/bin" "${stack_root}/bundle/"
+  cp -a "${RELEASE_BUNDLE_ROOT}/migrations" "${stack_root}/bundle/"
+  cp -a "${RELEASE_BUNDLE_ROOT}/runtime" "${stack_root}/bundle/"
+  cp -a "${RELEASE_BUNDLE_ROOT}/web" "${stack_root}/bundle/"
 }
 
 write_control_plane_docker_files() {
@@ -668,8 +747,6 @@ EOF
 write_control_plane_env_docker() {
   local stack_root="$1"
   cat >"${stack_root}/.env" <<EOF
-ANNEAL_RELEASE_BASE_URL=${ANNEAL_RELEASE_BASE_URL}
-ANNEAL_TARGET_TRIPLE=${ANNEAL_TARGET_TRIPLE}
 ANNEAL_DB_NAME=${ANNEAL_DB_NAME}
 ANNEAL_DB_USER=${ANNEAL_DB_USER}
 ANNEAL_DB_PASSWORD=${ANNEAL_DB_PASSWORD}
@@ -708,8 +785,6 @@ EOF
 write_node_env_docker() {
   local stack_root="$1"
   cat >"${stack_root}/.env" <<EOF
-ANNEAL_RELEASE_BASE_URL=${ANNEAL_RELEASE_BASE_URL}
-ANNEAL_TARGET_TRIPLE=${ANNEAL_TARGET_TRIPLE}
 ANNEAL_AGENT_SERVER_URL=${ANNEAL_AGENT_SERVER_URL}
 ANNEAL_AGENT_NAME=${ANNEAL_AGENT_NAME}
 ANNEAL_AGENT_VERSION=${ANNEAL_VERSION}
@@ -783,6 +858,7 @@ save_install_metadata() {
     ANNEAL_GITHUB_REPOSITORY "${ANNEAL_GITHUB_REPOSITORY}" \
     ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
     ANNEAL_RELEASE_BASE_URL "${ANNEAL_RELEASE_BASE_URL}" \
+    ANNEAL_VERSION "${ANNEAL_VERSION}" \
     ANNEAL_TARGET_TRIPLE "${ANNEAL_TARGET_TRIPLE}" \
     ANNEAL_DOMAIN "${ANNEAL_DOMAIN}" \
     ANNEAL_PUBLIC_BASE_URL "${ANNEAL_PUBLIC_BASE_URL}" \
@@ -800,14 +876,16 @@ save_admin_summary() {
       ANNEAL_SUPERADMIN_EMAIL "${ANNEAL_SUPERADMIN_EMAIL}" \
       ANNEAL_SUPERADMIN_PASSWORD "${ANNEAL_SUPERADMIN_PASSWORD}" \
       ANNEAL_DATABASE_URL "${ANNEAL_DATABASE_URL}" \
-      ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}"
+      ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
+      ANNEAL_VERSION "${ANNEAL_VERSION}"
     return
   fi
   write_kv_file "${SUMMARY_FILE}" \
     ANNEAL_AGENT_SERVER_URL "${ANNEAL_AGENT_SERVER_URL}" \
     ANNEAL_AGENT_NAME "${ANNEAL_AGENT_NAME}" \
     ANNEAL_AGENT_ENGINES "${ANNEAL_AGENT_ENGINES}" \
-    ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}"
+    ANNEAL_RELEASE_TAG "${ANNEAL_RELEASE_TAG}" \
+    ANNEAL_VERSION "${ANNEAL_VERSION}"
 }
 
 load_install_state() {
@@ -829,6 +907,10 @@ install_control_utility() {
   install -d /usr/local/bin
   if [[ -f "${SELF_SOURCE}" && "${SELF_SOURCE}" != /dev/stdin && "${SELF_SOURCE}" != /dev/fd/* ]]; then
     install -m 0755 "${SELF_SOURCE}" "${CONTROL_UTILITY_PATH}"
+    return
+  fi
+  if [[ -n "${RELEASE_BUNDLE_ROOT:-}" && -f "${RELEASE_BUNDLE_ROOT}/install.sh" ]]; then
+    install -m 0755 "${RELEASE_BUNDLE_ROOT}/install.sh" "${CONTROL_UTILITY_PATH}"
     return
   fi
   curl --retry 5 --retry-all-errors --location --silent --show-error \
@@ -857,6 +939,7 @@ admin_email: ${ANNEAL_SUPERADMIN_EMAIL}
 admin_password: ${ANNEAL_SUPERADMIN_PASSWORD}
 database_url: ${ANNEAL_DATABASE_URL}
 release_tag: ${ANNEAL_RELEASE_TAG}
+version: ${ANNEAL_VERSION}
 EOF
 }
 
@@ -868,6 +951,7 @@ control_plane_url: ${ANNEAL_AGENT_SERVER_URL}
 node_name: ${ANNEAL_AGENT_NAME}
 runtimes: ${ANNEAL_AGENT_ENGINES}
 release_tag: ${ANNEAL_RELEASE_TAG}
+version: ${ANNEAL_VERSION}
 EOF
 }
 
@@ -881,14 +965,10 @@ install_native_control_plane() {
   install_native_control_plane_packages
   ensure_user
   ensure_postgres
-  download_release_asset "api-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/api.tar.gz
-  download_release_asset "worker-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/worker.tar.gz
-  download_release_asset "web.tar.gz" /tmp/web.tar.gz
-  download_release_asset "migrations.tar.gz" /tmp/migrations.tar.gz
-  install_archive_contents /tmp/api.tar.gz /opt/anneal/bin
-  install_archive_contents /tmp/worker.tar.gz /opt/anneal/bin
-  install_archive_contents /tmp/web.tar.gz /opt/anneal/web
-  install_archive_contents /tmp/migrations.tar.gz /opt/anneal/migrations
+  install_bundle_binary api
+  install_bundle_binary worker
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/web" /opt/anneal/web
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/migrations" /opt/anneal/migrations
   write_control_plane_env_native
   render_native_caddyfile
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-api.service" /etc/systemd/system/anneal-api.service
@@ -906,8 +986,7 @@ install_native_node() {
   prepare_deploy_assets
   install_native_node_packages
   ensure_user
-  download_release_asset "node-agent-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/node-agent.tar.gz
-  install_archive_contents /tmp/node-agent.tar.gz /opt/anneal/bin
+  install_bundle_binary node-agent
   install_runtime_bundle_native
   install_runtime_defaults
   write_node_env_native
@@ -997,14 +1076,10 @@ restart_current_install() {
 
 update_native_control_plane() {
   prepare_deploy_assets
-  download_release_asset "api-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/api.tar.gz
-  download_release_asset "worker-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/worker.tar.gz
-  download_release_asset "web.tar.gz" /tmp/web.tar.gz
-  download_release_asset "migrations.tar.gz" /tmp/migrations.tar.gz
-  install_archive_contents /tmp/api.tar.gz /opt/anneal/bin
-  install_archive_contents /tmp/worker.tar.gz /opt/anneal/bin
-  install_archive_contents /tmp/web.tar.gz /opt/anneal/web
-  install_archive_contents /tmp/migrations.tar.gz /opt/anneal/migrations
+  install_bundle_binary api
+  install_bundle_binary worker
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/web" /opt/anneal/web
+  sync_directory_contents "${RELEASE_BUNDLE_ROOT}/migrations" /opt/anneal/migrations
   render_native_caddyfile
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-api.service" /etc/systemd/system/anneal-api.service
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-worker.service" /etc/systemd/system/anneal-worker.service
@@ -1015,8 +1090,7 @@ update_native_control_plane() {
 
 update_native_node() {
   prepare_deploy_assets
-  download_release_asset "node-agent-${ANNEAL_TARGET_TRIPLE}.tar.gz" /tmp/node-agent.tar.gz
-  install_archive_contents /tmp/node-agent.tar.gz /opt/anneal/bin
+  install_bundle_binary node-agent
   install_runtime_bundle_native
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-node-agent.service" /etc/systemd/system/anneal-node-agent.service
   install -m 0644 "${DEPLOY_ASSET_ROOT}/systemd/anneal-xray.service" /etc/systemd/system/anneal-xray.service
@@ -1196,9 +1270,16 @@ ANNEAL_INSTALLER_LANG="${ANNEAL_INSTALLER_LANG:-}"
 ANNEAL_INSTALLER_UI="${ANNEAL_INSTALLER_UI:-auto}"
 ANNEAL_GITHUB_REPOSITORY="${ANNEAL_GITHUB_REPOSITORY:-Anneal-Team/Anneal-Panel}"
 ANNEAL_RELEASE_TAG="${ANNEAL_RELEASE_TAG:-rolling}"
-ANNEAL_RELEASE_BASE_URL="${ANNEAL_RELEASE_BASE_URL:-https://github.com/${ANNEAL_GITHUB_REPOSITORY}/releases/download/${ANNEAL_RELEASE_TAG}}"
 ANNEAL_TARGET_TRIPLE="${ANNEAL_TARGET_TRIPLE:-linux-amd64}"
-ANNEAL_VERSION="${ANNEAL_VERSION:-0.1.0}"
+ANNEAL_VERSION="${ANNEAL_VERSION:-}"
+if [[ -z "${ANNEAL_VERSION}" ]]; then
+  if [[ "${ANNEAL_RELEASE_TAG}" == "rolling" ]]; then
+    ANNEAL_VERSION="0.1.0"
+  else
+    ANNEAL_VERSION="$(normalize_release_version "${ANNEAL_RELEASE_TAG}")"
+  fi
+fi
+ANNEAL_RELEASE_BASE_URL="${ANNEAL_RELEASE_BASE_URL:-https://github.com/${ANNEAL_GITHUB_REPOSITORY}/releases/download/${ANNEAL_RELEASE_TAG}}"
 ANNEAL_USER="${ANNEAL_USER:-anneal}"
 ANNEAL_GROUP="${ANNEAL_GROUP:-anneal}"
 ANNEAL_DOMAIN="${ANNEAL_DOMAIN:-}"
@@ -1223,8 +1304,8 @@ ANNEAL_AGENT_PROTOCOLS_SINGBOX="${ANNEAL_AGENT_PROTOCOLS_SINGBOX:-}"
 ANNEAL_AGENT_XRAY_TOKEN="${ANNEAL_AGENT_XRAY_TOKEN:-}"
 ANNEAL_AGENT_SINGBOX_TOKEN="${ANNEAL_AGENT_SINGBOX_TOKEN:-}"
 ANNEAL_AGENT_ENROLLMENT_TOKENS="${ANNEAL_AGENT_ENROLLMENT_TOKENS:-}"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SELF_SOURCE="${BASH_SOURCE[0]}"
+SELF_SOURCE="$(detect_self_source)"
+SCRIPT_DIR="$(detect_script_dir "${SELF_SOURCE}")"
 ENV_FILE="/etc/anneal/anneal.env"
 META_FILE="/etc/anneal/install.meta"
 SUMMARY_FILE="/etc/anneal/admin-summary.env"
@@ -1232,6 +1313,7 @@ CONTROL_UTILITY_PATH="/usr/local/bin/annealctl"
 PROFILE_HOOK_PATH="/etc/profile.d/anneal-menu.sh"
 DEPLOY_ASSET_ROOT=""
 DEPLOY_TEMP_DIR=""
+RELEASE_BUNDLE_ROOT=""
 
 trap cleanup_temp_dir EXIT
 

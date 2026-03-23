@@ -4,6 +4,10 @@ on:
   pull_request:
     branches:
       - master
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.svg'
+      - LICENSE
   workflow_dispatch:
 
 jobs:
@@ -20,6 +24,8 @@ jobs:
           find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
             bash -n "$file"
           done
+      - name: Smoke test installer entrypoints
+        run: bash scripts/installer-smoke.sh
       - name: Run ShellCheck
         run: |
           find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
@@ -76,6 +82,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Package release assets
         run: bash scripts/package-release.sh
+      - name: Verify release bundle
+        run: bash scripts/verify-bundle.sh dist/*.tar.gz
       - name: Upload packaged assets
         uses: actions/upload-artifact@v4
         with:
