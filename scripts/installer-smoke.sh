@@ -16,10 +16,10 @@ run_file_install_smoke() {
 run_stdin_install_smoke() {
   local output
   output="$(
-    cat "${INSTALLER_PATH}" | env \
+    env \
       ANNEAL_INSTALLER_LANG=en \
       ANNEAL_INSTALLER_UI=plain \
-      bash -s -- --action status 2>&1 || true
+      bash -s -- --action status < "${INSTALLER_PATH}" 2>&1 || true
   )"
   echo "${output}" | grep -q "Run the installer as root."
 }

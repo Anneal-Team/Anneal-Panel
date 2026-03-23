@@ -42,6 +42,66 @@ normalize_release_version() {
   printf '%s' "${1#v}"
 }
 
+github_api_get() {
+  local url="$1"
+  curl \
+    --retry 5 \
+    --retry-all-errors \
+    --location \
+    --silent \
+    --show-error \
+    --user-agent "Anneal-Installer/1.0" \
+    -H "Accept: application/vnd.github+json" \
+    "${url}"
+}
+
+resolve_latest_release_tag() {
+  local response
+  local release_tag
+  response="$(github_api_get "https://api.github.com/repos/${ANNEAL_GITHUB_REPOSITORY}/releases/latest")" || {
+    show_error "$(text "Не удалось получить latest release из GitHub. Сначала опубликуй semver release." "Failed to resolve the latest GitHub release. Publish a semver release first.")"
+    exit 1
+  }
+  release_tag="$(
+    printf '%s\n' "${response}" |
+      sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
+      head -n 1
+  )"
+  if [[ -z "${release_tag}" ]]; then
+    show_error "$(text "GitHub не вернул tag_name для latest release." "GitHub did not return tag_name for the latest release.")"
+    exit 1
+  fi
+  printf '%s' "${release_tag}"
+}
+
+ensure_release_metadata() {
+  if [[ -z "${ANNEAL_RELEASE_TAG}" ]]; then
+    ANNEAL_RELEASE_TAG="$(resolve_latest_release_tag)"
+  fi
+  if [[ -z "${ANNEAL_VERSION}" ]]; then
+    ANNEAL_VERSION="$(normalize_release_version "${ANNEAL_RELEASE_TAG}")"
+  fi
+  if [[ -z "${ANNEAL_RELEASE_BASE_URL}" ]]; then
+    ANNEAL_RELEASE_BASE_URL="https://github.com/${ANNEAL_GITHUB_REPOSITORY}/releases/download/${ANNEAL_RELEASE_TAG}"
+  fi
+}
+
+use_requested_release_metadata() {
+  ANNEAL_RELEASE_TAG="${REQUESTED_RELEASE_TAG}"
+  ANNEAL_VERSION="${REQUESTED_RELEASE_VERSION}"
+  ANNEAL_RELEASE_BASE_URL="${REQUESTED_RELEASE_BASE_URL}"
+}
+
+reset_release_metadata_to_latest() {
+  if [[ -n "${REQUESTED_RELEASE_TAG}" || -n "${REQUESTED_RELEASE_VERSION}" || -n "${REQUESTED_RELEASE_BASE_URL}" ]]; then
+    use_requested_release_metadata
+    return
+  fi
+  ANNEAL_RELEASE_TAG=""
+  ANNEAL_VERSION=""
+  ANNEAL_RELEASE_BASE_URL=""
+}
+
 text() {
   local ru="$1"
   local en="$2"
@@ -393,6 +453,7 @@ validate_node_bootstrap() {
 }
 
 control_plane_summary() {
+  ensure_release_metadata
   cat <<EOF
 $(text "Роль" "Role"): control-plane
 $(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
@@ -405,6 +466,7 @@ EOF
 }
 
 node_summary() {
+  ensure_release_metadata
   cat <<EOF
 $(text "Роль" "Role"): node-server
 $(text "Режим" "Mode"): ${DEPLOYMENT_MODE}
@@ -498,14 +560,11 @@ configure_installation() {
 }
 
 control_utility_source_url() {
+  ensure_release_metadata
   printf 'https://raw.githubusercontent.com/%s/%s/scripts/install.sh' "${ANNEAL_GITHUB_REPOSITORY}" "${ANNEAL_RELEASE_TAG}"
 }
 
 release_bundle_asset() {
-  if [[ "${ANNEAL_RELEASE_TAG}" == "rolling" ]]; then
-    printf 'anneal-rolling-%s.tar.gz' "${ANNEAL_TARGET_TRIPLE}"
-    return
-  fi
   printf 'anneal-%s-%s.tar.gz' "${ANNEAL_VERSION}" "${ANNEAL_TARGET_TRIPLE}"
 }
 
@@ -515,6 +574,11 @@ download_release_asset() {
   curl --retry 5 --retry-all-errors --location --silent --show-error \
     "${ANNEAL_RELEASE_BASE_URL}/${asset}" \
     -o "${destination}"
+}
+
+validate_tar_gz() {
+  local archive="$1"
+  tar -tzf "${archive}" >/dev/null 2>&1
 }
 
 resolve_bundle_root() {
@@ -556,17 +620,27 @@ load_release_bundle_metadata() {
 }
 
 prepare_deploy_assets() {
+  local bundle_asset
   local bundle_archive
+  ensure_release_metadata
   if [[ -n "${RELEASE_BUNDLE_ROOT:-}" && -d "${RELEASE_BUNDLE_ROOT}" ]]; then
     DEPLOY_ASSET_ROOT="${RELEASE_BUNDLE_ROOT}/deploy"
     return
   fi
   DEPLOY_TEMP_DIR="$(mktemp -d)"
   bundle_archive="${DEPLOY_TEMP_DIR}/release-bundle.tar.gz"
-  if [[ -f "${SCRIPT_DIR}/../dist/$(release_bundle_asset)" ]]; then
-    cp "${SCRIPT_DIR}/../dist/$(release_bundle_asset)" "${bundle_archive}"
+  bundle_asset="$(release_bundle_asset)"
+  if [[ -f "${SCRIPT_DIR}/../dist/${bundle_asset}" ]]; then
+    cp "${SCRIPT_DIR}/../dist/${bundle_asset}" "${bundle_archive}"
   else
-    download_release_asset "$(release_bundle_asset)" "${bundle_archive}"
+    download_release_asset "${bundle_asset}" "${bundle_archive}" || {
+      show_error "$(text "Не удалось скачать release bundle ${bundle_asset} для тега ${ANNEAL_RELEASE_TAG}." "Failed to download release bundle ${bundle_asset} for tag ${ANNEAL_RELEASE_TAG}.")"
+      exit 1
+    }
+  fi
+  if ! validate_tar_gz "${bundle_archive}"; then
+    show_error "$(text "Релиз ${ANNEAL_RELEASE_TAG} не содержит bundle ${bundle_asset}. Опубликуй semver release и попробуй снова." "Release ${ANNEAL_RELEASE_TAG} does not contain bundle ${bundle_asset}. Publish the semver release and try again.")"
+    exit 1
   fi
   tar -xzf "${bundle_archive}" -C "${DEPLOY_TEMP_DIR}"
   RELEASE_BUNDLE_ROOT="$(resolve_bundle_root "${DEPLOY_TEMP_DIR}")"
@@ -1134,6 +1208,7 @@ update_docker_current() {
 }
 
 update_current_install() {
+  reset_release_metadata_to_latest
   if [[ "${DEPLOYMENT_MODE}" == "native" ]]; then
     if [[ "${ROLE}" == "control-plane" ]]; then
       update_native_control_plane
@@ -1291,17 +1366,13 @@ LOGIN_SHELL=0
 ANNEAL_INSTALLER_LANG="${ANNEAL_INSTALLER_LANG:-}"
 ANNEAL_INSTALLER_UI="${ANNEAL_INSTALLER_UI:-auto}"
 ANNEAL_GITHUB_REPOSITORY="${ANNEAL_GITHUB_REPOSITORY:-Anneal-Team/Anneal-Panel}"
-ANNEAL_RELEASE_TAG="${ANNEAL_RELEASE_TAG:-rolling}"
+REQUESTED_RELEASE_TAG="${ANNEAL_RELEASE_TAG:-}"
+REQUESTED_RELEASE_VERSION="${ANNEAL_VERSION:-}"
+REQUESTED_RELEASE_BASE_URL="${ANNEAL_RELEASE_BASE_URL:-}"
+ANNEAL_RELEASE_TAG="${REQUESTED_RELEASE_TAG}"
 ANNEAL_TARGET_TRIPLE="${ANNEAL_TARGET_TRIPLE:-linux-amd64}"
-ANNEAL_VERSION="${ANNEAL_VERSION:-}"
-if [[ -z "${ANNEAL_VERSION}" ]]; then
-  if [[ "${ANNEAL_RELEASE_TAG}" == "rolling" ]]; then
-    ANNEAL_VERSION="0.1.0"
-  else
-    ANNEAL_VERSION="$(normalize_release_version "${ANNEAL_RELEASE_TAG}")"
-  fi
-fi
-ANNEAL_RELEASE_BASE_URL="${ANNEAL_RELEASE_BASE_URL:-https://github.com/${ANNEAL_GITHUB_REPOSITORY}/releases/download/${ANNEAL_RELEASE_TAG}}"
+ANNEAL_VERSION="${REQUESTED_RELEASE_VERSION}"
+ANNEAL_RELEASE_BASE_URL="${REQUESTED_RELEASE_BASE_URL}"
 ANNEAL_USER="${ANNEAL_USER:-anneal}"
 ANNEAL_GROUP="${ANNEAL_GROUP:-anneal}"
 ANNEAL_DOMAIN="${ANNEAL_DOMAIN:-}"
