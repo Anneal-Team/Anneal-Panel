@@ -358,40 +358,7 @@ impl Installer {
             InstallStep::StarterSubscription,
             "ensuring starter subscription",
         )?;
-        let control_plane = self
-            .config
-            .control_plane
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing control-plane config"))?;
-        let starter = control_plane
-            .starter_subscription
-            .clone()
-            .ok_or_else(|| anyhow!("missing starter subscription config"))?;
-        let api = ApiClient::local()?;
-        let access_token = api
-            .login_superadmin(
-                &control_plane.superadmin.email,
-                &control_plane.superadmin.password,
-                &mut self.state,
-            )
-            .await?;
-        let tenant_id = self.ensure_all_in_one_tenant(&api, &access_token).await?;
-        let subscriptions = api.list_subscriptions(&access_token).await?;
-        let tenant_subscriptions = subscriptions
-            .into_iter()
-            .filter(|subscription| subscription.tenant_id == tenant_id)
-            .collect::<Vec<_>>();
-        if let Some(subscription) = tenant_subscriptions.first() {
-            api.touch_subscription(&access_token, subscription).await?;
-            self.state.bootstrap.starter_subscription_name = Some(subscription.name.clone());
-            self.state.bootstrap.starter_subscription_url = subscription.delivery_url.clone();
-        } else {
-            let delivery_url = api
-                .create_subscription(&access_token, tenant_id, &starter)
-                .await?;
-            self.state.bootstrap.starter_subscription_name = Some(starter.name.clone());
-            self.state.bootstrap.starter_subscription_url = Some(delivery_url);
-        }
+        self.sync_starter_subscription().await?;
         self.complete_step(
             InstallStep::StarterSubscription,
             "starter subscription ensured",
@@ -485,6 +452,7 @@ impl Installer {
                     Duration::from_secs(120),
                     Some("anneal-node-agent.service"),
                 )?;
+                self.sync_starter_subscription().await?;
                 let engines = node_engine_names(&node);
                 self.system.wait_for_runtime_rollout(
                     &self.layout.data_root,
@@ -504,6 +472,7 @@ impl Installer {
                     Duration::from_secs(120),
                     None,
                 )?;
+                self.sync_starter_subscription().await?;
                 let engines = node_engine_names(&node);
                 self.system.wait_for_runtime_rollout(
                     &stack_root.join("data"),
@@ -546,6 +515,44 @@ impl Installer {
         self.state.bootstrap.tenant_id = Some(tenant_id);
         self.persist()?;
         Ok(tenant_id)
+    }
+
+    async fn sync_starter_subscription(&mut self) -> Result<()> {
+        let control_plane = self
+            .config
+            .control_plane
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing control-plane config"))?;
+        let starter = control_plane
+            .starter_subscription
+            .clone()
+            .ok_or_else(|| anyhow!("missing starter subscription config"))?;
+        let api = ApiClient::local()?;
+        let access_token = api
+            .login_superadmin(
+                &control_plane.superadmin.email,
+                &control_plane.superadmin.password,
+                &mut self.state,
+            )
+            .await?;
+        let tenant_id = self.ensure_all_in_one_tenant(&api, &access_token).await?;
+        let subscriptions = api.list_subscriptions(&access_token).await?;
+        let tenant_subscriptions = subscriptions
+            .into_iter()
+            .filter(|subscription| subscription.tenant_id == tenant_id)
+            .collect::<Vec<_>>();
+        if let Some(subscription) = tenant_subscriptions.first() {
+            api.touch_subscription(&access_token, subscription).await?;
+            self.state.bootstrap.starter_subscription_name = Some(subscription.name.clone());
+            self.state.bootstrap.starter_subscription_url = subscription.delivery_url.clone();
+        } else {
+            let delivery_url = api
+                .create_subscription(&access_token, tenant_id, &starter)
+                .await?;
+            self.state.bootstrap.starter_subscription_name = Some(starter.name.clone());
+            self.state.bootstrap.starter_subscription_url = Some(delivery_url);
+        }
+        Ok(())
     }
 
     async fn bootstrap_standalone_node(&mut self, node: NodeConfig) -> Result<()> {

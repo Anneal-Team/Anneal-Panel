@@ -12,6 +12,7 @@ anneal-core.workspace = true
 anneal-nodes.workspace = true
 anneal-rbac.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
 rand.workspace = true
 serde.workspace = true

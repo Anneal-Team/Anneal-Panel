@@ -151,6 +151,12 @@ async fn main() -> anyhow::Result<()> {
             let rollouts = pull_rollouts(&client, &args.server_url, &managed.identity).await?;
             for rollout in rollouts {
                 let result = apply_rollout(&runtime, &rollout).await;
+                if let Err(error) = &result {
+                    eprintln!(
+                        "failed applying rollout {} for {:?}: {error:#}",
+                        rollout.id, managed.engine
+                    );
+                }
                 ack_rollout(
                     &client,
                     &args.server_url,

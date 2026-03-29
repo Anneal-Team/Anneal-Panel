@@ -11,6 +11,7 @@ use anneal_core::{Actor, ApplicationError, ApplicationResult, QuotaState, TokenH
 use anneal_nodes::{DeliveryNodeEndpoint, NodeEndpointCatalog};
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose};
 use chrono::Utc;
 use rand::{Rng, distr::Alphanumeric};
 use uuid::Uuid;
@@ -249,7 +250,7 @@ where
             device_id: device.id,
             name: command.name,
             note: command.note,
-            access_key: generate_token(),
+            access_key: generate_access_key(),
             traffic_limit_bytes: command.traffic_limit_bytes,
             used_bytes: 0,
             quota_state: QuotaState::Normal,
@@ -773,6 +774,10 @@ pub fn generate_token() -> String {
         .collect()
 }
 
+pub fn generate_access_key() -> String {
+    general_purpose::STANDARD.encode(rand::random::<[u8; 16]>())
+}
+
 fn parse_link_token(link_token: &str) -> ApplicationResult<Uuid> {
     Uuid::parse_str(link_token)
         .map_err(|_| ApplicationError::NotFound("subscription not found".into()))
@@ -899,15 +904,26 @@ mod tests {
     use anneal_core::{Actor, ApplicationError, ProtocolKind, UserRole};
     use anneal_nodes::{InMemoryNodeRepository, NodeEndpointDraft, NodeService};
     use anneal_rbac::RbacService;
+    use base64::{Engine as _, engine::general_purpose};
     use chrono::{Duration, Utc};
     use uuid::Uuid;
 
     use crate::{
         application::{
             InMemorySubscriptionRepository, SubscriptionService, UnifiedSubscriptionService,
+            generate_access_key,
         },
         domain::CreateSubscriptionCommand,
     };
+
+    #[test]
+    fn generated_access_key_is_valid_ss2022_psk() {
+        let access_key = generate_access_key();
+        let decoded = general_purpose::STANDARD
+            .decode(access_key.as_bytes())
+            .expect("base64");
+        assert_eq!(decoded.len(), 16);
+    }
 
     #[tokio::test]
     async fn rotating_subscription_token_revokes_previous_link() {
