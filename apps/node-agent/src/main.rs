@@ -3,6 +3,7 @@ mod runtime;
 
 use std::{
     collections::HashMap,
+    net::IpAddr,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -21,7 +22,8 @@ use crate::{
         build_client, heartbeat, pull_rollouts,
     },
     runtime::{
-        RuntimeSettings, apply_rollout, parse_engine, parse_protocols, parse_runtime_controller,
+        RuntimeSettings, apply_rollout, ensure_runtime_running, parse_engine, parse_protocols,
+        parse_runtime_controller,
     },
 };
 
@@ -100,6 +102,7 @@ struct AgentArgs {
 #[derive(Debug, Clone)]
 struct ManagedRuntime {
     identity: RuntimeIdentity,
+    engine: anneal_core::ProxyEngine,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -141,6 +144,9 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         for managed in &runtimes {
+            if let Err(error) = ensure_runtime_running(&runtime, managed.engine).await {
+                eprintln!("failed ensuring runtime {:?}: {error:#}", managed.engine);
+            }
             heartbeat(&client, &args.server_url, &managed.identity, &args.version).await?;
             let rollouts = pull_rollouts(&client, &args.server_url, &managed.identity).await?;
             for rollout in rollouts {
@@ -189,6 +195,7 @@ async fn register_runtimes(
                     node_id: identity.node_id,
                     node_token: identity.node_token,
                 },
+                engine: *engine,
             });
         } else {
             let name = if configured_engines.len() == 1 {
@@ -231,6 +238,7 @@ async fn register_runtimes(
                     node_id: stored.node_id,
                     node_token: stored.node_token,
                 },
+                engine: grant.engine,
             });
         }
     }
@@ -300,10 +308,24 @@ fn engine_key(engine: anneal_core::ProxyEngine) -> &'static str {
 
 fn validate_server_url(server_url: &str) -> anyhow::Result<()> {
     let url = Url::parse(server_url)?;
-    if url.scheme() != "https" {
-        return Err(anyhow!("ANNEAL_AGENT_SERVER_URL must use https"));
+    if url.scheme() == "https" {
+        return Ok(());
     }
-    Ok(())
+    if url.scheme() == "http" && is_loopback_host(&url) {
+        return Ok(());
+    }
+    Err(anyhow!("ANNEAL_AGENT_SERVER_URL must use https"))
+}
+
+fn is_loopback_host(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let normalized = host.trim_matches(['[', ']']);
+    normalized.eq_ignore_ascii_case("localhost")
+        || normalized
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn classify_rollout_error(error: &anyhow::Error) -> &'static str {
@@ -331,6 +353,13 @@ mod tests {
     fn rejects_non_https_control_plane_url() {
         let error = validate_server_url("http://panel.example.com").expect_err("must fail");
         assert!(error.to_string().contains("https"));
+    }
+
+    #[test]
+    fn accepts_loopback_http_control_plane_url() {
+        validate_server_url("http://127.0.0.1:8080").expect("loopback http must pass");
+        validate_server_url("http://localhost:8080").expect("localhost http must pass");
+        validate_server_url("http://[::1]:8080").expect("ipv6 loopback http must pass");
     }
 
     #[test]

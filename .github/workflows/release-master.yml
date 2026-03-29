@@ -4,13 +4,13 @@ on:
   push:
     branches:
       - master
-    paths:
-      - Cargo.toml
-      - web/package.json
-      - web/package-lock.json
     tags:
       - 'v*.*.*'
       - '*.*.*'
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.svg'
+      - LICENSE
   workflow_dispatch:
 
 permissions:
@@ -36,22 +36,8 @@ jobs:
       - name: Resolve release metadata
         id: meta
         shell: bash
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-
-          resolve_workspace_version() {
-            awk '
-              $0 == "[workspace.package]" { in_section = 1; next }
-              /^\[/ { in_section = 0 }
-              in_section && $1 == "version" {
-                gsub(/"/, "", $3)
-                print $3
-                exit
-              }
-            ' "$1"
-          }
 
           version="$(awk '
             $0 == "[workspace.package]" { in_section = 1; next }
@@ -68,7 +54,9 @@ jobs:
           }
 
           should_release=false
-          release_tag="v${version}"
+          bundle_label=""
+          release_name=""
+          release_tag=""
           commit_ref=""
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
@@ -78,31 +66,18 @@ jobs:
               exit 1
             }
             should_release=true
+            bundle_label="${version}"
+            release_name="Anneal ${version}"
             release_tag="${GITHUB_REF_NAME}"
-          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            [[ "${GITHUB_REF_NAME}" == "master" ]] || {
-              echo "workflow_dispatch must target master or a semver tag" >&2
-              exit 1
-            }
-            should_release=true
-            commit_ref="${GITHUB_SHA}"
           elif [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" == "master" ]]; then
-            previous_version=""
-            if [[ -n "${BEFORE_SHA}" && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
-              previous_toml="$(mktemp)"
-              if git show "${BEFORE_SHA}:Cargo.toml" > "${previous_toml}" 2>/dev/null; then
-                previous_version="$(resolve_workspace_version "${previous_toml}")"
-              fi
-              rm -f "${previous_toml}"
-            fi
-
-            if [[ "${previous_version}" != "${version}" ]]; then
-              should_release=true
-              commit_ref="${GITHUB_SHA}"
-            fi
+            should_release=true
+            bundle_label="rolling-master"
+            release_name="Anneal master"
+            release_tag="rolling-master"
+            commit_ref="${GITHUB_SHA}"
           fi
 
-          if [[ "${should_release}" == "true" ]]; then
+          if [[ "${should_release}" == "true" && "${release_tag}" != "rolling-master" ]]; then
             existing_tag_commit="$(git ls-remote --tags origin "refs/tags/${release_tag}^{}" | awk 'NR==1 { print $1 }')"
             if [[ -z "${existing_tag_commit}" ]]; then
               existing_tag_commit="$(git ls-remote --tags origin "refs/tags/${release_tag}" | awk 'NR==1 { print $1 }')"
@@ -115,8 +90,8 @@ jobs:
 
           {
             echo "should_release=${should_release}"
-            echo "bundle_label=${version}"
-            echo "release_name=Anneal ${version}"
+            echo "bundle_label=${bundle_label}"
+            echo "release_name=${release_name}"
             echo "release_tag=${release_tag}"
             echo "commit_ref=${commit_ref}"
             echo "is_prerelease=false"
@@ -130,7 +105,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -142,6 +123,11 @@ jobs:
         run: bash scripts/package-release.sh
       - name: Verify release bundle
         run: bash scripts/verify-bundle.sh dist/*.tar.gz
+      - name: Update rolling release tag
+        if: needs.prepare.outputs.release_tag == 'rolling-master'
+        run: |
+          git tag -f rolling-master "${GITHUB_SHA}"
+          git push origin refs/tags/rolling-master --force
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:

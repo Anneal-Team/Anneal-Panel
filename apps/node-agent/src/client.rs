@@ -7,6 +7,11 @@ use uuid::Uuid;
 use anneal_core::{ProtocolKind, ProxyEngine};
 use anneal_nodes::DeploymentRollout;
 
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    message: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct BootstrapAgentRequest {
     pub bootstrap_token: String,
@@ -146,14 +151,41 @@ async fn ensure_success(response: reqwest::Response) -> anyhow::Result<reqwest::
     if status.is_success() {
         return Ok(response);
     }
-    Err(anyhow!("request failed with {status}"))
+    let url = response.url().clone();
+    let body = response.text().await.unwrap_or_else(|_| String::new());
+    Err(anyhow!(
+        "{}",
+        http_error_message(status, url.as_str(), body.trim())
+    ))
+}
+
+fn http_error_message(status: reqwest::StatusCode, url: &str, body: &str) -> String {
+    let detail = extract_error_detail(body);
+    if detail.is_empty() {
+        return format!("request failed with {status} for {url}");
+    }
+    format!("request failed with {status} for {url}: {detail}")
+}
+
+fn extract_error_detail(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    serde_json::from_str::<ErrorResponse>(trimmed)
+        .ok()
+        .and_then(|payload| payload.message)
+        .map(|message| message.trim().to_owned())
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| trimmed.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_client, ensure_success};
+    use super::{build_client, ensure_success, extract_error_detail, http_error_message};
     use anneal_core::{ProtocolKind, ProxyEngine};
     use reqwest::Client;
+    use reqwest::StatusCode;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -176,9 +208,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_success_does_not_leak_response_body() {
+    async fn ensure_success_includes_safe_error_detail() {
         let (server_url, handle) = spawn_http_server(
-            "HTTP/1.1 400 Bad Request\r\nContent-Length: 14\r\nConnection: close\r\n\r\nsupersecret123",
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 35\r\nConnection: close\r\n\r\n{\"message\":\"internal server error\"}",
         )
         .await
         .expect("server");
@@ -192,7 +224,9 @@ mod tests {
         let error = ensure_success(response)
             .await
             .expect_err("expected failure");
-        assert!(!error.to_string().contains("supersecret123"));
+        assert!(error.to_string().contains("500 Internal Server Error"));
+        assert!(error.to_string().contains("internal server error"));
+        assert!(error.to_string().contains("/api/v1/agent/bootstrap"));
 
         handle.await.expect("server task").expect("server ok");
     }
@@ -223,5 +257,24 @@ mod tests {
 
         assert!(error.to_string().contains("302"));
         handle.await.expect("server task").expect("server ok");
+    }
+
+    #[test]
+    fn http_error_message_prefers_json_message() {
+        let message = http_error_message(
+            StatusCode::BAD_REQUEST,
+            "https://panel.example.com/api/v1/agent/bootstrap",
+            r#"{"message":"bootstrap session expired"}"#,
+        );
+
+        assert_eq!(
+            message,
+            "request failed with 400 Bad Request for https://panel.example.com/api/v1/agent/bootstrap: bootstrap session expired"
+        );
+    }
+
+    #[test]
+    fn extract_error_detail_falls_back_to_raw_body() {
+        assert_eq!(extract_error_detail("plain text body"), "plain text body");
     }
 }

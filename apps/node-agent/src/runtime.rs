@@ -87,6 +87,20 @@ pub async fn apply_rollout(
     Ok(())
 }
 
+pub async fn ensure_runtime_running(
+    settings: &RuntimeSettings,
+    engine: ProxyEngine,
+) -> anyhow::Result<()> {
+    if settings.skip_restart || !runtime_config_exists(settings, engine).await? {
+        return Ok(());
+    }
+    let service = runtime_service(settings, engine);
+    if is_service_active(settings, service).await? {
+        return Ok(());
+    }
+    start_runtime(settings, engine).await
+}
+
 pub fn parse_engine(value: &str) -> anyhow::Result<ProxyEngine> {
     match value {
         "xray" => Ok(ProxyEngine::Xray),
@@ -232,8 +246,42 @@ async fn restart_runtime(settings: &RuntimeSettings, engine: ProxyEngine) -> any
             .output()
             .await
             .with_context(|| format!("failed to start systemctl for {service}"))?,
+        RuntimeController::Supervisorctl => {
+            let output = Command::new(&settings.systemctl_binary)
+                .arg("restart")
+                .arg(service)
+                .output()
+                .await
+                .with_context(|| format!("failed to start supervisorctl for {service}"))?;
+            if output.status.success() {
+                return Ok(());
+            }
+            return start_runtime(settings, engine)
+                .await
+                .with_context(|| format!("failed restarting {service}"));
+        }
+    };
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "failed restarting {}: {}",
+        service,
+        String::from_utf8_lossy(&output.stderr).trim()
+    ))
+}
+
+async fn start_runtime(settings: &RuntimeSettings, engine: ProxyEngine) -> anyhow::Result<()> {
+    let service = runtime_service(settings, engine);
+    let output = match settings.runtime_controller {
+        RuntimeController::Systemctl => Command::new(&settings.systemctl_binary)
+            .arg("start")
+            .arg(service)
+            .output()
+            .await
+            .with_context(|| format!("failed to start systemctl for {service}"))?,
         RuntimeController::Supervisorctl => Command::new(&settings.systemctl_binary)
-            .arg("restart")
+            .arg("start")
             .arg(service)
             .output()
             .await
@@ -243,7 +291,7 @@ async fn restart_runtime(settings: &RuntimeSettings, engine: ProxyEngine) -> any
         return Ok(());
     }
     Err(anyhow!(
-        "failed restarting {}: {}",
+        "failed starting {}: {}",
         service,
         String::from_utf8_lossy(&output.stderr).trim()
     ))
@@ -360,10 +408,28 @@ async fn check_udp_target(host: &str, port: u16) -> bool {
     UdpSocket::bind((host, port)).await.is_err()
 }
 
+async fn runtime_config_exists(
+    settings: &RuntimeSettings,
+    engine: ProxyEngine,
+) -> anyhow::Result<bool> {
+    match fs::metadata(runtime_config_path(settings, engine)).await {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn runtime_binary(settings: &RuntimeSettings, engine: ProxyEngine) -> &Path {
     match engine {
         ProxyEngine::Xray => &settings.xray_binary,
         ProxyEngine::Singbox => &settings.singbox_binary,
+    }
+}
+
+fn runtime_config_path(settings: &RuntimeSettings, engine: ProxyEngine) -> PathBuf {
+    match engine {
+        ProxyEngine::Xray => settings.config_root.join("xray").join("config.json"),
+        ProxyEngine::Singbox => settings.config_root.join("singbox").join("config.json"),
     }
 }
 
@@ -383,9 +449,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        decorate_path, extract_health_targets, normalize_health_host, parse_runtime_controller,
-        resolve_target_path, supervisor_service_is_running,
+        RuntimeSettings, decorate_path, extract_health_targets, normalize_health_host,
+        parse_runtime_controller, resolve_target_path, runtime_config_path,
+        supervisor_service_is_running,
     };
+    use anneal_core::ProxyEngine;
 
     #[test]
     fn decorated_path_preserves_json_extension() {
@@ -455,5 +523,27 @@ mod tests {
         assert!(!supervisor_service_is_running(
             b"xray                             STOPPED   Not started\n"
         ));
+    }
+
+    #[test]
+    fn runtime_config_path_matches_engine_layout() {
+        let settings = RuntimeSettings {
+            config_root: Path::new("/var/lib/anneal").to_path_buf(),
+            xray_binary: Path::new("/opt/anneal/bin/xray").to_path_buf(),
+            singbox_binary: Path::new("/opt/anneal/bin/hiddify-core").to_path_buf(),
+            runtime_controller: super::RuntimeController::Systemctl,
+            systemctl_binary: Path::new("/usr/bin/systemctl").to_path_buf(),
+            xray_service: "anneal-xray.service".into(),
+            singbox_service: "anneal-singbox.service".into(),
+            skip_restart: false,
+        };
+        assert_eq!(
+            runtime_config_path(&settings, ProxyEngine::Xray),
+            Path::new("/var/lib/anneal/xray/config.json")
+        );
+        assert_eq!(
+            runtime_config_path(&settings, ProxyEngine::Singbox),
+            Path::new("/var/lib/anneal/singbox/config.json")
+        );
     }
 }

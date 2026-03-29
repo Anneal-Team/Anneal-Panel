@@ -26,6 +26,8 @@ jobs:
           done
       - name: Smoke test installer entrypoints
         run: bash scripts/installer-smoke.sh
+      - name: Smoke test release channel wiring
+        run: bash scripts/release-smoke.sh
       - name: Run ShellCheck
         run: |
           find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
@@ -74,7 +76,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
       - uses: actions/setup-node@v4
         with:
           node-version: 22

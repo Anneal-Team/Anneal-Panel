@@ -307,6 +307,15 @@ impl NodeRepository for PgNodeRepository {
         Ok(session)
     }
 
+    async fn reactivate_bootstrap_session(&self, session_id: Uuid) -> ApplicationResult<()> {
+        sqlx::query("update node_bootstrap_sessions set used_at = null where id = $1")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(())
+    }
+
     async fn create_node(
         &self,
         node: NodeRuntime,
@@ -351,6 +360,15 @@ impl NodeRepository for PgNodeRepository {
             .await
             .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
         Ok(node)
+    }
+
+    async fn delete_node(&self, node_id: Uuid) -> ApplicationResult<()> {
+        sqlx::query("delete from nodes where id = $1")
+            .bind(node_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(())
     }
 
     async fn find_node(&self, node_id: Uuid) -> ApplicationResult<Option<NodeRuntime>> {

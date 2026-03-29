@@ -66,7 +66,7 @@ Designed for multi-tenant environments where different teams, resellers and user
 
 ## 📦 Installation
 
-Anneal ships with an interactive installer that downloads one ready-made release bundle archive from GitHub Releases and guides setup in TUI mode.
+Anneal ships with a bootstrap wrapper that downloads exactly one ready-made release bundle archive from GitHub Releases, verifies bundled SHA256 checksums and then runs `annealctl install --bundle-root ...`.
 
 - Installer file: [`scripts/install.sh`](./scripts/install.sh)
 - Direct link: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
@@ -77,10 +77,12 @@ Quick start:
 curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
 ```
 
+This one-liner opens the interactive installer wizard when you do not pass explicit CLI flags.
+
 Release model:
-- the default installer resolves the latest GitHub Release automatically
-- semver releases are published from Git tags such as `v0.1.0`
-- set `ANNEAL_RELEASE_TAG=v0.1.0` to pin a specific release manually
+- the raw `master` installer prefers the rolling `rolling-master` release and falls back to the latest GitHub Release only if that rolling channel is missing
+- pushes to `master` refresh the `rolling-master` bundle, while stable bundles are published from semver tags such as `0.1.0` and `v0.1.0`
+- set `ANNEAL_RELEASE_TAG=0.1.0` to pin a specific release manually
 
 Supported distributions:
 - Debian 10, 11, 12, 13
@@ -95,34 +97,44 @@ Pin a specific release:
 
 ```bash
 curl -fsSLo /tmp/anneal-install.sh https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh
-sudo ANNEAL_RELEASE_TAG=v0.1.0 bash /tmp/anneal-install.sh
+sudo ANNEAL_RELEASE_TAG=0.1.0 bash /tmp/anneal-install.sh
 ```
 
 The installer:
-- asks for installer language: `Русский` or `English`
-- lets you choose server role: `Panel` or `Node`
-- lets you choose deployment type: `Linux` or `Docker`
-- downloads one release bundle such as `anneal-0.1.0-linux-amd64.tar.gz` instead of building the project on the server
-- generates passwords, tokens and internal secrets automatically
-- shows a final admin summary after installation
-- installs a post-login management menu with status, update, restart and removal actions
+- uses `annealctl` as the single source of truth for `install`, `resume`, `status`, `doctor`, `update`, `restart` and `uninstall`
+- opens an interactive wizard from the one-line bootstrap command and also supports fully non-interactive CLI flags
+- lets you choose server role: `all-in-one`, `control-plane` or `node`
+- lets you choose deployment type: `native` or `docker`
+- downloads exactly one release bundle such as `anneal-rolling-master-linux-amd64.tar.gz` or `anneal-0.1.0-linux-amd64.tar.gz` instead of building the project on the server
+- unpacks the bundle and launches the bundled `bin/annealctl` automatically
+- generates panel path, database URL, admin credentials, reseller defaults, node defaults and bootstrap secrets automatically
+- writes typed install data to `/etc/anneal/install.toml`, `/var/lib/anneal/install-state.json` and `/etc/anneal/admin-summary.env`
+- shows the final admin summary after installation
 
-Panel server:
-- installs the control plane: panel UI, API, worker, database and edge services
+Control plane:
+- installs the panel UI, API, worker, database wiring and Caddy
 
 Node server:
-- installs a separate VPS/VDS node server
-- this is not an Xray or Sing-box core itself, but a separate Anneal-managed server
-- unpacks runtime binaries from the same release bundle and runs them in native or Docker mode
+- installs a separate Anneal-managed VPS/VDS node server
+- unpacks Xray and Hiddify Core binaries from the same release bundle and runs them under Anneal control
+- keeps runtime restart behaviour declarative: native units use `Restart=always`, docker stacks use `restart: unless-stopped`
+
+After installation:
+- use `annealctl status`, `annealctl doctor`, `annealctl restart`, `annealctl update --bundle-root ...` and `annealctl uninstall`
+- after VPS/VDS reboot the control plane, node-agent and runtime cores come back automatically through systemd or docker restart policies
 
 Role-specific examples:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role control-plane
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role all-in-one --mode native
 ```
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role node
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role control-plane --mode native
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role node --mode docker
 ```
 
 ---
