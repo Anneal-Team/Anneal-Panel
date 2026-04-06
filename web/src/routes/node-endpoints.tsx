@@ -523,7 +523,7 @@ export function NodeEndpointsPage() {
 
   function addDraft(mode?: NodeDomainMode) {
     updateDraftState(({ form: current }) => {
-      const next = createDraft(mode ?? selectedDraft?.mode ?? "direct");
+      const next = createDraft(mode ?? selectedDraft.mode ?? "direct");
       return {
         form: [...current, next],
         selectedDraftId: next.id,
