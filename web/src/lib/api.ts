@@ -322,6 +322,20 @@ function buildApiUrl(path: string) {
   return requestUrl;
 }
 
+async function sendApiRequest(input: {
+  path: string;
+  init?: RequestInit;
+  headers?: Headers;
+}) {
+  const requestUrl = buildApiUrl(input.path);
+  const requestInit: RequestInit = {
+    ...input.init,
+    headers: input.headers ?? input.init?.headers,
+  };
+
+  return window.fetch(requestUrl.toString(), requestInit);
+}
+
 function getSession(): SessionState {
   const raw = window.localStorage.getItem(sessionStorageKey);
   if (!raw) {
@@ -389,7 +403,6 @@ async function apiFetch<T>(
   auth: "none" | "access" | "preauth" = "access",
   retryOnUnauthorized = true,
 ): Promise<T> {
-  const requestUrl = buildApiUrl(path);
   const session = getSession();
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("content-type") && init.body) {
@@ -401,12 +414,11 @@ async function apiFetch<T>(
   if (auth === "preauth" && session.preAuthToken) {
     headers.set("authorization", `Bearer ${session.preAuthToken}`);
   }
-  const response = await fetch(
-    new Request(requestUrl, {
-      ...init,
-      headers,
-    }),
-  );
+  const response = await sendApiRequest({
+    path,
+    init,
+    headers,
+  });
   if (
     response.status === 401 &&
     auth === "access" &&
@@ -704,16 +716,14 @@ export const api = {
 };
 
 async function publicFetch<T>(path: string, init?: RequestInit) {
-  const requestUrl = buildApiUrl(path);
-  const response = await fetch(
-    new Request(requestUrl, {
-      ...init,
-      headers: {
-        "content-type": "application/json",
-        ...(init?.headers ?? {}),
-      },
+  const response = await sendApiRequest({
+    path,
+    init,
+    headers: new Headers({
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
     }),
-  );
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

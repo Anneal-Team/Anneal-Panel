@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -321,8 +321,11 @@ export function NodeEndpointsPage() {
   const modeMeta = useMemo(() => buildModeMeta(t), [t]);
   const [selectedServerId, setSelectedServerId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [form, setForm] = useState<DomainDraft[]>(createStarterPack);
-  const [selectedDraftId, setSelectedDraftId] = useState("");
+  const [draftState, setDraftState] = useState(() => ({
+    serverId: "",
+    form: createStarterPack(),
+    selectedDraftId: "",
+  }));
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -341,23 +344,6 @@ export function NodeEndpointsPage() {
     () => servers.find((server) => server.id === selectedServerId) ?? servers[0] ?? null,
     [selectedServerId, servers],
   );
-
-  const selectedDraft = useMemo(
-    () => form.find((draft) => draft.id === selectedDraftId) || form[0] || null,
-    [form, selectedDraftId],
-  );
-
-  useEffect(() => {
-    if (!selectedServerId && servers[0]) {
-      setSelectedServerId(servers[0].id);
-    }
-  }, [selectedServerId, servers]);
-
-  useEffect(() => {
-    if (!selectedDraftId || !form.some((draft) => draft.id === selectedDraftId)) {
-      setSelectedDraftId(form[0]?.id ?? "");
-    }
-  }, [form, selectedDraftId]);
 
   const domainsQuery = useQuery({
     queryKey: ["node-domains", selectedServer?.id],
@@ -398,11 +384,48 @@ export function NodeEndpointsPage() {
     },
   });
 
-  useEffect(() => {
-    const nextForm = formFromDomains(domainsQuery.data);
-    setForm(nextForm);
-    setSelectedDraftId(nextForm[0]?.id ?? "");
-  }, [domainsQuery.data, selectedServer?.id]);
+  const currentServerId = selectedServer?.id ?? "";
+  const form = useMemo(
+    () => (draftState.serverId === currentServerId ? draftState.form : formFromDomains(domainsQuery.data)),
+    [currentServerId, domainsQuery.data, draftState.form, draftState.serverId],
+  );
+  const selectedDraftId = useMemo(() => {
+    if (draftState.serverId !== currentServerId) {
+      return form[0]?.id ?? "";
+    }
+    return form.some((draft) => draft.id === draftState.selectedDraftId)
+      ? draftState.selectedDraftId
+      : (form[0]?.id ?? "");
+  }, [currentServerId, draftState.selectedDraftId, draftState.serverId, form]);
+  const selectedDraft = useMemo(
+    () => form.find((draft) => draft.id === selectedDraftId) || form[0] || null,
+    [form, selectedDraftId],
+  );
+
+  function updateDraftState(
+    updater: (current: { form: DomainDraft[]; selectedDraftId: string }) => {
+      form: DomainDraft[];
+      selectedDraftId: string;
+    },
+  ) {
+    setDraftState((current) => {
+      const baseForm =
+        current.serverId === currentServerId ? current.form : formFromDomains(domainsQuery.data);
+      const baseSelectedDraftId =
+        current.serverId === currentServerId
+          ? current.selectedDraftId
+          : (baseForm[0]?.id ?? "");
+      const next = updater({
+        form: baseForm,
+        selectedDraftId: baseSelectedDraftId,
+      });
+      return {
+        serverId: currentServerId,
+        form: next.form,
+        selectedDraftId: next.selectedDraftId,
+      };
+    });
+  }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -492,23 +515,41 @@ export function NodeEndpointsPage() {
   }, [endpointsQuery.data, selectedServer]);
 
   function updateDraft<K extends keyof DomainDraft>(id: string, key: K, value: DomainDraft[K]) {
-    setForm((current) => current.map((draft) => (draft.id === id ? { ...draft, [key]: value } : draft)));
+    updateDraftState(({ form: current, selectedDraftId: currentSelectedDraftId }) => ({
+      form: current.map((draft) => (draft.id === id ? { ...draft, [key]: value } : draft)),
+      selectedDraftId: currentSelectedDraftId,
+    }));
   }
 
-  function addDraft(mode: NodeDomainMode = selectedDraft?.mode || "direct") {
-    const next = createDraft(mode);
-    setForm((current) => [...current, next]);
-    setSelectedDraftId(next.id);
+  function addDraft(mode?: NodeDomainMode) {
+    updateDraftState(({ form: current }) => {
+      const next = createDraft(mode ?? selectedDraft?.mode ?? "direct");
+      return {
+        form: [...current, next],
+        selectedDraftId: next.id,
+      };
+    });
   }
 
   function removeDraft(id: string) {
-    setForm((current) => current.filter((draft) => draft.id !== id));
+    updateDraftState(({ form: current, selectedDraftId: currentSelectedDraftId }) => {
+      const nextForm = current.filter((draft) => draft.id !== id);
+      return {
+        form: nextForm,
+        selectedDraftId:
+          currentSelectedDraftId === id ? (nextForm[0]?.id ?? "") : currentSelectedDraftId,
+      };
+    });
   }
 
   function resetPreset() {
-    const next = createStarterPack();
-    setForm(next);
-    setSelectedDraftId(next[0]?.id ?? "");
+    updateDraftState(() => {
+      const next = createStarterPack();
+      return {
+        form: next,
+        selectedDraftId: next[0]?.id ?? "",
+      };
+    });
   }
 
   function toggleEndpoint(item: GeneratedPreviewItem) {
@@ -718,7 +759,10 @@ export function NodeEndpointsPage() {
                       key={draft.id}
                       type="button"
                       onClick={() => {
-                        setSelectedDraftId(draft.id);
+                        updateDraftState(({ form: current }) => ({
+                          form: current,
+                          selectedDraftId: draft.id,
+                        }));
                       }}
                       className={`w-full rounded-[22px] border px-4 py-3 text-left transition ${
                         active
@@ -738,7 +782,11 @@ export function NodeEndpointsPage() {
             </div>
           </div>
 
-          {selectedDraft !== null ? (
+          {form.length === 0 || !selectedDraft ? (
+            <div className="rounded-[28px] border border-dashed border-border bg-[#f8f5f0] px-5 py-12 text-sm text-foreground/80">
+              {t("node_endpoints.rule_empty")}
+            </div>
+          ) : (
             <div className="space-y-5">
               <div className="rounded-[28px] border border-border bg-[#f8f5f0] p-5">
                 <div className="text-xs uppercase tracking-[0.24em] text-foreground/80">
@@ -877,10 +925,6 @@ export function NodeEndpointsPage() {
                   {saveMutation.isPending ? t("node_endpoints.saving") : t("common.save")}
                 </Button>
               </div>
-            </div>
-          ) : (
-            <div className="rounded-[28px] border border-dashed border-border bg-[#f8f5f0] px-5 py-12 text-sm text-foreground/80">
-              {t("node_endpoints.rule_empty")}
             </div>
           )}
         </div>
