@@ -523,7 +523,7 @@ export function NodeEndpointsPage() {
 
   function addDraft(mode?: NodeDomainMode) {
     updateDraftState(({ form: current }) => {
-      const next = createDraft(mode ?? selectedDraft.mode ?? "direct");
+      const next = createDraft(mode ?? selectedDraft.mode);
       return {
         form: [...current, next],
         selectedDraftId: next.id,
@@ -782,7 +782,7 @@ export function NodeEndpointsPage() {
             </div>
           </div>
 
-          {form.length === 0 || !selectedDraft ? (
+          {form.length === 0 ? (
             <div className="rounded-[28px] border border-dashed border-border bg-[#f8f5f0] px-5 py-12 text-sm text-foreground/80">
               {t("node_endpoints.rule_empty")}
             </div>
