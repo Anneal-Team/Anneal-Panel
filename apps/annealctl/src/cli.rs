@@ -14,7 +14,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    Install(InstallArgs),
+    Install(Box<InstallArgs>),
     Resume(ResumeArgs),
     Status,
     Doctor,

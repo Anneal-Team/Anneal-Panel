@@ -285,12 +285,55 @@ export interface RefreshSessionInfo {
 const sessionStorageKey = "anneal.session";
 let refreshPromise: Promise<SessionTokens> | null = null;
 
+function normalizeApiPath(path: string) {
+  if (!path.startsWith("/")) {
+    throw new Error(`API path must start with "/": ${path}`);
+  }
+  if (path.startsWith("//") || /^[a-z][a-z\d+\-.]*:\/\//i.test(path)) {
+    throw new Error(`Absolute URLs are not allowed in API paths: ${path}`);
+  }
+  return path;
+}
+
 function getBaseUrl() {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
   if (configuredBaseUrl) {
     return configuredBaseUrl;
   }
   return `${panelBasePath() || ""}/api/v1`;
+}
+
+function buildApiUrl(path: string) {
+  const normalizedPath = normalizeApiPath(path);
+  const rawBaseUrl = getBaseUrl();
+  const baseUrl = new URL(rawBaseUrl, window.location.origin);
+
+  if (!["http:", "https:"].includes(baseUrl.protocol)) {
+    throw new Error(`Unsupported API protocol: ${baseUrl.protocol}`);
+  }
+  if (baseUrl.username || baseUrl.password || baseUrl.hash) {
+    throw new Error("API base URL must not include credentials or fragments");
+  }
+
+  const requestUrl = new URL(normalizedPath, baseUrl);
+  if (requestUrl.origin !== baseUrl.origin) {
+    throw new Error(`API path escaped base URL: ${path}`);
+  }
+  return requestUrl;
+}
+
+async function sendApiRequest(input: {
+  path: string;
+  init?: RequestInit;
+  headers?: Headers;
+}) {
+  const requestUrl = buildApiUrl(input.path);
+  const requestInit: RequestInit = {
+    ...input.init,
+    headers: input.headers ?? input.init?.headers,
+  };
+
+  return window.fetch(requestUrl.toString(), requestInit);
 }
 
 function getSession(): SessionState {
@@ -371,8 +414,9 @@ async function apiFetch<T>(
   if (auth === "preauth" && session.preAuthToken) {
     headers.set("authorization", `Bearer ${session.preAuthToken}`);
   }
-  const response = await fetch(`${getBaseUrl()}${path}`, {
-    ...init,
+  const response = await sendApiRequest({
+    path,
+    init,
     headers,
   });
   if (
@@ -672,12 +716,13 @@ export const api = {
 };
 
 async function publicFetch<T>(path: string, init?: RequestInit) {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
-    ...init,
-    headers: {
+  const response = await sendApiRequest({
+    path,
+    init,
+    headers: new Headers({
       "content-type": "application/json",
       ...(init?.headers ?? {}),
-    },
+    }),
   });
   if (!response.ok) {
     throw new Error(await response.text());

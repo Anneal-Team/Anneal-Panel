@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -258,6 +258,44 @@ function endpointCaption(item: GeneratedPreviewItem) {
   return `${protocolTitle[item.endpoint.protocol]} / ${item.engine} / ${transportTitle[item.endpoint.transport]}`;
 }
 
+function getModeInfo(meta: Record<NodeDomainMode, ModeMeta>, mode: NodeDomainMode) {
+  switch (mode) {
+    case "legacy_direct":
+      return meta.legacy_direct;
+    case "cdn":
+      return meta.cdn;
+    case "auto_cdn":
+      return meta.auto_cdn;
+    case "relay":
+      return meta.relay;
+    case "worker":
+      return meta.worker;
+    case "reality":
+      return meta.reality;
+    case "fake":
+      return meta.fake;
+    case "direct":
+    default:
+      return meta.direct;
+  }
+}
+
+function getEngineEndpoints(
+  data: Partial<Record<ProxyEngine, NodeEndpoint[]>> | undefined,
+  engine: ProxyEngine,
+) {
+  if (!data) {
+    return [];
+  }
+  switch (engine) {
+    case "singbox":
+      return data.singbox ?? [];
+    case "xray":
+    default:
+      return data.xray ?? [];
+  }
+}
+
 function ruleTitle(draft: DomainDraft, fallback: string) {
   if (draft.domain.trim()) {
     return draft.domain.trim();
@@ -269,7 +307,7 @@ function ruleTitle(draft: DomainDraft, fallback: string) {
 }
 
 function ruleSubtitle(draft: DomainDraft, modeMeta: Record<NodeDomainMode, ModeMeta>) {
-  const parts = [modeMeta[draft.mode].title];
+  const parts = [getModeInfo(modeMeta, draft.mode).title];
   if (draft.alias.trim()) {
     parts.push(draft.alias.trim());
   }
@@ -283,8 +321,11 @@ export function NodeEndpointsPage() {
   const modeMeta = useMemo(() => buildModeMeta(t), [t]);
   const [selectedServerId, setSelectedServerId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [form, setForm] = useState<DomainDraft[]>(createStarterPack);
-  const [selectedDraftId, setSelectedDraftId] = useState("");
+  const [draftState, setDraftState] = useState(() => ({
+    serverId: "",
+    form: createStarterPack(),
+    selectedDraftId: "",
+  }));
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -304,27 +345,15 @@ export function NodeEndpointsPage() {
     [selectedServerId, servers],
   );
 
-  const selectedDraft = useMemo(
-    () => form.find((draft) => draft.id === selectedDraftId) ?? form[0] ?? null,
-    [form, selectedDraftId],
-  );
-
-  useEffect(() => {
-    if (!selectedServerId && servers[0]) {
-      setSelectedServerId(servers[0].id);
-    }
-  }, [selectedServerId, servers]);
-
-  useEffect(() => {
-    if (!selectedDraftId || !form.some((draft) => draft.id === selectedDraftId)) {
-      setSelectedDraftId(form[0]?.id ?? "");
-    }
-  }, [form, selectedDraftId]);
-
   const domainsQuery = useQuery({
     queryKey: ["node-domains", selectedServer?.id],
     enabled: Boolean(session.accessToken && selectedServer),
-    queryFn: () => api.listNodeDomains(selectedServer!.id, selectedServer!.tenant_id),
+    queryFn: () => {
+      if (!selectedServer) {
+        throw new Error(t("node_endpoints.error.server_required"));
+      }
+      return api.listNodeDomains(selectedServer.id, selectedServer.tenant_id);
+    },
   });
 
   const endpointsQuery = useQuery({
@@ -343,7 +372,10 @@ export function NodeEndpointsPage() {
         (["xray", "singbox"] as const)
           .filter((engine) => runtimeByEngine(selectedServer, engine))
           .map(async (engine) => {
-            const runtime = runtimeByEngine(selectedServer, engine)!;
+            const runtime = runtimeByEngine(selectedServer, engine);
+            if (!runtime) {
+              throw new Error(t("node_endpoints.runtime_missing"));
+            }
             const endpoints = await api.listNodeRuntimeEndpoints(runtime.id, runtime.tenant_id);
             return [engine, endpoints] as const;
           }),
@@ -352,11 +384,48 @@ export function NodeEndpointsPage() {
     },
   });
 
-  useEffect(() => {
-    const nextForm = formFromDomains(domainsQuery.data);
-    setForm(nextForm);
-    setSelectedDraftId(nextForm[0]?.id ?? "");
-  }, [domainsQuery.data, selectedServer?.id]);
+  const currentServerId = selectedServer?.id ?? "";
+  const form = useMemo(
+    () => (draftState.serverId === currentServerId ? draftState.form : formFromDomains(domainsQuery.data)),
+    [currentServerId, domainsQuery.data, draftState.form, draftState.serverId],
+  );
+  const selectedDraftId = useMemo(() => {
+    if (draftState.serverId !== currentServerId) {
+      return form[0]?.id ?? "";
+    }
+    return form.some((draft) => draft.id === draftState.selectedDraftId)
+      ? draftState.selectedDraftId
+      : (form[0]?.id ?? "");
+  }, [currentServerId, draftState.selectedDraftId, draftState.serverId, form]);
+  const selectedDraft = useMemo(
+    () => form.find((draft) => draft.id === selectedDraftId) || form[0] || null,
+    [form, selectedDraftId],
+  );
+
+  function updateDraftState(
+    updater: (current: { form: DomainDraft[]; selectedDraftId: string }) => {
+      form: DomainDraft[];
+      selectedDraftId: string;
+    },
+  ) {
+    setDraftState((current) => {
+      const baseForm =
+        current.serverId === currentServerId ? current.form : formFromDomains(domainsQuery.data);
+      const baseSelectedDraftId =
+        current.serverId === currentServerId
+          ? current.selectedDraftId
+          : (baseForm[0]?.id ?? "");
+      const next = updater({
+        form: baseForm,
+        selectedDraftId: baseSelectedDraftId,
+      });
+      return {
+        serverId: currentServerId,
+        form: next.form,
+        selectedDraftId: next.selectedDraftId,
+      };
+    });
+  }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -428,7 +497,8 @@ export function NodeEndpointsPage() {
       if (!runtime) {
         continue;
       }
-      for (const endpoint of endpointsQuery.data?.[engine] ?? []) {
+      const engineEndpoints = getEngineEndpoints(endpointsQuery.data, engine);
+      for (const endpoint of engineEndpoints) {
         items.push({
           engine,
           runtime_id: runtime.id,
@@ -445,23 +515,41 @@ export function NodeEndpointsPage() {
   }, [endpointsQuery.data, selectedServer]);
 
   function updateDraft<K extends keyof DomainDraft>(id: string, key: K, value: DomainDraft[K]) {
-    setForm((current) => current.map((draft) => (draft.id === id ? { ...draft, [key]: value } : draft)));
+    updateDraftState(({ form: current, selectedDraftId: currentSelectedDraftId }) => ({
+      form: current.map((draft) => (draft.id === id ? { ...draft, [key]: value } : draft)),
+      selectedDraftId: currentSelectedDraftId,
+    }));
   }
 
-  function addDraft(mode: NodeDomainMode = selectedDraft?.mode ?? "direct") {
-    const next = createDraft(mode);
-    setForm((current) => [...current, next]);
-    setSelectedDraftId(next.id);
+  function addDraft(mode?: NodeDomainMode) {
+    updateDraftState(({ form: current }) => {
+      const next = createDraft(mode ?? selectedDraft.mode);
+      return {
+        form: [...current, next],
+        selectedDraftId: next.id,
+      };
+    });
   }
 
   function removeDraft(id: string) {
-    setForm((current) => current.filter((draft) => draft.id !== id));
+    updateDraftState(({ form: current, selectedDraftId: currentSelectedDraftId }) => {
+      const nextForm = current.filter((draft) => draft.id !== id);
+      return {
+        form: nextForm,
+        selectedDraftId:
+          currentSelectedDraftId === id ? (nextForm[0]?.id ?? "") : currentSelectedDraftId,
+      };
+    });
   }
 
   function resetPreset() {
-    const next = createStarterPack();
-    setForm(next);
-    setSelectedDraftId(next[0]?.id ?? "");
+    updateDraftState(() => {
+      const next = createStarterPack();
+      return {
+        form: next,
+        selectedDraftId: next[0]?.id ?? "",
+      };
+    });
   }
 
   function toggleEndpoint(item: GeneratedPreviewItem) {
@@ -495,7 +583,12 @@ export function NodeEndpointsPage() {
 
       <Card className="space-y-5 shadow-sm">
         <div className="grid gap-3 xl:grid-cols-[1.1fr_auto]">
-          <Select value={selectedServerId} onChange={(event) => setSelectedServerId(event.target.value)}>
+          <Select
+            value={selectedServerId}
+            onChange={(event) => {
+              setSelectedServerId(event.target.value);
+            }}
+          >
             <option value="">{t("node_endpoints.select_server")}</option>
             {servers.map((server) => (
               <option key={server.id} value={server.id}>
@@ -503,7 +596,13 @@ export function NodeEndpointsPage() {
               </option>
             ))}
           </Select>
-          <Button type="button" disabled={!selectedServer} onClick={() => setSettingsOpen(true)}>
+          <Button
+            type="button"
+            disabled={!selectedServer}
+            onClick={() => {
+              setSettingsOpen(true);
+            }}
+          >
             {t("node_endpoints.configure")}
           </Button>
         </div>
@@ -539,7 +638,7 @@ export function NodeEndpointsPage() {
             <div className="flex flex-wrap gap-2">
               {domainsQuery.data.map((domain) => (
                 <Badge key={domain.id} tone="muted">
-                  {modeMeta[domain.mode].title} / {domain.domain}
+                  {getModeInfo(modeMeta, domain.mode).title} / {domain.domain}
                 </Badge>
               ))}
             </div>
@@ -584,7 +683,9 @@ export function NodeEndpointsPage() {
                       type="button"
                       variant="secondary"
                       disabled={toggleEndpointMutation.isPending}
-                      onClick={() => toggleEndpoint(item)}
+                      onClick={() => {
+                        toggleEndpoint(item);
+                      }}
                     >
                       {item.endpoint.enabled ? t("common.turn_off") : t("common.turn_on")}
                     </Button>
@@ -617,7 +718,9 @@ export function NodeEndpointsPage() {
 
       <Dialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+        }}
         title={
           selectedServer
             ? t("node_endpoints.dialog.title", { name: formatNodeName(selectedServer.name) })
@@ -629,7 +732,14 @@ export function NodeEndpointsPage() {
         <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
           <div className="space-y-4">
             <div className="flex gap-3">
-              <Button className="flex-1" type="button" variant="secondary" onClick={() => addDraft()}>
+              <Button
+                className="flex-1"
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  addDraft();
+                }}
+              >
                 {t("node_endpoints.dialog.add_rule")}
               </Button>
               <Button className="flex-1" type="button" variant="secondary" onClick={resetPreset}>
@@ -643,12 +753,17 @@ export function NodeEndpointsPage() {
               </div>
               <div className="max-h-[58vh] space-y-2 overflow-y-auto pr-1">
                 {form.map((draft, index) => {
-                  const active = selectedDraft?.id === draft.id;
+                  const active = selectedDraft.id === draft.id;
                   return (
                     <button
                       key={draft.id}
                       type="button"
-                      onClick={() => setSelectedDraftId(draft.id)}
+                      onClick={() => {
+                        updateDraftState(({ form: current }) => ({
+                          form: current,
+                          selectedDraftId: draft.id,
+                        }));
+                      }}
                       className={`w-full rounded-[22px] border px-4 py-3 text-left transition ${
                         active
                           ? "border-accent bg-accent/10 text-foreground"
@@ -667,7 +782,11 @@ export function NodeEndpointsPage() {
             </div>
           </div>
 
-          {selectedDraft ? (
+          {form.length === 0 ? (
+            <div className="rounded-[28px] border border-dashed border-border bg-[#f8f5f0] px-5 py-12 text-sm text-foreground/80">
+              {t("node_endpoints.rule_empty")}
+            </div>
+          ) : (
             <div className="space-y-5">
               <div className="rounded-[28px] border border-border bg-[#f8f5f0] p-5">
                 <div className="text-xs uppercase tracking-[0.24em] text-foreground/80">
@@ -676,22 +795,22 @@ export function NodeEndpointsPage() {
                 <Select
                   className="mt-3"
                   value={selectedDraft.mode}
-                  onChange={(event) =>
-                    updateDraft(selectedDraft.id, "mode", event.target.value as NodeDomainMode)
-                  }
+                  onChange={(event) => {
+                    updateDraft(selectedDraft.id, "mode", event.target.value as NodeDomainMode);
+                  }}
                 >
                   {modeOrder.map((mode) => (
                     <option key={mode} value={mode}>
-                      {modeMeta[mode].title}
+                      {getModeInfo(modeMeta, mode).title}
                     </option>
                   ))}
                 </Select>
 
                 <div className="mt-4 rounded-[24px] bg-[#f2efe4] p-4 text-sm text-foreground/75">
-                  <div className="font-semibold text-foreground">{modeMeta[selectedDraft.mode].title}</div>
-                  <div className="mt-2">{modeMeta[selectedDraft.mode].description}</div>
+                  <div className="font-semibold text-foreground">{getModeInfo(modeMeta, selectedDraft.mode).title}</div>
+                  <div className="mt-2">{getModeInfo(modeMeta, selectedDraft.mode).description}</div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {modeMeta[selectedDraft.mode].generated.map((item) => (
+                    {getModeInfo(modeMeta, selectedDraft.mode).generated.map((item) => (
                       <Badge key={item} tone="muted">
                         {item}
                       </Badge>
@@ -707,9 +826,12 @@ export function NodeEndpointsPage() {
                       className={`rounded-[18px] px-3 py-2 text-left transition ${
                         selectedDraft.mode === mode ? "bg-accent/10 text-foreground" : "hover:bg-[#f2efe4]"
                       }`}
-                      onClick={() => updateDraft(selectedDraft.id, "mode", mode)}
+                      onClick={() => {
+                        updateDraft(selectedDraft.id, "mode", mode);
+                      }}
                     >
-                      <span className="font-semibold">{modeMeta[mode].title}:</span> {modeMeta[mode].description}
+                      <span className="font-semibold">{getModeInfo(modeMeta, mode).title}:</span>{" "}
+                      {getModeInfo(modeMeta, mode).description}
                     </button>
                   ))}
                 </div>
@@ -721,9 +843,11 @@ export function NodeEndpointsPage() {
                   <Input
                     placeholder="example.com"
                     value={selectedDraft.domain}
-                    onChange={(event) => updateDraft(selectedDraft.id, "domain", event.target.value)}
+                    onChange={(event) => {
+                      updateDraft(selectedDraft.id, "domain", event.target.value);
+                    }}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].domainHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).domainHint}</div>
                 </div>
 
                 <div className="space-y-2">
@@ -731,9 +855,11 @@ export function NodeEndpointsPage() {
                   <Input
                     placeholder="main"
                     value={selectedDraft.alias}
-                    onChange={(event) => updateDraft(selectedDraft.id, "alias", event.target.value)}
+                    onChange={(event) => {
+                      updateDraft(selectedDraft.id, "alias", event.target.value);
+                    }}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].aliasHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).aliasHint}</div>
                 </div>
               </div>
 
@@ -744,9 +870,11 @@ export function NodeEndpointsPage() {
                     className="min-h-40"
                     placeholder={"example.com\ncdn.example.com"}
                     value={selectedDraft.server_names_text}
-                    onChange={(event) => updateDraft(selectedDraft.id, "server_names_text", event.target.value)}
+                    onChange={(event) => {
+                      updateDraft(selectedDraft.id, "server_names_text", event.target.value);
+                    }}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].serverNameHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).serverNameHint}</div>
                 </div>
 
                 <div className="space-y-2">
@@ -755,9 +883,11 @@ export function NodeEndpointsPage() {
                     className="min-h-40"
                     placeholder={"example.com\nworker.example.com"}
                     value={selectedDraft.host_headers_text}
-                    onChange={(event) => updateDraft(selectedDraft.id, "host_headers_text", event.target.value)}
+                    onChange={(event) => {
+                      updateDraft(selectedDraft.id, "host_headers_text", event.target.value);
+                    }}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].hostHeaderHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).hostHeaderHint}</div>
                 </div>
               </div>
 
@@ -766,7 +896,9 @@ export function NodeEndpointsPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => removeDraft(selectedDraft.id)}
+                  onClick={() => {
+                    removeDraft(selectedDraft.id);
+                  }}
                   disabled={form.length === 0}
                 >
                   {t("node_endpoints.rule_delete")}
@@ -774,17 +906,25 @@ export function NodeEndpointsPage() {
               </div>
 
               <div className="flex justify-end gap-3">
-                <Button type="button" variant="secondary" onClick={() => setSettingsOpen(false)}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setSettingsOpen(false);
+                  }}
+                >
                   {t("common.cancel")}
                 </Button>
-                <Button type="button" disabled={saveMutation.isPending || !selectedServer} onClick={() => saveMutation.mutate()}>
+                <Button
+                  type="button"
+                  disabled={saveMutation.isPending || !selectedServer}
+                  onClick={() => {
+                    saveMutation.mutate();
+                  }}
+                >
                   {saveMutation.isPending ? t("node_endpoints.saving") : t("common.save")}
                 </Button>
               </div>
-            </div>
-          ) : (
-            <div className="rounded-[28px] border border-dashed border-border bg-[#f8f5f0] px-5 py-12 text-sm text-foreground/80">
-              {t("node_endpoints.rule_empty")}
             </div>
           )}
         </div>

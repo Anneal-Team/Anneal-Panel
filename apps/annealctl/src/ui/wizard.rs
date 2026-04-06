@@ -817,27 +817,24 @@ impl RatatuiWizard {
                     .unwrap_or_else(|| "panel.example.com".into()),
             );
         }
-        if empty(self.args.superadmin_email.as_deref()) {
-            if let Ok(config) = preview_config(&self.args) {
-                if let Some(control_plane) = config.control_plane {
-                    self.args.superadmin_email = Some(control_plane.superadmin.email);
-                }
-            }
+        if empty(self.args.superadmin_email.as_deref())
+            && let Ok(config) = preview_config(&self.args)
+            && let Some(control_plane) = config.control_plane
+        {
+            self.args.superadmin_email = Some(control_plane.superadmin.email);
         }
         if self.args.role == Some(InstallRole::AllInOne) {
-            if empty(self.args.reseller_tenant_name.as_deref()) {
-                if let Ok(config) = preview_config(&self.args) {
-                    if let Some(reseller) = config.control_plane.and_then(|item| item.reseller) {
-                        self.args.reseller_tenant_name = Some(reseller.tenant_name);
-                    }
-                }
+            if empty(self.args.reseller_tenant_name.as_deref())
+                && let Ok(config) = preview_config(&self.args)
+                && let Some(reseller) = config.control_plane.and_then(|item| item.reseller)
+            {
+                self.args.reseller_tenant_name = Some(reseller.tenant_name);
             }
-            if empty(self.args.node_group_name.as_deref()) {
-                if let Ok(config) = preview_config(&self.args) {
-                    if let Some(node) = config.node {
-                        self.args.node_group_name = Some(node.group_name.unwrap_or(node.name));
-                    }
-                }
+            if empty(self.args.node_group_name.as_deref())
+                && let Ok(config) = preview_config(&self.args)
+                && let Some(node) = config.node
+            {
+                self.args.node_group_name = Some(node.group_name.unwrap_or(node.name));
             }
         }
         if self.args.role == Some(InstallRole::Node) {
@@ -846,12 +843,10 @@ impl RatatuiWizard {
             }
             if empty(self.args.agent_name.as_deref())
                 && !empty(self.args.agent_bootstrap_token.as_deref())
+                && let Ok(config) = preview_config(&self.args)
+                && let Some(node) = config.node
             {
-                if let Ok(config) = preview_config(&self.args) {
-                    if let Some(node) = config.node {
-                        self.args.agent_name = Some(node.name);
-                    }
-                }
+                self.args.agent_name = Some(node.name);
             }
         }
     }

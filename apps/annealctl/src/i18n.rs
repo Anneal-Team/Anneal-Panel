@@ -43,6 +43,7 @@ impl Language {
 #[derive(Debug, Clone, Copy)]
 pub struct Translator {
     language: Language,
+    #[cfg(test)]
     unicode: bool,
 }
 
@@ -50,6 +51,7 @@ impl Translator {
     pub fn new(language: Language) -> Self {
         Self {
             language,
+            #[cfg(test)]
             unicode: terminal_supports_utf8(),
         }
     }
@@ -63,6 +65,7 @@ impl Translator {
         self.language
     }
 
+    #[cfg(test)]
     pub fn banner(self) -> &'static str {
         if self.unicode {
             "▂▄▆█ Anneal"
@@ -239,15 +242,12 @@ mod tests {
     }
 
     #[test]
-    fn ascii_banner_falls_back_without_unicode() {
+    fn banner_uses_ascii_fallback() {
         assert_eq!(
             Translator::with_unicode(Language::Ru, false).banner(),
             "Anneal"
         );
-        assert_eq!(
-            Translator::with_unicode(Language::Ru, true).banner(),
-            "▂▄▆█ Anneal"
-        );
+        assert_eq!(Translator::new(Language::Ru).banner(), "▂▄▆█ Anneal");
     }
 
     #[test]

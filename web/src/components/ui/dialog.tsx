@@ -26,7 +26,9 @@ export function Dialog({ open, title, description, onClose, children, className 
       }
     }
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [open, onClose]);
 
   if (!open) {

@@ -36,8 +36,12 @@ export function PublicSubscriptionPage() {
     if (!copied) {
       return;
     }
-    const timeout = window.setTimeout(() => setCopied(false), 1600);
-    return () => window.clearTimeout(timeout);
+    const timeout = window.setTimeout(() => {
+      setCopied(false);
+    }, 1600);
+    return () => {
+      window.clearTimeout(timeout);
+    };
   }, [copied]);
 
   if (subscriptionQuery.isLoading) {
@@ -173,7 +177,9 @@ export function PublicSubscriptionPage() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => window.open(`${subscription.delivery_url}?raw=1`, "_blank")}
+              onClick={() => {
+                window.open(`${subscription.delivery_url}?raw=1`, "_blank");
+              }}
             >
               {t("public_subscription.raw")}
             </Button>

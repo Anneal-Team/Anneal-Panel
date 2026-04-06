@@ -30,7 +30,7 @@ jobs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       commit_ref: ${{ steps.meta.outputs.commit_ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
       - name: Resolve release metadata
@@ -102,17 +102,17 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
       - name: Install musl toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           targets: x86_64-unknown-linux-musl
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
@@ -129,7 +129,7 @@ jobs:
           git tag -f rolling-master "${GITHUB_SHA}"
           git push origin refs/tags/rolling-master --force
       - name: Publish release
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true

@@ -1601,7 +1601,10 @@ impl NodeRepository for InMemoryNodeRepository {
             ));
         }
         let mut endpoint_ids = BTreeSet::new();
-        if endpoints.iter().any(|endpoint| !endpoint_ids.insert(endpoint.id)) {
+        if endpoints
+            .iter()
+            .any(|endpoint| !endpoint_ids.insert(endpoint.id))
+        {
             return Err(ApplicationError::Infrastructure(
                 "duplicate endpoint id in replace_node_endpoints".into(),
             ));
@@ -2001,7 +2004,11 @@ fn reconcile_manual_endpoints(previous: &[NodeEndpoint], updated: &mut [NodeEndp
     reconcile_endpoints(previous, updated, false);
 }
 
-fn reconcile_endpoints(previous: &[NodeEndpoint], updated: &mut [NodeEndpoint], keep_enabled: bool) {
+fn reconcile_endpoints(
+    previous: &[NodeEndpoint],
+    updated: &mut [NodeEndpoint],
+    keep_enabled: bool,
+) {
     let mut previous_by_key = previous.iter().fold(
         HashMap::<String, VecDeque<&NodeEndpoint>>::new(),
         |mut grouped, endpoint| {
@@ -2014,10 +2021,7 @@ fn reconcile_endpoints(previous: &[NodeEndpoint], updated: &mut [NodeEndpoint], 
     );
     for endpoint in updated {
         let key = endpoint_state_key(endpoint);
-        let Some(existing) = previous_by_key
-            .get_mut(&key)
-            .and_then(VecDeque::pop_front)
-        else {
+        let Some(existing) = previous_by_key.get_mut(&key).and_then(VecDeque::pop_front) else {
             continue;
         };
         endpoint.id = existing.id;

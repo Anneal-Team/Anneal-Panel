@@ -26,10 +26,10 @@ pub async fn run(layout: InstallLayout, args: UninstallArgs) -> Result<()> {
                 ] {
                     system.remove_path(&layout.systemd_dir.join(unit))?;
                 }
-                if !args.keep_database {
-                    if let Some(control_plane) = config.control_plane.as_ref() {
-                        system.drop_local_database(&control_plane.database_url)?;
-                    }
+                if !args.keep_database
+                    && let Some(control_plane) = config.control_plane.as_ref()
+                {
+                    system.drop_local_database(&control_plane.database_url)?;
                 }
             }
             if config.role.includes_node() {
