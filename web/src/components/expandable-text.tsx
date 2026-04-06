@@ -25,7 +25,9 @@ export function ExpandableText({ text, className }: { text: string; className?: 
       </div>
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          setExpanded(!expanded);
+        }}
         className="mt-2 flex items-center gap-1 text-xs font-semibold text-[#728468] hover:text-[#384733] transition"
       >
         {expanded ? (

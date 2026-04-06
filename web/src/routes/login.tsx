@@ -112,13 +112,17 @@ export function LoginPage() {
               <Input
                 placeholder={t("login.email")}
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                }}
               />
               <Input
                 placeholder={t("login.password")}
                 type="password"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                }}
               />
               {error ? <div className="text-sm text-danger">{error}</div> : null}
               <Button disabled={loginMutation.isPending}>
@@ -144,7 +148,9 @@ export function LoginPage() {
               <Input
                 placeholder={t("login.totp_code")}
                 value={totpCode}
-                onChange={(event) => setTotpCode(event.target.value)}
+                onChange={(event) => {
+                  setTotpCode(event.target.value);
+                }}
               />
               {error ? <div className="text-sm text-danger">{error}</div> : null}
               <Button disabled={verifyMutation.isPending}>

@@ -483,23 +483,23 @@ export function DashboardPage() {
                 placeholder={t("dashboard.security.current_password")}
                 type="password"
                 value={passwordForm.current_password}
-                onChange={(event) =>
+                onChange={(event) => {
                   setPasswordForm((current) => ({
                     ...current,
                     current_password: event.target.value,
-                  }))
-                }
+                  }));
+                }}
               />
               <Input
                 placeholder={t("dashboard.security.new_password")}
                 type="password"
                 value={passwordForm.new_password}
-                onChange={(event) =>
+                onChange={(event) => {
                   setPasswordForm((current) => ({
                     ...current,
                     new_password: event.target.value,
-                  }))
-                }
+                  }));
+                }}
               />
               <Button disabled={changePasswordMutation.isPending} type="submit">
                 {changePasswordMutation.isPending ? t("dashboard.security.changing") : t("dashboard.security.change_password")}
@@ -511,12 +511,16 @@ export function DashboardPage() {
                 placeholder={t("dashboard.security.password_for_totp")}
                 type="password"
                 value={disableTotpPassword}
-                onChange={(event) => setDisableTotpPassword(event.target.value)}
+                onChange={(event) => {
+                  setDisableTotpPassword(event.target.value);
+                }}
               />
               <Button
                 variant="secondary"
                 disabled={disableTotpMutation.isPending}
-                onClick={() => disableTotpMutation.mutate()}
+                onClick={() => {
+                  disableTotpMutation.mutate();
+                }}
                 type="button"
               >
                 {disableTotpMutation.isPending ? t("dashboard.security.disabling") : t("dashboard.security.disable_totp")}
@@ -524,7 +528,9 @@ export function DashboardPage() {
               <Button
                 variant="secondary"
                 disabled={logoutAllMutation.isPending}
-                onClick={() => logoutAllMutation.mutate()}
+                onClick={() => {
+                  logoutAllMutation.mutate();
+                }}
                 type="button"
               >
                 {logoutAllMutation.isPending ? t("dashboard.security.logging_out") : t("dashboard.security.logout_all")}

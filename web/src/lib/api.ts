@@ -303,6 +303,25 @@ function getBaseUrl() {
   return `${panelBasePath() || ""}/api/v1`;
 }
 
+function buildApiUrl(path: string) {
+  const normalizedPath = normalizeApiPath(path);
+  const rawBaseUrl = getBaseUrl();
+  const baseUrl = new URL(rawBaseUrl, window.location.origin);
+
+  if (!["http:", "https:"].includes(baseUrl.protocol)) {
+    throw new Error(`Unsupported API protocol: ${baseUrl.protocol}`);
+  }
+  if (baseUrl.username || baseUrl.password || baseUrl.hash) {
+    throw new Error("API base URL must not include credentials or fragments");
+  }
+
+  const requestUrl = new URL(normalizedPath, baseUrl);
+  if (requestUrl.origin !== baseUrl.origin) {
+    throw new Error(`API path escaped base URL: ${path}`);
+  }
+  return requestUrl;
+}
+
 function getSession(): SessionState {
   const raw = window.localStorage.getItem(sessionStorageKey);
   if (!raw) {
@@ -370,7 +389,7 @@ async function apiFetch<T>(
   auth: "none" | "access" | "preauth" = "access",
   retryOnUnauthorized = true,
 ): Promise<T> {
-  const normalizedPath = normalizeApiPath(path);
+  const requestUrl = buildApiUrl(path);
   const session = getSession();
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("content-type") && init.body) {
@@ -382,10 +401,12 @@ async function apiFetch<T>(
   if (auth === "preauth" && session.preAuthToken) {
     headers.set("authorization", `Bearer ${session.preAuthToken}`);
   }
-  const response = await fetch(`${getBaseUrl()}${normalizedPath}`, {
-    ...init,
-    headers,
-  });
+  const response = await fetch(
+    new Request(requestUrl, {
+      ...init,
+      headers,
+    }),
+  );
   if (
     response.status === 401 &&
     auth === "access" &&
@@ -393,7 +414,7 @@ async function apiFetch<T>(
     session.refreshToken
   ) {
     await refreshAccessToken();
-    return apiFetch<T>(normalizedPath, init, auth, false);
+    return apiFetch<T>(path, init, auth, false);
   }
   if (!response.ok) {
     const payload = (await response.json().catch(() => ({ message: response.statusText }))) as {
@@ -683,14 +704,16 @@ export const api = {
 };
 
 async function publicFetch<T>(path: string, init?: RequestInit) {
-  const normalizedPath = normalizeApiPath(path);
-  const response = await fetch(`${getBaseUrl()}${normalizedPath}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  const requestUrl = buildApiUrl(path);
+  const response = await fetch(
+    new Request(requestUrl, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    }),
+  );
   if (!response.ok) {
     throw new Error(await response.text());
   }
