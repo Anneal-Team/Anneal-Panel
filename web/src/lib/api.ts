@@ -285,6 +285,16 @@ export interface RefreshSessionInfo {
 const sessionStorageKey = "anneal.session";
 let refreshPromise: Promise<SessionTokens> | null = null;
 
+function normalizeApiPath(path: string) {
+  if (!path.startsWith("/")) {
+    throw new Error(`API path must start with "/": ${path}`);
+  }
+  if (path.startsWith("//") || /^[a-z][a-z\d+\-.]*:\/\//i.test(path)) {
+    throw new Error(`Absolute URLs are not allowed in API paths: ${path}`);
+  }
+  return path;
+}
+
 function getBaseUrl() {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
   if (configuredBaseUrl) {
@@ -360,6 +370,7 @@ async function apiFetch<T>(
   auth: "none" | "access" | "preauth" = "access",
   retryOnUnauthorized = true,
 ): Promise<T> {
+  const normalizedPath = normalizeApiPath(path);
   const session = getSession();
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("content-type") && init.body) {
@@ -371,7 +382,7 @@ async function apiFetch<T>(
   if (auth === "preauth" && session.preAuthToken) {
     headers.set("authorization", `Bearer ${session.preAuthToken}`);
   }
-  const response = await fetch(`${getBaseUrl()}${path}`, {
+  const response = await fetch(`${getBaseUrl()}${normalizedPath}`, {
     ...init,
     headers,
   });
@@ -382,7 +393,7 @@ async function apiFetch<T>(
     session.refreshToken
   ) {
     await refreshAccessToken();
-    return apiFetch<T>(path, init, auth, false);
+    return apiFetch<T>(normalizedPath, init, auth, false);
   }
   if (!response.ok) {
     const payload = (await response.json().catch(() => ({ message: response.statusText }))) as {
@@ -672,7 +683,8 @@ export const api = {
 };
 
 async function publicFetch<T>(path: string, init?: RequestInit) {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
+  const normalizedPath = normalizeApiPath(path);
+  const response = await fetch(`${getBaseUrl()}${normalizedPath}`, {
     ...init,
     headers: {
       "content-type": "application/json",

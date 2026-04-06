@@ -17,11 +17,13 @@ type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & {
 };
 
 export function Badge({ className, tone = "default", ...props }: BadgeProps) {
+  const toneClass = Object.hasOwn(toneClasses, tone) ? toneClasses[tone] : toneClasses.default;
+
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]",
-        toneClasses[tone],
+        toneClass,
         className,
       )}
       {...props}

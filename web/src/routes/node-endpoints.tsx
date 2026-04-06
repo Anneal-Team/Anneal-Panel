@@ -258,6 +258,10 @@ function endpointCaption(item: GeneratedPreviewItem) {
   return `${protocolTitle[item.endpoint.protocol]} / ${item.engine} / ${transportTitle[item.endpoint.transport]}`;
 }
 
+function getModeInfo(meta: Record<NodeDomainMode, ModeMeta>, mode: NodeDomainMode) {
+  return Object.hasOwn(meta, mode) ? meta[mode] : meta.direct;
+}
+
 function ruleTitle(draft: DomainDraft, fallback: string) {
   if (draft.domain.trim()) {
     return draft.domain.trim();
@@ -305,7 +309,7 @@ export function NodeEndpointsPage() {
   );
 
   const selectedDraft = useMemo(
-    () => form.find((draft) => draft.id === selectedDraftId) ?? form[0] ?? null,
+    () => form.find((draft) => draft.id === selectedDraftId) || form[0] || null,
     [form, selectedDraftId],
   );
 
@@ -324,7 +328,12 @@ export function NodeEndpointsPage() {
   const domainsQuery = useQuery({
     queryKey: ["node-domains", selectedServer?.id],
     enabled: Boolean(session.accessToken && selectedServer),
-    queryFn: () => api.listNodeDomains(selectedServer!.id, selectedServer!.tenant_id),
+    queryFn: () => {
+      if (!selectedServer) {
+        throw new Error(t("node_endpoints.error.server_required"));
+      }
+      return api.listNodeDomains(selectedServer.id, selectedServer.tenant_id);
+    },
   });
 
   const endpointsQuery = useQuery({
@@ -343,7 +352,10 @@ export function NodeEndpointsPage() {
         (["xray", "singbox"] as const)
           .filter((engine) => runtimeByEngine(selectedServer, engine))
           .map(async (engine) => {
-            const runtime = runtimeByEngine(selectedServer, engine)!;
+            const runtime = runtimeByEngine(selectedServer, engine);
+            if (!runtime) {
+              throw new Error(t("node_endpoints.runtime_missing"));
+            }
             const endpoints = await api.listNodeRuntimeEndpoints(runtime.id, runtime.tenant_id);
             return [engine, endpoints] as const;
           }),
@@ -428,7 +440,8 @@ export function NodeEndpointsPage() {
       if (!runtime) {
         continue;
       }
-      for (const endpoint of endpointsQuery.data?.[engine] ?? []) {
+      const engineEndpoints = endpointsQuery.data?.[engine] ?? [];
+      for (const endpoint of engineEndpoints) {
         items.push({
           engine,
           runtime_id: runtime.id,
@@ -448,7 +461,7 @@ export function NodeEndpointsPage() {
     setForm((current) => current.map((draft) => (draft.id === id ? { ...draft, [key]: value } : draft)));
   }
 
-  function addDraft(mode: NodeDomainMode = selectedDraft?.mode ?? "direct") {
+  function addDraft(mode: NodeDomainMode = selectedDraft?.mode || "direct") {
     const next = createDraft(mode);
     setForm((current) => [...current, next]);
     setSelectedDraftId(next.id);
@@ -539,7 +552,7 @@ export function NodeEndpointsPage() {
             <div className="flex flex-wrap gap-2">
               {domainsQuery.data.map((domain) => (
                 <Badge key={domain.id} tone="muted">
-                  {modeMeta[domain.mode].title} / {domain.domain}
+                  {getModeInfo(modeMeta, domain.mode).title} / {domain.domain}
                 </Badge>
               ))}
             </div>
@@ -643,7 +656,7 @@ export function NodeEndpointsPage() {
               </div>
               <div className="max-h-[58vh] space-y-2 overflow-y-auto pr-1">
                 {form.map((draft, index) => {
-                  const active = selectedDraft?.id === draft.id;
+                  const active = selectedDraft.id === draft.id;
                   return (
                     <button
                       key={draft.id}
@@ -667,7 +680,7 @@ export function NodeEndpointsPage() {
             </div>
           </div>
 
-          {selectedDraft ? (
+          {selectedDraft !== null ? (
             <div className="space-y-5">
               <div className="rounded-[28px] border border-border bg-[#f8f5f0] p-5">
                 <div className="text-xs uppercase tracking-[0.24em] text-foreground/80">
@@ -682,16 +695,16 @@ export function NodeEndpointsPage() {
                 >
                   {modeOrder.map((mode) => (
                     <option key={mode} value={mode}>
-                      {modeMeta[mode].title}
+                      {getModeInfo(modeMeta, mode).title}
                     </option>
                   ))}
                 </Select>
 
                 <div className="mt-4 rounded-[24px] bg-[#f2efe4] p-4 text-sm text-foreground/75">
-                  <div className="font-semibold text-foreground">{modeMeta[selectedDraft.mode].title}</div>
-                  <div className="mt-2">{modeMeta[selectedDraft.mode].description}</div>
+                  <div className="font-semibold text-foreground">{getModeInfo(modeMeta, selectedDraft.mode).title}</div>
+                  <div className="mt-2">{getModeInfo(modeMeta, selectedDraft.mode).description}</div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {modeMeta[selectedDraft.mode].generated.map((item) => (
+                    {getModeInfo(modeMeta, selectedDraft.mode).generated.map((item) => (
                       <Badge key={item} tone="muted">
                         {item}
                       </Badge>
@@ -709,7 +722,8 @@ export function NodeEndpointsPage() {
                       }`}
                       onClick={() => updateDraft(selectedDraft.id, "mode", mode)}
                     >
-                      <span className="font-semibold">{modeMeta[mode].title}:</span> {modeMeta[mode].description}
+                      <span className="font-semibold">{getModeInfo(modeMeta, mode).title}:</span>{" "}
+                      {getModeInfo(modeMeta, mode).description}
                     </button>
                   ))}
                 </div>
@@ -723,7 +737,7 @@ export function NodeEndpointsPage() {
                     value={selectedDraft.domain}
                     onChange={(event) => updateDraft(selectedDraft.id, "domain", event.target.value)}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].domainHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).domainHint}</div>
                 </div>
 
                 <div className="space-y-2">
@@ -733,7 +747,7 @@ export function NodeEndpointsPage() {
                     value={selectedDraft.alias}
                     onChange={(event) => updateDraft(selectedDraft.id, "alias", event.target.value)}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].aliasHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).aliasHint}</div>
                 </div>
               </div>
 
@@ -746,7 +760,7 @@ export function NodeEndpointsPage() {
                     value={selectedDraft.server_names_text}
                     onChange={(event) => updateDraft(selectedDraft.id, "server_names_text", event.target.value)}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].serverNameHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).serverNameHint}</div>
                 </div>
 
                 <div className="space-y-2">
@@ -757,7 +771,7 @@ export function NodeEndpointsPage() {
                     value={selectedDraft.host_headers_text}
                     onChange={(event) => updateDraft(selectedDraft.id, "host_headers_text", event.target.value)}
                   />
-                  <div className="text-sm text-foreground/80">{modeMeta[selectedDraft.mode].hostHeaderHint}</div>
+                  <div className="text-sm text-foreground/80">{getModeInfo(modeMeta, selectedDraft.mode).hostHeaderHint}</div>
                 </div>
               </div>
 

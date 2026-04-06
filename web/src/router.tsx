@@ -108,7 +108,9 @@ function Shell() {
               {hasAccessSession ? (
                 <button
                   className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition hover:bg-[#1f2d1e] hover:text-[#a4d872]"
-                  onClick={handleLogout}
+                  onClick={() => {
+                    void handleLogout();
+                  }}
                 >
                   <LogIn className="h-5 w-5" />
                   {t("nav.logout")}
