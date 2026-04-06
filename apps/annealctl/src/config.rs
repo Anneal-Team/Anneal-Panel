@@ -234,11 +234,11 @@ fn resolve_control_plane(args: &InstallArgs, role: InstallRole) -> Result<Contro
     if domain.is_none() {
         domain = args.public_base_url.clone();
     }
-    if let Some(value) = domain.clone() {
-        if value.starts_with("http://") || value.starts_with("https://") {
-            public_base_url = Some(value.clone());
-            hydrate_from_public_url(&value, &mut domain, &mut panel_path)?;
-        }
+    if let Some(value) = domain.clone()
+        && (value.starts_with("http://") || value.starts_with("https://"))
+    {
+        public_base_url = Some(value.clone());
+        hydrate_from_public_url(&value, &mut domain, &mut panel_path)?;
     }
 
     let domain = normalize_domain_input(

@@ -864,10 +864,10 @@ impl Installer {
             values.insert("ANNEAL_RESELLER_EMAIL".into(), reseller.email.clone());
             values.insert("ANNEAL_RESELLER_PASSWORD".into(), reseller.password.clone());
         }
-        if let Some(node) = self.config.node.as_ref() {
-            if let Some(group_name) = node.group_name.as_ref() {
-                values.insert("ANNEAL_NODE_GROUP_NAME".into(), group_name.clone());
-            }
+        if let Some(node) = self.config.node.as_ref()
+            && let Some(group_name) = node.group_name.as_ref()
+        {
+            values.insert("ANNEAL_NODE_GROUP_NAME".into(), group_name.clone());
         }
         if let Some(name) = self.state.bootstrap.starter_subscription_name.as_ref() {
             values.insert("ANNEAL_STARTER_SUBSCRIPTION_NAME".into(), name.clone());

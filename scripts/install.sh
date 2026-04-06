@@ -23,6 +23,13 @@ require_tool() {
   }
 }
 
+require_root() {
+  if [[ "$(id -u)" != "0" ]]; then
+    printf 'Run the installer as root.\n' >&2
+    exit 1
+  fi
+}
+
 normalize_release_version() {
   printf '%s' "${1#v}"
 }
@@ -153,6 +160,9 @@ main() {
   require_tool sha256sum
   require_tool sed
   require_tool uname
+  require_tool id
+
+  require_root
 
   load_release_metadata
 

@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let layout = InstallLayout::default();
     match cli.command {
-        Command::Install(args) => commands::install::run(layout, args).await,
+        Command::Install(args) => commands::install::run(layout, *args).await,
         Command::Resume(args) => commands::install::resume(layout, args).await,
         Command::Status => commands::status::run(layout).await,
         Command::Doctor => commands::doctor::run(layout).await,

@@ -15,7 +15,7 @@ crossterm = "0.28.1"
 dialoguer.workspace = true
 indicatif.workspace = true
 rand.workspace = true
-ratatui = "0.29.0"
+ratatui = { version = "0.30.0", features = ["crossterm_0_28"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
