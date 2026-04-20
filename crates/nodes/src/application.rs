@@ -1713,7 +1713,7 @@ impl NodeRepository for InMemoryNodeRepository {
             .filter(|rollout| tenant_id.is_none() || Some(rollout.tenant_id) == tenant_id)
             .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        items.sort_by_key(|right| std::cmp::Reverse(right.created_at));
         Ok(items)
     }
 

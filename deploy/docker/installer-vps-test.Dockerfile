@@ -28,7 +28,8 @@ RUN apt-get update \
 
 COPY scripts/install.sh /usr/local/bin/anneal-install-test
 
-RUN chmod +x /usr/local/bin/anneal-install-test \
+RUN sed -i 's/\r$//' /usr/local/bin/anneal-install-test \
+    && chmod +x /usr/local/bin/anneal-install-test \
     && printf '%s\n' \
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
