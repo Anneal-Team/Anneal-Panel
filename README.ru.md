@@ -21,6 +21,12 @@
 </p>
 
 <p align="center">
+  <a href="https://app.codacy.com/gh/Anneal-Team/Anneal-Panel/dashboard?utm_source=gh&amp;utm_medium=referral&amp;utm_content=&amp;utm_campaign=Badge_grade">
+    <img src="https://app.codacy.com/project/badge/Grade/34c8d80441074b9cb26e15489bd70569" alt="Codacy grade" />
+  </a>
+</p>
+
+<p align="center">
   <b>Управление серверными группами &nbsp;·&nbsp; Доменные правила &nbsp;·&nbsp; Доставка подписок &nbsp;·&nbsp; Клиентские конфиги</b>
 </p>
 
