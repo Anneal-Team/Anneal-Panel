@@ -26,6 +26,8 @@
 
 ---
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/39dfe3d49742453c81292e8a706a7bef)](https://app.codacy.com/gh/Anneal-Team/Anneal-Panel?utm_source=github.com&utm_medium=referral&utm_content=Anneal-Team/Anneal-Panel&utm_campaign=Badge_Grade)
+
 ## 🔥 What is Anneal
 
 Anneal is a control panel that brings together everything needed to operate proxy infrastructure at scale — runtime agents, domain routing rules, automated endpoint generation, subscription management, and client config delivery.
