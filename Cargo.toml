@@ -52,7 +52,7 @@ futures = "0.3.32"
 hmac = "0.12.1"
 indicatif = "0.17.11"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
-rand = "0.9.2"
+rand = "0.10.1"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
