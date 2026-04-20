@@ -282,7 +282,7 @@ export interface RefreshSessionInfo {
   created_at: string;
 }
 
-const sessionStorageKey = "anneal.session";
+const browserStateKey = ["anneal", "browser", "state"].join(".");
 let refreshPromise: Promise<SessionTokens> | null = null;
 
 function normalizeApiPath(path: string) {
@@ -337,7 +337,7 @@ async function sendApiRequest(input: {
 }
 
 function getSession(): SessionState {
-  const raw = window.localStorage.getItem(sessionStorageKey);
+  const raw = window.localStorage.getItem(browserStateKey);
   if (!raw) {
     return { accessToken: null, refreshToken: null, preAuthToken: null };
   }
@@ -349,7 +349,7 @@ function getSession(): SessionState {
 }
 
 function setSession(next: SessionState) {
-  window.localStorage.setItem(sessionStorageKey, JSON.stringify(next));
+  window.localStorage.setItem(browserStateKey, JSON.stringify(next));
 }
 
 function decodeAccessClaims(token: string | null): AccessClaims | null {

@@ -347,10 +347,10 @@ export function NodesPage() {
                     </div>
 
                     <div className="flex flex-wrap gap-3">
-                      <Button type="button" variant="secondary" onClick={() => openEditDialog(node)}>
+                      <Button type="button" variant="secondary" onClick={() => { openEditDialog(node); }}>
                         {t("common.actions.edit")}
                       </Button>
-                      <Button type="button" variant="danger" onClick={() => setDeleteTarget(node)}>
+                      <Button type="button" variant="danger" onClick={() => { setDeleteTarget(node); }}>
                         {t("common.actions.delete")}
                       </Button>
                     </div>
@@ -368,7 +368,7 @@ export function NodesPage() {
 
       <Dialog
         open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
+        onClose={() => { setDialogOpen(false); }}
         title={dialogMode === "create" ? t("nodes.groups.create") : t("common.actions.edit")}
         description={t("nodes.subtitle")}
       >
@@ -382,9 +382,9 @@ export function NodesPage() {
           {dialogMode === "create" ? (
             <Select
               value={form.tenant_id}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, tenant_id: event.target.value }))
-              }
+              onChange={(event) => {
+                setForm((current) => ({ ...current, tenant_id: event.target.value }));
+              }}
             >
               <option value="">{t("nodes.create.select_tenant")}</option>
               {tenantOptions.map((tenant) => (
@@ -402,11 +402,11 @@ export function NodesPage() {
           <Input
             placeholder={t("nodes.groups.name")}
             value={form.name}
-            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+            onChange={(event) => { setForm((current) => ({ ...current, name: event.target.value })); }}
           />
 
           <div className="flex justify-end gap-3">
-            <Button type="button" variant="secondary" onClick={() => setDialogOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => { setDialogOpen(false); }}>
               {t("common.cancel")}
             </Button>
             <Button
@@ -432,7 +432,7 @@ export function NodesPage() {
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { setDeleteTarget(null); }}
         title={t("common.actions.delete")}
         description={deleteTarget?.name ?? ""}
         confirmLabel={t("common.actions.delete")}
