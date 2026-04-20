@@ -50,7 +50,7 @@ clap = { version = "4.5.49", features = ["derive", "env"] }
 dialoguer = "0.11.0"
 futures = "0.3.32"
 hmac = "0.12.1"
-indicatif = "0.17.11"
+indicatif = "0.18.4"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 rand = "0.9.2"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls-native-roots"] }
