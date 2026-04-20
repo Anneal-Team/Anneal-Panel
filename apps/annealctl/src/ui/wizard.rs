@@ -405,10 +405,8 @@ impl RatatuiWizard {
             KeyCode::Up => {
                 self.selection_index = self.selection_index.saturating_sub(1);
             }
-            KeyCode::Down => {
-                if self.selection_index + 1 < max {
-                    self.selection_index += 1;
-                }
+            KeyCode::Down if self.selection_index + 1 < max => {
+                self.selection_index += 1;
             }
             _ if is_submit_key(key) => {
                 match self.current_prompt() {
@@ -447,10 +445,8 @@ impl RatatuiWizard {
             KeyCode::Up => {
                 self.selection_index = self.selection_index.saturating_sub(1);
             }
-            KeyCode::Down => {
-                if self.selection_index < 1 {
-                    self.selection_index += 1;
-                }
+            KeyCode::Down if self.selection_index < 1 => {
+                self.selection_index += 1;
             }
             KeyCode::Char(' ') => {
                 let engine = if self.selection_index == 0 {
@@ -484,10 +480,8 @@ impl RatatuiWizard {
             KeyCode::Left => {
                 self.cursor = self.cursor.saturating_sub(1);
             }
-            KeyCode::Right => {
-                if self.cursor < self.input.len() {
-                    self.cursor += 1;
-                }
+            KeyCode::Right if self.cursor < self.input.len() => {
+                self.cursor += 1;
             }
             KeyCode::Home => {
                 self.cursor = 0;
@@ -495,16 +489,12 @@ impl RatatuiWizard {
             KeyCode::End => {
                 self.cursor = self.input.len();
             }
-            KeyCode::Backspace => {
-                if self.cursor > 0 && self.cursor <= self.input.len() {
-                    self.cursor -= 1;
-                    self.input.remove(self.cursor);
-                }
+            KeyCode::Backspace if self.cursor > 0 && self.cursor <= self.input.len() => {
+                self.cursor -= 1;
+                self.input.remove(self.cursor);
             }
-            KeyCode::Delete => {
-                if self.cursor < self.input.len() {
-                    self.input.remove(self.cursor);
-                }
+            KeyCode::Delete if self.cursor < self.input.len() => {
+                self.input.remove(self.cursor);
             }
             KeyCode::Char(char) => {
                 self.input.insert(self.cursor, char);
