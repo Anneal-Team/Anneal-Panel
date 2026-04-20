@@ -6,7 +6,7 @@ use argon2::{
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use totp_rs::{Algorithm as TotpAlgorithm, Secret, TOTP};
@@ -445,5 +445,14 @@ pub fn generate_refresh_token() -> String {
 pub fn hash_refresh_token(refresh_token: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(refresh_token.as_bytes());
-    format!("{:x}", digest.finalize())
+    hex_encode(&digest.finalize())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut value = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut value, "{byte:02x}");
+    }
+    value
 }

@@ -13,7 +13,7 @@ use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
 use chrono::Utc;
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use uuid::Uuid;
 
 use crate::domain::{

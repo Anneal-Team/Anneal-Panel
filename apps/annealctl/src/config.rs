@@ -6,7 +6,7 @@ use std::{
 use anneal_core::{ProtocolKind, ProxyEngine};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 

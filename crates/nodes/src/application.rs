@@ -12,7 +12,7 @@ use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
