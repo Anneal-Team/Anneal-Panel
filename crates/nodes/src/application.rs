@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, VecDeque},
     sync::RwLock,
 };
 
@@ -12,7 +12,7 @@ use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -60,11 +60,13 @@ pub trait NodeRepository: Send + Sync {
         &self,
         token_hash: &str,
     ) -> ApplicationResult<Option<NodeBootstrapSession>>;
+    async fn reactivate_bootstrap_session(&self, session_id: Uuid) -> ApplicationResult<()>;
     async fn create_node(
         &self,
         node: NodeRuntime,
         protocols: &[NodeCapability],
     ) -> ApplicationResult<NodeRuntime>;
+    async fn delete_node(&self, node_id: Uuid) -> ApplicationResult<()>;
     async fn find_node_by_token_hash(
         &self,
         token_hash: &str,
@@ -219,12 +221,20 @@ where
         (*self).consume_bootstrap_session(token_hash).await
     }
 
+    async fn reactivate_bootstrap_session(&self, session_id: Uuid) -> ApplicationResult<()> {
+        (*self).reactivate_bootstrap_session(session_id).await
+    }
+
     async fn create_node(
         &self,
         node: NodeRuntime,
         protocols: &[NodeCapability],
     ) -> ApplicationResult<NodeRuntime> {
         (*self).create_node(node, protocols).await
+    }
+
+    async fn delete_node(&self, node_id: Uuid) -> ApplicationResult<()> {
+        (*self).delete_node(node_id).await
     }
 
     async fn find_node_by_token_hash(
@@ -338,6 +348,7 @@ pub struct NodeService<R> {
     repository: R,
     rbac: RbacService,
     token_hasher: TokenHasher,
+    default_node_domain: Option<String>,
 }
 
 impl<R> NodeService<R> {
@@ -350,10 +361,34 @@ impl<R> NodeService<R> {
     }
 
     pub fn with_token_hasher(repository: R, rbac: RbacService, token_hasher: TokenHasher) -> Self {
+        Self::with_default_node_domain(repository, rbac, token_hasher, None)
+    }
+
+    pub fn with_public_base_url(
+        repository: R,
+        rbac: RbacService,
+        token_hasher: TokenHasher,
+        public_base_url: &str,
+    ) -> Self {
+        Self::with_default_node_domain(
+            repository,
+            rbac,
+            token_hasher,
+            default_node_domain_from_public_base_url(public_base_url),
+        )
+    }
+
+    fn with_default_node_domain(
+        repository: R,
+        rbac: RbacService,
+        token_hasher: TokenHasher,
+        default_node_domain: Option<String>,
+    ) -> Self {
         Self {
             repository,
             rbac,
             token_hasher,
+            default_node_domain,
         }
     }
 }
@@ -594,8 +629,10 @@ where
             })
             .collect::<Vec<_>>();
         let node = self.repository.create_node(node, &protocols).await?;
-        self.sync_server_node_endpoints(record.server_node_id)
-            .await?;
+        if let Err(error) = self.sync_server_node_endpoints(record.server_node_id).await {
+            self.repository.delete_node(node.id).await?;
+            return Err(error);
+        }
         Ok(RuntimeRegistrationGrant {
             runtime: node,
             node_token,
@@ -619,26 +656,45 @@ where
             .into_iter()
             .map(|registration| (registration.engine, registration))
             .collect::<HashMap<_, _>>();
-        let mut grants = Vec::with_capacity(session.engines.len());
-        for engine in &session.engines {
-            let mut registration = registrations.get(engine).cloned().ok_or_else(|| {
-                ApplicationError::Validation(format!(
-                    "missing bootstrap registration for {}",
-                    engine_name(*engine)
-                ))
-            })?;
-            registration.name =
-                bootstrap_node_name(&session.node_name, *engine, session.engines.len());
-            let grant = self
-                .register_bootstrap_runtime(session.tenant_id, session.server_node_id, registration)
-                .await?;
-            grants.push(NodeBootstrapRuntimeGrant {
-                engine: *engine,
-                node_id: grant.runtime.id,
-                node_token: grant.node_token,
-            });
+        let mut created_node_ids = Vec::with_capacity(session.engines.len());
+        let result = async {
+            let mut grants = Vec::with_capacity(session.engines.len());
+            for engine in &session.engines {
+                let mut registration = registrations.get(engine).cloned().ok_or_else(|| {
+                    ApplicationError::Validation(format!(
+                        "missing bootstrap registration for {}",
+                        engine_name(*engine)
+                    ))
+                })?;
+                registration.name =
+                    bootstrap_node_name(&session.node_name, *engine, session.engines.len());
+                let grant = self
+                    .register_bootstrap_runtime(
+                        session.tenant_id,
+                        session.server_node_id,
+                        registration,
+                    )
+                    .await?;
+                created_node_ids.push(grant.runtime.id);
+                grants.push(NodeBootstrapRuntimeGrant {
+                    engine: *engine,
+                    node_id: grant.runtime.id,
+                    node_token: grant.node_token,
+                });
+            }
+            Ok::<Vec<NodeBootstrapRuntimeGrant>, ApplicationError>(grants)
         }
-        Ok(grants)
+        .await;
+        if let Err(error) = result {
+            for node_id in created_node_ids.into_iter().rev() {
+                self.repository.delete_node(node_id).await?;
+            }
+            self.repository
+                .reactivate_bootstrap_session(session.id)
+                .await?;
+            return Err(error);
+        }
+        result
     }
 
     pub async fn heartbeat(
@@ -1007,6 +1063,8 @@ where
         registration: RuntimeRegistration,
     ) -> ApplicationResult<RuntimeRegistrationGrant> {
         validate_registered_protocols(registration.engine, &registration.protocols)?;
+        self.prepare_bootstrap_runtime_slot(tenant_id, server_node_id, &registration.name)
+            .await?;
         let now = Utc::now();
         let node_token = generate_token();
         let node = NodeRuntime {
@@ -1031,7 +1089,10 @@ where
             })
             .collect::<Vec<_>>();
         let node = self.repository.create_node(node, &protocols).await?;
-        self.sync_server_node_endpoints(server_node_id).await?;
+        if let Err(error) = self.sync_server_node_endpoints(server_node_id).await {
+            self.repository.delete_node(node.id).await?;
+            return Err(error);
+        }
         Ok(RuntimeRegistrationGrant {
             runtime: node,
             node_token,
@@ -1070,6 +1131,27 @@ where
         Ok(node)
     }
 
+    async fn load_or_seed_node_domains(
+        &self,
+        server_node_id: Uuid,
+    ) -> ApplicationResult<Vec<NodeDomain>> {
+        let existing = self.repository.list_node_domains(server_node_id).await?;
+        if !existing.is_empty() {
+            return Ok(existing);
+        }
+        let Some(default_domain) = self.default_node_domain.as_deref() else {
+            return Ok(existing);
+        };
+        let domains = normalize_node_group_domains(
+            server_node_id,
+            default_node_domain_drafts(default_domain),
+            Utc::now(),
+        )?;
+        self.repository
+            .replace_node_domains(server_node_id, &domains)
+            .await
+    }
+
     async fn sync_server_node_endpoints(&self, server_node_id: Uuid) -> ApplicationResult<()> {
         let nodes = self
             .repository
@@ -1078,7 +1160,7 @@ where
         if nodes.is_empty() {
             return Ok(());
         }
-        let domains = self.repository.list_node_domains(server_node_id).await?;
+        let domains = self.load_or_seed_node_domains(server_node_id).await?;
         let mut capabilities_by_node = HashMap::new();
         let mut existing_endpoints_by_node = HashMap::new();
         for node in &nodes {
@@ -1114,6 +1196,33 @@ where
         }
         Ok(())
     }
+
+    async fn prepare_bootstrap_runtime_slot(
+        &self,
+        tenant_id: Uuid,
+        server_node_id: Uuid,
+        name: &str,
+    ) -> ApplicationResult<()> {
+        let existing = self
+            .repository
+            .list_nodes(Some(tenant_id))
+            .await?
+            .into_iter()
+            .find(|node| node.name == name);
+        let Some(existing) = existing else {
+            return Ok(());
+        };
+        if existing.server_node_id == server_node_id
+            && existing.status == NodeStatus::Pending
+            && existing.last_seen_at.is_none()
+        {
+            self.repository.delete_node(existing.id).await?;
+            return Ok(());
+        }
+        Err(ApplicationError::Conflict(format!(
+            "node runtime {name} already exists"
+        )))
+    }
 }
 
 #[derive(Default)]
@@ -1127,6 +1236,38 @@ pub struct InMemoryNodeRepository {
     endpoints: RwLock<HashMap<Uuid, Vec<NodeEndpoint>>>,
     revisions: RwLock<HashMap<Uuid, ConfigRevision>>,
     rollouts: RwLock<HashMap<Uuid, DeploymentRollout>>,
+    create_node_attempts: RwLock<usize>,
+    fail_create_node_on_attempt: RwLock<Option<usize>>,
+    replace_node_endpoints_attempts: RwLock<usize>,
+    fail_replace_node_endpoints_on_attempt: RwLock<Option<usize>>,
+}
+
+impl InMemoryNodeRepository {
+    #[cfg(test)]
+    fn fail_create_node_on_attempt(&self, attempt: usize) {
+        *self.fail_create_node_on_attempt.write().expect("lock") = Some(attempt);
+    }
+
+    #[cfg(test)]
+    fn clear_create_node_failure(&self) {
+        *self.fail_create_node_on_attempt.write().expect("lock") = None;
+    }
+
+    #[cfg(test)]
+    fn fail_replace_node_endpoints_on_attempt(&self, attempt: usize) {
+        *self
+            .fail_replace_node_endpoints_on_attempt
+            .write()
+            .expect("lock") = Some(attempt);
+    }
+
+    #[cfg(test)]
+    fn clear_replace_node_endpoints_failure(&self) {
+        *self
+            .fail_replace_node_endpoints_on_attempt
+            .write()
+            .expect("lock") = None;
+    }
 }
 
 #[async_trait]
@@ -1297,11 +1438,50 @@ impl NodeRepository for InMemoryNodeRepository {
         Ok(found)
     }
 
+    async fn reactivate_bootstrap_session(&self, session_id: Uuid) -> ApplicationResult<()> {
+        if let Some(session) = self
+            .bootstrap_sessions
+            .write()
+            .expect("lock")
+            .get_mut(&session_id)
+        {
+            session.used_at = None;
+        }
+        Ok(())
+    }
+
     async fn create_node(
         &self,
         node: NodeRuntime,
         protocols: &[NodeCapability],
     ) -> ApplicationResult<NodeRuntime> {
+        let attempt = {
+            let mut attempts = self.create_node_attempts.write().expect("lock");
+            *attempts += 1;
+            *attempts
+        };
+        if self
+            .fail_create_node_on_attempt
+            .read()
+            .expect("lock")
+            .is_some_and(|configured| configured == attempt)
+        {
+            return Err(ApplicationError::Infrastructure(
+                "simulated create_node failure".into(),
+            ));
+        }
+        if self
+            .nodes
+            .read()
+            .expect("lock")
+            .values()
+            .any(|existing| existing.tenant_id == node.tenant_id && existing.name == node.name)
+        {
+            return Err(ApplicationError::Conflict(format!(
+                "node runtime {} already exists",
+                node.name
+            )));
+        }
         self.nodes
             .write()
             .expect("lock")
@@ -1311,6 +1491,21 @@ impl NodeRepository for InMemoryNodeRepository {
             .expect("lock")
             .insert(node.id, protocols.to_vec());
         Ok(node)
+    }
+
+    async fn delete_node(&self, node_id: Uuid) -> ApplicationResult<()> {
+        self.nodes.write().expect("lock").remove(&node_id);
+        self.capabilities.write().expect("lock").remove(&node_id);
+        self.endpoints.write().expect("lock").remove(&node_id);
+        self.rollouts
+            .write()
+            .expect("lock")
+            .retain(|_, rollout| rollout.node_id != node_id);
+        self.revisions
+            .write()
+            .expect("lock")
+            .retain(|_, revision| revision.node_id != Some(node_id));
+        Ok(())
     }
 
     async fn find_node_by_token_hash(
@@ -1390,6 +1585,30 @@ impl NodeRepository for InMemoryNodeRepository {
         node_id: Uuid,
         endpoints: &[NodeEndpoint],
     ) -> ApplicationResult<Vec<NodeEndpoint>> {
+        let attempt = {
+            let mut attempts = self.replace_node_endpoints_attempts.write().expect("lock");
+            *attempts += 1;
+            *attempts
+        };
+        if self
+            .fail_replace_node_endpoints_on_attempt
+            .read()
+            .expect("lock")
+            .is_some_and(|configured| configured == attempt)
+        {
+            return Err(ApplicationError::Infrastructure(
+                "simulated replace_node_endpoints failure".into(),
+            ));
+        }
+        let mut endpoint_ids = BTreeSet::new();
+        if endpoints
+            .iter()
+            .any(|endpoint| !endpoint_ids.insert(endpoint.id))
+        {
+            return Err(ApplicationError::Infrastructure(
+                "duplicate endpoint id in replace_node_endpoints".into(),
+            ));
+        }
         self.endpoints
             .write()
             .expect("lock")
@@ -1690,6 +1909,61 @@ fn normalize_node_group_domains(
         .collect()
 }
 
+fn default_node_domain_from_public_base_url(public_base_url: &str) -> Option<String> {
+    let trimmed = public_base_url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let authority = without_scheme.split('/').next()?.trim();
+    if authority.is_empty() {
+        return None;
+    }
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host)
+        .trim();
+    if host.is_empty() {
+        return None;
+    }
+    let normalized = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest).trim()
+    } else {
+        host.split(':').next().unwrap_or(host).trim()
+    };
+    let normalized = normalized.trim_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn default_node_domain_drafts(domain: &str) -> Vec<NodeDomainDraft> {
+    vec![
+        NodeDomainDraft {
+            mode: NodeDomainMode::Direct,
+            domain: domain.to_owned(),
+            alias: Some("direct".into()),
+            server_names: vec![],
+            host_headers: vec![],
+        },
+        NodeDomainDraft {
+            mode: NodeDomainMode::Worker,
+            domain: domain.to_owned(),
+            alias: Some("worker".into()),
+            server_names: vec![domain.to_owned()],
+            host_headers: vec![domain.to_owned()],
+        },
+        NodeDomainDraft {
+            mode: NodeDomainMode::Reality,
+            domain: domain.to_owned(),
+            alias: Some("reality".into()),
+            server_names: vec![domain.to_owned()],
+            host_headers: vec![],
+        },
+    ]
+}
+
 fn bootstrap_node_name(base_name: &str, engine: ProxyEngine, engines_count: usize) -> String {
     if engines_count == 1 {
         return base_name.to_owned();
@@ -1723,36 +1997,38 @@ fn normalize_string_list(values: Vec<String>) -> Vec<String> {
 }
 
 fn reconcile_generated_endpoints(previous: &[NodeEndpoint], generated: &mut [NodeEndpoint]) {
-    let previous_by_key = previous
-        .iter()
-        .map(|endpoint| (endpoint_state_key(endpoint), endpoint))
-        .collect::<HashMap<_, _>>();
-    for endpoint in generated {
-        let Some(existing) = previous_by_key.get(&endpoint_state_key(endpoint)) else {
-            continue;
-        };
-        endpoint.id = existing.id;
-        endpoint.enabled = existing.enabled;
-        endpoint.created_at = existing.created_at;
-        if endpoint.security == SecurityKind::Reality {
-            endpoint.reality_public_key = existing.reality_public_key.clone();
-            endpoint.reality_private_key = existing.reality_private_key.clone();
-            endpoint.reality_short_id = existing.reality_short_id.clone();
-        }
-    }
+    reconcile_endpoints(previous, generated, true);
 }
 
 fn reconcile_manual_endpoints(previous: &[NodeEndpoint], updated: &mut [NodeEndpoint]) {
-    let previous_by_key = previous
-        .iter()
-        .map(|endpoint| (endpoint_state_key(endpoint), endpoint))
-        .collect::<HashMap<_, _>>();
+    reconcile_endpoints(previous, updated, false);
+}
+
+fn reconcile_endpoints(
+    previous: &[NodeEndpoint],
+    updated: &mut [NodeEndpoint],
+    keep_enabled: bool,
+) {
+    let mut previous_by_key = previous.iter().fold(
+        HashMap::<String, VecDeque<&NodeEndpoint>>::new(),
+        |mut grouped, endpoint| {
+            grouped
+                .entry(endpoint_state_key(endpoint))
+                .or_default()
+                .push_back(endpoint);
+            grouped
+        },
+    );
     for endpoint in updated {
-        let Some(existing) = previous_by_key.get(&endpoint_state_key(endpoint)) else {
+        let key = endpoint_state_key(endpoint);
+        let Some(existing) = previous_by_key.get_mut(&key).and_then(VecDeque::pop_front) else {
             continue;
         };
         endpoint.id = existing.id;
         endpoint.created_at = existing.created_at;
+        if keep_enabled {
+            endpoint.enabled = existing.enabled;
+        }
         if endpoint.security == SecurityKind::Reality {
             endpoint.reality_public_key = existing.reality_public_key.clone();
             endpoint.reality_private_key = existing.reality_private_key.clone();
@@ -2421,13 +2697,16 @@ fn protocol_name(protocol: ProtocolKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use anneal_config_engine::{SecurityKind, TransportKind};
-    use anneal_core::{Actor, NodeStatus, ProtocolKind, ProxyEngine, UserRole};
+    use anneal_core::{Actor, NodeStatus, ProtocolKind, ProxyEngine, TokenHasher, UserRole};
     use anneal_rbac::RbacService;
     use chrono::{Duration, Utc};
     use uuid::Uuid;
 
     use crate::{
-        application::{InMemoryNodeRepository, NodeRepository, NodeService},
+        application::{
+            InMemoryNodeRepository, NodeRepository, NodeService,
+            default_node_domain_from_public_base_url,
+        },
         domain::{NodeDomainDraft, NodeDomainMode, NodeEndpointDraft, RuntimeRegistration},
     };
 
@@ -2455,6 +2734,18 @@ mod tests {
             tls_key_path: endpoint.tls_key_path.clone(),
             enabled: endpoint.enabled,
         }
+    }
+
+    #[test]
+    fn panel_domain_is_extracted_from_public_base_url() {
+        assert_eq!(
+            default_node_domain_from_public_base_url("https://test.aurausa.me/hidden/panel"),
+            Some("test.aurausa.me".into())
+        );
+        assert_eq!(
+            default_node_domain_from_public_base_url("https://test.aurausa.me.:8443/hidden"),
+            Some("test.aurausa.me".into())
+        );
     }
 
     #[tokio::test]
@@ -2495,6 +2786,133 @@ mod tests {
             .expect("register");
 
         assert_eq!(node.status, NodeStatus::Online);
+    }
+
+    #[tokio::test]
+    async fn runtime_registration_auto_seeds_default_domains_and_proxy_endpoints() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::with_public_base_url(
+            &repository,
+            RbacService,
+            TokenHasher::new("test-node-seed-hash-key").expect("token hasher"),
+            "https://test.aurausa.me/hidden-panel",
+        );
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let xray_token = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Xray,
+            )
+            .await
+            .expect("xray token");
+        let xray_node = service
+            .register_node(
+                &xray_token.token,
+                RuntimeRegistration {
+                    name: "edge-xray".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![
+                        ProtocolKind::VlessReality,
+                        ProtocolKind::Vmess,
+                        ProtocolKind::Trojan,
+                        ProtocolKind::Shadowsocks2022,
+                    ],
+                },
+            )
+            .await
+            .expect("xray register");
+
+        let domains = repository
+            .list_node_domains(group.id)
+            .await
+            .expect("domains after seed");
+        assert_eq!(domains.len(), 3);
+        assert!(
+            domains
+                .iter()
+                .any(|domain| domain.mode == NodeDomainMode::Direct)
+        );
+        assert!(
+            domains
+                .iter()
+                .any(|domain| domain.mode == NodeDomainMode::Worker)
+        );
+        assert!(
+            domains
+                .iter()
+                .any(|domain| domain.mode == NodeDomainMode::Reality)
+        );
+        assert!(
+            domains
+                .iter()
+                .all(|domain| domain.domain == "test.aurausa.me")
+        );
+
+        let xray_endpoints = repository
+            .list_node_endpoints(xray_node.id)
+            .await
+            .expect("xray endpoints");
+        assert!(!xray_endpoints.is_empty());
+        assert!(
+            xray_endpoints
+                .iter()
+                .all(|endpoint| endpoint.public_host == "test.aurausa.me")
+        );
+
+        let singbox_token = service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                ProxyEngine::Singbox,
+            )
+            .await
+            .expect("singbox token");
+        let singbox_node = service
+            .register_node(
+                &singbox_token.token,
+                RuntimeRegistration {
+                    name: "edge-singbox".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Singbox,
+                    protocols: vec![
+                        ProtocolKind::VlessReality,
+                        ProtocolKind::Vmess,
+                        ProtocolKind::Trojan,
+                        ProtocolKind::Shadowsocks2022,
+                        ProtocolKind::Tuic,
+                        ProtocolKind::Hysteria2,
+                    ],
+                },
+            )
+            .await
+            .expect("singbox register");
+
+        let singbox_endpoints = repository
+            .list_node_endpoints(singbox_node.id)
+            .await
+            .expect("singbox endpoints");
+        assert!(
+            singbox_endpoints
+                .iter()
+                .any(|endpoint| endpoint.protocol == ProtocolKind::Tuic)
+        );
+        assert!(
+            singbox_endpoints
+                .iter()
+                .any(|endpoint| endpoint.protocol == ProtocolKind::Hysteria2)
+        );
     }
 
     #[tokio::test]
@@ -3194,6 +3612,74 @@ mod tests {
     }
 
     #[test]
+    fn generated_endpoint_reconcile_keeps_distinct_ids_for_duplicate_state_keys() {
+        let node_id = Uuid::new_v4();
+        let created_at = Utc::now();
+        let first_existing = crate::domain::NodeEndpoint {
+            id: Uuid::new_v4(),
+            node_id,
+            protocol: ProtocolKind::Vmess,
+            listen_host: "::".into(),
+            listen_port: 443,
+            public_host: "test.aurausa.me".into(),
+            public_port: 443,
+            transport: TransportKind::Ws,
+            security: SecurityKind::None,
+            server_name: Some("test.aurausa.me".into()),
+            host_header: None,
+            path: Some("/vmess".into()),
+            service_name: None,
+            flow: None,
+            reality_public_key: None,
+            reality_private_key: None,
+            reality_short_id: None,
+            fingerprint: None,
+            alpn: Vec::new(),
+            cipher: None,
+            tls_certificate_path: None,
+            tls_key_path: None,
+            enabled: false,
+            created_at,
+            updated_at: created_at,
+        };
+        let second_existing = crate::domain::NodeEndpoint {
+            id: Uuid::new_v4(),
+            enabled: true,
+            created_at: created_at + Duration::seconds(1),
+            updated_at: created_at + Duration::seconds(1),
+            ..first_existing.clone()
+        };
+        let mut generated = vec![
+            crate::domain::NodeEndpoint {
+                id: Uuid::new_v4(),
+                enabled: true,
+                created_at: created_at + Duration::seconds(2),
+                updated_at: created_at + Duration::seconds(2),
+                ..first_existing.clone()
+            },
+            crate::domain::NodeEndpoint {
+                id: Uuid::new_v4(),
+                enabled: true,
+                created_at: created_at + Duration::seconds(3),
+                updated_at: created_at + Duration::seconds(3),
+                ..first_existing.clone()
+            },
+        ];
+
+        super::reconcile_generated_endpoints(
+            &[first_existing.clone(), second_existing.clone()],
+            &mut generated,
+        );
+
+        assert_eq!(generated[0].id, first_existing.id);
+        assert_eq!(generated[0].enabled, first_existing.enabled);
+        assert_eq!(generated[0].created_at, first_existing.created_at);
+        assert_eq!(generated[1].id, second_existing.id);
+        assert_eq!(generated[1].enabled, second_existing.enabled);
+        assert_eq!(generated[1].created_at, second_existing.created_at);
+    }
+
+    #[test]
     fn stale_node_becomes_offline() {
         let now = Utc::now();
         let status = NodeService::<InMemoryNodeRepository>::resolve_status(
@@ -3450,6 +3936,389 @@ mod tests {
             second_attempt,
             anneal_core::ApplicationError::Unauthorized
         ));
+    }
+
+    #[tokio::test]
+    async fn failed_bootstrap_attempt_keeps_token_reusable() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let group = service
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let bootstrap = service
+            .create_bootstrap_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                "edge".into(),
+                vec![ProxyEngine::Xray, ProxyEngine::Singbox],
+            )
+            .await
+            .expect("bootstrap");
+
+        let first_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![RuntimeRegistration {
+                    name: "edge-xray".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                }],
+            )
+            .await
+            .expect_err("bootstrap must fail without all runtimes");
+        assert!(matches!(
+            first_attempt,
+            anneal_core::ApplicationError::Validation(_)
+        ));
+
+        let second_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-xray".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![ProtocolKind::VlessReality],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-singbox".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
+                    },
+                ],
+            )
+            .await
+            .expect("bootstrap retry must succeed");
+
+        assert_eq!(second_attempt.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_bootstrap_after_partial_registration_rolls_back_created_nodes() {
+        let repository = InMemoryNodeRepository::default();
+        repository.fail_create_node_on_attempt(2);
+        let service = NodeService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let tenant_id = actor.tenant_id.expect("tenant");
+        let group = service
+            .create_server_node(&actor, tenant_id, "main".into())
+            .await
+            .expect("group");
+        let bootstrap = service
+            .create_bootstrap_token(
+                &actor,
+                tenant_id,
+                group.id,
+                "edge".into(),
+                vec![ProxyEngine::Xray, ProxyEngine::Singbox],
+            )
+            .await
+            .expect("bootstrap");
+
+        let first_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-xray".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![ProtocolKind::VlessReality],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-singbox".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
+                    },
+                ],
+            )
+            .await
+            .expect_err("bootstrap must fail after first runtime");
+        assert!(matches!(
+            first_attempt,
+            anneal_core::ApplicationError::Infrastructure(_)
+        ));
+        assert!(
+            repository
+                .list_nodes(Some(tenant_id))
+                .await
+                .expect("nodes after rollback")
+                .is_empty()
+        );
+
+        repository.clear_create_node_failure();
+        let second_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-xray".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![ProtocolKind::VlessReality],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-singbox".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
+                    },
+                ],
+            )
+            .await
+            .expect("bootstrap retry");
+        assert_eq!(second_attempt.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_reuses_slot_after_stale_pending_runtime_cleanup() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let tenant_id = actor.tenant_id.expect("tenant");
+        let group = service
+            .create_server_node(&actor, tenant_id, "main".into())
+            .await
+            .expect("group");
+        let stale_id = Uuid::new_v4();
+        let stale = repository
+            .create_node(
+                crate::domain::NodeRuntime {
+                    id: stale_id,
+                    tenant_id,
+                    server_node_id: group.id,
+                    name: "edge".into(),
+                    engine: ProxyEngine::Xray,
+                    version: "0.1.0".into(),
+                    status: NodeStatus::Pending,
+                    last_seen_at: None,
+                    node_token_hash: "stale-token".into(),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+                &[crate::domain::NodeCapability {
+                    node_id: stale_id,
+                    protocol: ProtocolKind::VlessReality,
+                }],
+            )
+            .await
+            .expect("stale node");
+        let bootstrap = service
+            .create_bootstrap_token(
+                &actor,
+                tenant_id,
+                group.id,
+                "edge".into(),
+                vec![ProxyEngine::Xray],
+            )
+            .await
+            .expect("bootstrap");
+
+        let grants = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![RuntimeRegistration {
+                    name: "edge".into(),
+                    version: "1.0.0".into(),
+                    engine: ProxyEngine::Xray,
+                    protocols: vec![ProtocolKind::VlessReality],
+                }],
+            )
+            .await
+            .expect("bootstrap");
+        let nodes = repository
+            .list_nodes(Some(tenant_id))
+            .await
+            .expect("nodes after cleanup");
+
+        assert_eq!(grants.len(), 1);
+        assert_eq!(nodes.len(), 1);
+        assert_ne!(nodes[0].id, stale.id);
+        assert_eq!(nodes[0].name, "edge");
+    }
+
+    #[tokio::test]
+    async fn bootstrap_retry_recovers_when_endpoint_sync_fails_after_node_insert() {
+        let repository = InMemoryNodeRepository::default();
+        repository.fail_replace_node_endpoints_on_attempt(3);
+        let service = NodeService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let tenant_id = actor.tenant_id.expect("tenant");
+        let group = service
+            .create_server_node(&actor, tenant_id, "main".into())
+            .await
+            .expect("group");
+        let bootstrap = service
+            .create_bootstrap_token(
+                &actor,
+                tenant_id,
+                group.id,
+                "edge".into(),
+                vec![ProxyEngine::Xray, ProxyEngine::Singbox],
+            )
+            .await
+            .expect("bootstrap");
+
+        let first_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-xray".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![ProtocolKind::VlessReality],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-singbox".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
+                    },
+                ],
+            )
+            .await
+            .expect_err("bootstrap must fail on endpoint sync");
+        assert!(matches!(
+            first_attempt,
+            anneal_core::ApplicationError::Infrastructure(_)
+        ));
+        assert!(
+            repository
+                .list_nodes(Some(tenant_id))
+                .await
+                .expect("nodes after failed sync")
+                .is_empty()
+        );
+
+        repository.clear_replace_node_endpoints_failure();
+        let second_attempt = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-xray".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![ProtocolKind::VlessReality],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-singbox".into(),
+                        version: "1.0.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
+                    },
+                ],
+            )
+            .await
+            .expect("bootstrap retry");
+
+        assert_eq!(second_attempt.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_handles_duplicate_generated_endpoint_state_keys() {
+        let repository = InMemoryNodeRepository::default();
+        let service = NodeService::with_public_base_url(
+            &repository,
+            RbacService,
+            TokenHasher::new("test-node-seed-hash-key").expect("token hasher"),
+            "https://test.aurausa.me/hidden-panel",
+        );
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        let tenant_id = actor.tenant_id.expect("tenant");
+        let group = service
+            .create_server_node(&actor, tenant_id, "main".into())
+            .await
+            .expect("group");
+        let bootstrap = service
+            .create_bootstrap_token(
+                &actor,
+                tenant_id,
+                group.id,
+                "edge-570009".into(),
+                vec![ProxyEngine::Xray, ProxyEngine::Singbox],
+            )
+            .await
+            .expect("bootstrap");
+
+        let runtimes = service
+            .bootstrap_nodes(
+                &bootstrap.bootstrap_token,
+                vec![
+                    RuntimeRegistration {
+                        name: "edge-570009".into(),
+                        version: "0.1.0".into(),
+                        engine: ProxyEngine::Xray,
+                        protocols: vec![
+                            ProtocolKind::VlessReality,
+                            ProtocolKind::Vmess,
+                            ProtocolKind::Trojan,
+                            ProtocolKind::Shadowsocks2022,
+                        ],
+                    },
+                    RuntimeRegistration {
+                        name: "edge-570009".into(),
+                        version: "0.1.0".into(),
+                        engine: ProxyEngine::Singbox,
+                        protocols: vec![
+                            ProtocolKind::VlessReality,
+                            ProtocolKind::Vmess,
+                            ProtocolKind::Trojan,
+                            ProtocolKind::Shadowsocks2022,
+                            ProtocolKind::Tuic,
+                            ProtocolKind::Hysteria2,
+                        ],
+                    },
+                ],
+            )
+            .await
+            .expect("bootstrap");
+
+        assert_eq!(runtimes.len(), 2);
+
+        let xray = runtimes
+            .iter()
+            .find(|runtime| runtime.engine == ProxyEngine::Xray)
+            .expect("xray runtime");
+        let endpoints = repository
+            .list_node_endpoints(xray.node_id)
+            .await
+            .expect("xray endpoints");
+        let endpoint_ids = endpoints
+            .iter()
+            .map(|endpoint| endpoint.id)
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(endpoints.len(), endpoint_ids.len());
+        assert!(endpoints.len() > 2);
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 TMP_DIR="${DIST_DIR}/tmp"
 TARGET_TRIPLE="${TARGET_TRIPLE:-linux-amd64}"
+RUST_TARGET="${RUST_TARGET:-x86_64-unknown-linux-musl}"
 XRAY_RELEASE_URL="${XRAY_RELEASE_URL:-https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip}"
 XRAY_RELEASE_FALLBACK_URL="${XRAY_RELEASE_FALLBACK_URL:-https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip}"
 SINGBOX_RELEASE_URL="${SINGBOX_RELEASE_URL:-https://github.com/hiddify/hiddify-core/releases/download/v4.0.4/hiddify-core-linux-amd64.tar.gz}"
@@ -14,6 +15,10 @@ ANNEAL_VERSION=""
 BUNDLE_NAME=""
 BUNDLE_ROOT=""
 BUNDLE_ARCHIVE=""
+
+cleanup() {
+  rm -rf "${TMP_DIR}"
+}
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -125,7 +130,7 @@ prepare_workspace() {
 }
 
 build_backend() {
-  cargo build --locked --release -p api -p worker -p node-agent
+  cargo build --locked --release --target "${RUST_TARGET}" -p api -p annealctl -p worker -p node-agent
 }
 
 build_web() {
@@ -137,9 +142,10 @@ build_web() {
 }
 
 package_backend() {
-  install -m 0755 "${ROOT_DIR}/target/release/api" "${BUNDLE_ROOT}/bin/api"
-  install -m 0755 "${ROOT_DIR}/target/release/worker" "${BUNDLE_ROOT}/bin/worker"
-  install -m 0755 "${ROOT_DIR}/target/release/node-agent" "${BUNDLE_ROOT}/bin/node-agent"
+  install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/api" "${BUNDLE_ROOT}/bin/api"
+  install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/annealctl" "${BUNDLE_ROOT}/bin/annealctl"
+  install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/worker" "${BUNDLE_ROOT}/bin/worker"
+  install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/node-agent" "${BUNDLE_ROOT}/bin/node-agent"
   cp -a "${ROOT_DIR}/migrations"/. "${BUNDLE_ROOT}/migrations/"
 }
 
@@ -185,6 +191,7 @@ write_release_manifest() {
   "bundle": "${BUNDLE_NAME}.tar.gz",
   "paths": {
     "api": "bin/api",
+    "annealctl": "bin/annealctl",
     "worker": "bin/worker",
     "node_agent": "bin/node-agent",
     "xray": "runtime/xray",
@@ -214,6 +221,7 @@ bundle_release() {
 
 main() {
   cd "${ROOT_DIR}"
+  trap cleanup EXIT
 
   require_tool cargo
   require_tool npm

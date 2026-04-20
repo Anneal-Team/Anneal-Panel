@@ -11,8 +11,9 @@ use anneal_core::{Actor, ApplicationError, ApplicationResult, QuotaState, TokenH
 use anneal_nodes::{DeliveryNodeEndpoint, NodeEndpointCatalog};
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose};
 use chrono::Utc;
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -229,19 +230,12 @@ where
                 target_tenant_id: Some(command.tenant_id),
             },
         )?;
-        if !self
-            .repository
-            .tenant_owns_user(command.tenant_id, command.user_id)
-            .await?
-        {
-            return Err(ApplicationError::Forbidden);
-        }
         let now = Utc::now();
         let device_token = generate_token();
         let device = Device {
             id: Uuid::new_v4(),
             tenant_id: command.tenant_id,
-            user_id: command.user_id,
+            user_id: actor.user_id,
             name: format!("{} access", command.name),
             device_token_hash: self.token_hasher.hash(&device_token),
             device_token,
@@ -252,11 +246,11 @@ where
         let subscription = Subscription {
             id: Uuid::new_v4(),
             tenant_id: command.tenant_id,
-            user_id: command.user_id,
+            user_id: actor.user_id,
             device_id: device.id,
             name: command.name,
             note: command.note,
-            access_key: generate_token(),
+            access_key: generate_access_key(),
             traffic_limit_bytes: command.traffic_limit_bytes,
             used_bytes: 0,
             quota_state: QuotaState::Normal,
@@ -505,13 +499,7 @@ where
             .iter()
             .map(|endpoint| {
                 let profile = map_delivery_endpoint(endpoint)?;
-                let label = format!(
-                    "{} {} {} {}",
-                    context.subscription.name,
-                    endpoint.node_name,
-                    protocol_name(endpoint.protocol),
-                    endpoint.public_port
-                );
+                let label = delivery_label(&context.subscription.name, endpoint);
                 let uri = ShareLinkRenderer.render(&profile, &credential, &label)?;
                 Ok(RenderedShareLink {
                     label,
@@ -786,6 +774,10 @@ pub fn generate_token() -> String {
         .collect()
 }
 
+pub fn generate_access_key() -> String {
+    general_purpose::STANDARD.encode(rand::random::<[u8; 16]>())
+}
+
 fn parse_link_token(link_token: &str) -> ApplicationResult<Uuid> {
     Uuid::parse_str(link_token)
         .map_err(|_| ApplicationError::NotFound("subscription not found".into()))
@@ -848,6 +840,51 @@ fn protocol_name(protocol: anneal_core::ProtocolKind) -> &'static str {
     }
 }
 
+fn transport_name(transport: anneal_config_engine::TransportKind) -> &'static str {
+    match transport {
+        anneal_config_engine::TransportKind::Tcp => "tcp",
+        anneal_config_engine::TransportKind::Ws => "ws",
+        anneal_config_engine::TransportKind::Grpc => "grpc",
+        anneal_config_engine::TransportKind::HttpUpgrade => "httpupgrade",
+    }
+}
+
+fn delivery_label(name: &str, endpoint: &DeliveryNodeEndpoint) -> String {
+    let mut parts = vec![
+        name.to_owned(),
+        endpoint.node_name.clone(),
+        protocol_name(endpoint.protocol).to_owned(),
+        transport_name(endpoint.transport).to_owned(),
+        endpoint.public_host.clone(),
+        endpoint.public_port.to_string(),
+    ];
+    if let Some(server_name) = endpoint
+        .server_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|server_name| !server_name.is_empty() && *server_name != endpoint.public_host)
+    {
+        parts.push(server_name.to_owned());
+    }
+    if let Some(path) = endpoint
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        parts.push(path.trim_matches('/').replace('/', "-"));
+    }
+    if let Some(service_name) = endpoint
+        .service_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|service_name| !service_name.is_empty())
+    {
+        parts.push(service_name.to_owned());
+    }
+    parts.join(" ")
+}
+
 fn protocol_order(protocol: anneal_core::ProtocolKind) -> usize {
     match protocol {
         anneal_core::ProtocolKind::VlessReality => 0,
@@ -867,15 +904,26 @@ mod tests {
     use anneal_core::{Actor, ApplicationError, ProtocolKind, UserRole};
     use anneal_nodes::{InMemoryNodeRepository, NodeEndpointDraft, NodeService};
     use anneal_rbac::RbacService;
+    use base64::{Engine as _, engine::general_purpose};
     use chrono::{Duration, Utc};
     use uuid::Uuid;
 
     use crate::{
         application::{
             InMemorySubscriptionRepository, SubscriptionService, UnifiedSubscriptionService,
+            generate_access_key,
         },
         domain::CreateSubscriptionCommand,
     };
+
+    #[test]
+    fn generated_access_key_is_valid_ss2022_psk() {
+        let access_key = generate_access_key();
+        let decoded = general_purpose::STANDARD
+            .decode(access_key.as_bytes())
+            .expect("base64");
+        assert_eq!(decoded.len(), 16);
+    }
 
     #[tokio::test]
     async fn rotating_subscription_token_revokes_previous_link() {
@@ -894,7 +942,6 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1024,
@@ -1017,7 +1064,6 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
@@ -1138,7 +1184,6 @@ mod tests {
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: actor.user_id,
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
@@ -1167,12 +1212,144 @@ mod tests {
 
         assert_eq!(tags.len(), 2);
         assert_eq!(unique.len(), 2);
-        assert!(unique.contains("main edge-1 vmess 24443"));
-        assert!(unique.contains("main edge-1 vmess 24444"));
+        assert!(unique.contains("main edge-1 vmess tcp edge.example.com 24443"));
+        assert!(unique.contains("main edge-1 vmess tcp edge.example.com 24444"));
     }
 
     #[tokio::test]
-    async fn reseller_cannot_create_subscription_for_foreign_user() {
+    async fn clash_bundle_uses_unique_names_for_same_protocol_endpoints() {
+        let subscriptions = InMemorySubscriptionRepository::default();
+        let subscription_service = SubscriptionService::new(&subscriptions, RbacService);
+        let nodes = InMemoryNodeRepository::default();
+        let node_service = NodeService::new(&nodes, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
+
+        let group = node_service
+            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
+            .await
+            .expect("group");
+        let grant = node_service
+            .create_enrollment_token(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                group.id,
+                anneal_core::ProxyEngine::Singbox,
+            )
+            .await
+            .expect("grant");
+        let node = node_service
+            .register_node(
+                &grant.token,
+                anneal_nodes::RuntimeRegistration {
+                    name: "edge-1".into(),
+                    version: "1.0.0".into(),
+                    engine: anneal_core::ProxyEngine::Singbox,
+                    protocols: vec![ProtocolKind::Vmess],
+                },
+            )
+            .await
+            .expect("node");
+        node_service
+            .replace_node_endpoints(
+                &actor,
+                actor.tenant_id.expect("tenant"),
+                node.id,
+                vec![
+                    NodeEndpointDraft {
+                        protocol: ProtocolKind::Vmess,
+                        listen_host: "::".into(),
+                        listen_port: 24443,
+                        public_host: "edge-a.example.com".into(),
+                        public_port: 24443,
+                        transport: anneal_config_engine::TransportKind::Tcp,
+                        security: anneal_config_engine::SecurityKind::None,
+                        server_name: None,
+                        host_header: None,
+                        path: None,
+                        service_name: None,
+                        flow: None,
+                        reality_public_key: None,
+                        reality_private_key: None,
+                        reality_short_id: None,
+                        fingerprint: None,
+                        alpn: vec![],
+                        cipher: None,
+                        tls_certificate_path: None,
+                        tls_key_path: None,
+                        enabled: true,
+                    },
+                    NodeEndpointDraft {
+                        protocol: ProtocolKind::Vmess,
+                        listen_host: "::".into(),
+                        listen_port: 24443,
+                        public_host: "edge-b.example.com".into(),
+                        public_port: 24443,
+                        transport: anneal_config_engine::TransportKind::Tcp,
+                        security: anneal_config_engine::SecurityKind::None,
+                        server_name: None,
+                        host_header: None,
+                        path: None,
+                        service_name: None,
+                        flow: None,
+                        reality_public_key: None,
+                        reality_private_key: None,
+                        reality_short_id: None,
+                        fingerprint: None,
+                        alpn: vec![],
+                        cipher: None,
+                        tls_certificate_path: None,
+                        tls_key_path: None,
+                        enabled: true,
+                    },
+                ],
+            )
+            .await
+            .expect("endpoints");
+
+        let (_subscription, link) = subscription_service
+            .create_subscription(
+                &actor,
+                CreateSubscriptionCommand {
+                    tenant_id: actor.tenant_id.expect("tenant"),
+                    name: "main".into(),
+                    note: None,
+                    traffic_limit_bytes: 1_000_000,
+                    expires_at: Utc::now() + Duration::days(30),
+                },
+            )
+            .await
+            .expect("subscription");
+        let link_token = link.id.to_string();
+
+        let unified = UnifiedSubscriptionService::new(&subscriptions, &nodes)
+            .render_bundle(&link_token, SubscriptionDocumentFormat::ClashMeta)
+            .await
+            .expect("bundle");
+
+        let proxy_names = unified
+            .content
+            .lines()
+            .skip_while(|line| *line != "proxies:")
+            .skip(1)
+            .take_while(|line| *line != "proxy-groups:")
+            .filter_map(|line| line.strip_prefix("  - name: "))
+            .map(|line| line.trim_matches('"').to_owned())
+            .collect::<Vec<_>>();
+        let unique = proxy_names.iter().cloned().collect::<HashSet<_>>();
+
+        assert_eq!(proxy_names.len(), 2);
+        assert_eq!(unique.len(), 2);
+        assert!(unique.contains("main edge-1 vmess tcp edge-a.example.com 24443"));
+        assert!(unique.contains("main edge-1 vmess tcp edge-b.example.com 24443"));
+    }
+
+    #[tokio::test]
+    async fn subscription_is_attributed_to_actor() {
         let repository = InMemorySubscriptionRepository::default();
         let service = SubscriptionService::new(&repository, RbacService);
         let actor = Actor {
@@ -1181,12 +1358,11 @@ mod tests {
             role: UserRole::Reseller,
         };
 
-        let error = service
+        let (subscription, _) = service
             .create_subscription(
                 &actor,
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
-                    user_id: Uuid::new_v4(),
                     name: "main".into(),
                     note: None,
                     traffic_limit_bytes: 1024,
@@ -1194,8 +1370,41 @@ mod tests {
                 },
             )
             .await
-            .expect_err("foreign user must be rejected");
+            .expect("subscription");
 
-        assert!(matches!(error, ApplicationError::Forbidden));
+        let devices = service.list_devices(&actor).await.expect("devices");
+
+        assert_eq!(subscription.user_id, actor.user_id);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].user_id, actor.user_id);
+    }
+
+    #[tokio::test]
+    async fn superadmin_can_create_subscription_for_arbitrary_tenant() {
+        let repository = InMemorySubscriptionRepository::default();
+        let service = SubscriptionService::new(&repository, RbacService);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: None,
+            role: UserRole::Superadmin,
+        };
+        let tenant_id = Uuid::new_v4();
+
+        let (subscription, _) = service
+            .create_subscription(
+                &actor,
+                CreateSubscriptionCommand {
+                    tenant_id,
+                    name: "main".into(),
+                    note: None,
+                    traffic_limit_bytes: 1024,
+                    expires_at: Utc::now() + Duration::days(30),
+                },
+            )
+            .await
+            .expect("subscription");
+
+        assert_eq!(subscription.tenant_id, tenant_id);
+        assert_eq!(subscription.user_id, actor.user_id);
     }
 }

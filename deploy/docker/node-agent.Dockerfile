@@ -11,6 +11,7 @@ ARG XRAY_RELEASE_URL=https://github.com/XTLS/Xray-core/releases/download/v26.2.6
 ARG SINGBOX_RELEASE_URL=https://github.com/hiddify/hiddify-core/releases/download/v4.0.4/hiddify-core-linux-amd64.tar.gz
 RUN apt-get update && apt-get install -y ca-certificates curl unzip tar openssl iproute2 && rm -rf /var/lib/apt/lists/*
 WORKDIR /agent
+RUN useradd --system --create-home --home-dir /var/lib/anneal --shell /usr/sbin/nologin anneal
 COPY --from=builder /src/target/release/node-agent /usr/local/bin/node-agent
 RUN curl -fsSL "$XRAY_RELEASE_URL" -o /tmp/xray.zip \
     && mkdir -p /tmp/xray-dist /tmp/singbox-dist \
@@ -20,5 +21,7 @@ RUN curl -fsSL "$XRAY_RELEASE_URL" -o /tmp/xray.zip \
     && install -m 0755 /tmp/xray-dist/xray /usr/local/bin/xray \
     && install -m 0755 "$(find /tmp/singbox-dist -type f -name hiddify-core | head -n 1)" /usr/local/bin/hiddify-core \
     && chmod +x /usr/local/bin/xray /usr/local/bin/hiddify-core \
-    && mkdir -p /var/lib/anneal/xray /var/lib/anneal/singbox /var/lib/anneal/tls
+    && mkdir -p /var/lib/anneal/xray /var/lib/anneal/singbox /var/lib/anneal/tls \
+    && chown -R anneal:anneal /var/lib/anneal
+USER anneal
 CMD ["node-agent", "--once"]

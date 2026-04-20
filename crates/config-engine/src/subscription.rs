@@ -611,7 +611,7 @@ fn render_trojan(profile: &InboundProfile, credential: &ClientCredential, label:
     }
     format!(
         "trojan://{}@{}:{}?{}#{}",
-        credential.password.as_deref().unwrap_or_default(),
+        encode(credential.password.as_deref().unwrap_or_default()),
         profile.public_host,
         profile.public_port,
         params.join("&"),
@@ -648,7 +648,7 @@ fn render_tuic(profile: &InboundProfile, credential: &ClientCredential, label: &
     format!(
         "tuic://{}:{}@{}:{}?{}#{}",
         credential.uuid,
-        credential.password.as_deref().unwrap_or_default(),
+        encode(credential.password.as_deref().unwrap_or_default()),
         profile.public_host,
         profile.public_port,
         params.join("&"),
@@ -668,7 +668,7 @@ fn render_hysteria2(
     }
     format!(
         "hysteria2://{}@{}:{}?{}#{}",
-        credential.password.as_deref().unwrap_or_default(),
+        encode(credential.password.as_deref().unwrap_or_default()),
         profile.public_host,
         profile.public_port,
         params.join("&"),
@@ -796,6 +796,22 @@ mod tests {
             .render(&profile(ProtocolKind::Tuic), &credential(), "edge-tuic")
             .expect("render");
         assert!(rendered.starts_with("tuic://11111111-1111-1111-1111-111111111111:secret-pass@"));
+    }
+
+    #[test]
+    fn trojan_share_link_escapes_reserved_password_chars() {
+        let rendered = ShareLinkRenderer
+            .render(
+                &profile(ProtocolKind::Trojan),
+                &ClientCredential {
+                    email: "user@example.com".into(),
+                    uuid: "11111111-1111-1111-1111-111111111111".into(),
+                    password: Some("ab+/==".into()),
+                },
+                "edge-trojan",
+            )
+            .expect("render");
+        assert!(rendered.starts_with("trojan://ab%2B%2F%3D%3D@"));
     }
 
     #[test]

@@ -69,7 +69,6 @@ pub struct CreateDeviceCommand {
 #[derive(Debug, Clone)]
 pub struct CreateSubscriptionCommand {
     pub tenant_id: Uuid,
-    pub user_id: Uuid,
     pub name: String,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,

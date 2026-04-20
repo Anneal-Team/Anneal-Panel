@@ -18,6 +18,7 @@ fi
 BUNDLE_ROOT="${entries[0]}"
 
 for required_path in \
+  "${BUNDLE_ROOT}/bin/annealctl" \
   "${BUNDLE_ROOT}/bin/api" \
   "${BUNDLE_ROOT}/bin/worker" \
   "${BUNDLE_ROOT}/bin/node-agent" \
@@ -37,6 +38,21 @@ for required_path in \
     exit 1
   }
 done
+
+if command -v file >/dev/null 2>&1; then
+  for binary_path in \
+    "${BUNDLE_ROOT}/bin/annealctl" \
+    "${BUNDLE_ROOT}/bin/api" \
+    "${BUNDLE_ROOT}/bin/worker" \
+    "${BUNDLE_ROOT}/bin/node-agent"; do
+    file_output="$(file "${binary_path}")"
+    printf '%s' "${file_output}" | grep -Eqi "statically linked|static-pie linked" || {
+      echo "bundle binary is not statically linked: ${binary_path}" >&2
+      echo "${file_output}" >&2
+      exit 1
+    }
+  done
+fi
 
 (
   cd "${BUNDLE_ROOT}"

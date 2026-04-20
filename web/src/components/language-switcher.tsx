@@ -7,7 +7,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
 
   const toggleLanguage = () => {
     const newLang = i18n.language === "ru" ? "en" : "ru";
-    i18n.changeLanguage(newLang);
+    void i18n.changeLanguage(newLang);
   };
 
   return (

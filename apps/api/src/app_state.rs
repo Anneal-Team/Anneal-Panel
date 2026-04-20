@@ -63,7 +63,12 @@ impl AppState {
     }
 
     pub fn node_service(&self) -> NodeService<&PgNodeRepository> {
-        NodeService::with_token_hasher(&self.nodes, self.rbac, self.token_hasher.clone())
+        NodeService::with_public_base_url(
+            &self.nodes,
+            self.rbac,
+            self.token_hasher.clone(),
+            &self.settings.public_base_url,
+        )
     }
 
     pub fn subscription_service(&self) -> SubscriptionService<&PgSubscriptionRepository> {

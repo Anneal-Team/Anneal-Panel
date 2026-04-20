@@ -14,6 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, type Node, type NodeRuntime, type ProxyEngine } from "@/lib/api";
 import { formatDate, formatNodeName, formatNodeStatus } from "@/lib/format";
+import { panelPublicBaseUrl } from "@/lib/panel-base";
 
 const runtimeProtocols: Record<ProxyEngine, string> = {
   xray: "vless_reality,vmess,trojan,shadowsocks_2022",
@@ -24,7 +25,7 @@ type NodeDialogMode = "create" | "edit";
 
 function buildInstallBlock(name: string, bootstrapToken: string) {
   return [
-    `ANNEAL_AGENT_SERVER_URL=${window.location.origin}`,
+    `ANNEAL_AGENT_SERVER_URL=${panelPublicBaseUrl()}`,
     `ANNEAL_AGENT_NAME=${name}`,
     `ANNEAL_AGENT_BOOTSTRAP_TOKEN=${bootstrapToken}`,
     "ANNEAL_AGENT_ENGINES=xray,singbox",

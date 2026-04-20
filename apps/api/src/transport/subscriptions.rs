@@ -62,7 +62,6 @@ pub struct SubscriptionResponse {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateSubscriptionRequest {
     pub tenant_id: uuid::Uuid,
-    pub user_id: uuid::Uuid,
     pub name: String,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
@@ -120,7 +119,6 @@ pub async fn create_subscription(
             &actor,
             CreateSubscriptionCommand {
                 tenant_id: request.tenant_id,
-                user_id: request.user_id,
                 name: request.name,
                 note: request.note,
                 traffic_limit_bytes: request.traffic_limit_bytes,

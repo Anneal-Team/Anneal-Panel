@@ -1,5 +1,5 @@
-use hmac::{Hmac, Mac};
-use rand::{Rng, distr::Alphanumeric};
+use hmac::{Hmac, KeyInit, Mac};
+use rand::{RngExt, distr::Alphanumeric};
 use sha2::Sha256;
 
 use crate::{ApplicationError, ApplicationResult};

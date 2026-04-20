@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -9,7 +11,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use anneal_core::{ProtocolKind, ProxyEngine};
-use anneal_nodes::{NodeDomainDraft, NodeEndpointDraft, RuntimeRegistration};
+use anneal_nodes::{NodeDomainDraft, NodeEndpointDraft, NodeRepository, RuntimeRegistration};
 
 use crate::{
     app_state::AppState, error::ApiError, extractors::authenticated_actor,
@@ -641,6 +643,25 @@ pub async fn bootstrap_agent(
         )
         .await
         .map_err(ApiError)?;
+    let mut tenant_ids = BTreeSet::new();
+    for grant in &grants {
+        let node = state
+            .nodes
+            .find_node(grant.node_id)
+            .await
+            .map_err(ApiError)?
+            .ok_or_else(|| {
+                ApiError(anneal_core::ApplicationError::NotFound(
+                    "bootstrapped node not found".into(),
+                ))
+            })?;
+        tenant_ids.insert(node.tenant_id);
+    }
+    for tenant_id in tenant_ids {
+        queue_tenant_rollouts_for_current_state(&state, tenant_id, "bootstrap-sync")
+            .await
+            .map_err(ApiError)?;
+    }
     Ok(Json(grants))
 }
 

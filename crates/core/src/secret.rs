@@ -3,7 +3,7 @@ use aes_gcm_siv::{
     aead::{Aead, KeyInit},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::{ApplicationError, ApplicationResult};
 

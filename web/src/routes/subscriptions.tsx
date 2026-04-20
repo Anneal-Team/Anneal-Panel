@@ -17,7 +17,6 @@ import { useNow } from "@/lib/use-now";
 
 type CreateSubscriptionForm = {
   tenant_id: string;
-  user_id: string;
   name: string;
   note: string;
   traffic_limit_gb: string;
@@ -72,10 +71,9 @@ function fromDateTimeLocalValue(value: string) {
   return parsed.toISOString();
 }
 
-function createInitialForm(): CreateSubscriptionForm {
+function createInitialForm(tenantId = ""): CreateSubscriptionForm {
   return {
-    tenant_id: "",
-    user_id: "",
+    tenant_id: tenantId,
     name: "",
     note: "",
     traffic_limit_gb: "100",
@@ -116,6 +114,7 @@ export function SubscriptionsPage() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const session = api.readSession();
+  const actor = api.readAccessClaims();
   const now = useNow();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,7 +122,7 @@ export function SubscriptionsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Subscription | null>(null);
-  const [createForm, setCreateForm] = useState<CreateSubscriptionForm>(createInitialForm);
+  const [createForm, setCreateForm] = useState<CreateSubscriptionForm>(() => createInitialForm());
   const [editForm, setEditForm] = useState<EditSubscriptionForm | null>(null);
 
   const usersQuery = useQuery({
@@ -137,15 +136,13 @@ export function SubscriptionsPage() {
     enabled: Boolean(session.accessToken),
   });
 
-  const userOptions = useMemo(
+  const tenantCandidates = useMemo(
     () =>
       (usersQuery.data ?? [])
-        .filter((user) => user.role === "user" && user.tenant_id)
+        .filter((user) => user.tenant_id)
         .map((user) => ({
-          id: user.id,
           tenant_id: user.tenant_id as string,
-          label: `${user.display_name} · ${user.email}`,
-          display_name: user.display_name,
+          label: `${user.tenant_name ?? user.display_name} - ${user.email}`,
         })),
     [usersQuery.data],
   );
@@ -153,6 +150,19 @@ export function SubscriptionsPage() {
   const userNames = useMemo(() => {
     return new Map((usersQuery.data ?? []).map((user) => [user.id, user.display_name] as const));
   }, [usersQuery.data]);
+
+  const tenantOptions = useMemo(() => {
+    const tenants = new Map<string, { tenant_id: string; label: string }>();
+    for (const tenant of tenantCandidates) {
+      if (!tenants.has(tenant.tenant_id)) {
+        tenants.set(tenant.tenant_id, tenant);
+      }
+    }
+    return [...tenants.values()];
+  }, [tenantCandidates]);
+
+  const defaultTenantId =
+    actor?.tenant_id ?? (tenantOptions.length === 1 ? tenantOptions[0].tenant_id : "");
 
   const previewDateFormatter = useMemo(
     () =>
@@ -173,7 +183,6 @@ export function SubscriptionsPage() {
 
       return api.createSubscription({
         tenant_id: createForm.tenant_id,
-        user_id: createForm.user_id,
         name: createForm.name.trim() || t("subscriptions.default_name"),
         note: createForm.note.trim() || null,
         traffic_limit_bytes: bytesFromGigabytes(createForm.traffic_limit_gb),
@@ -185,7 +194,7 @@ export function SubscriptionsPage() {
       setMessage(t("subscriptions.create.created", { name: result.subscription.name }));
       setArtifact(buildSubscriptionArtifact(result.subscription.id, result.delivery_url));
       setCreateOpen(false);
-      setCreateForm(createInitialForm());
+      setCreateForm(createInitialForm(defaultTenantId));
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
     },
     onError: (mutationError) => {
@@ -270,7 +279,7 @@ export function SubscriptionsPage() {
 
   function openCreateDialog() {
     setArtifact(null);
-    setCreateForm(createInitialForm());
+    setCreateForm(createInitialForm(defaultTenantId));
     setCreateOpen(true);
   }
 
@@ -492,31 +501,21 @@ export function SubscriptionsPage() {
             createSubscriptionMutation.mutate();
           }}
         >
-          <Select
-            value={createForm.user_id}
-            onChange={(event) => {
-              const selected = userOptions.find((user) => user.id === event.target.value);
-              setCreateForm((current) => ({
-                ...current,
-                user_id: event.target.value,
-                tenant_id: selected?.tenant_id ?? "",
-                name:
-                  current.name ||
-                  (selected
-                    ? t("subscriptions.create.default_name_for_user", {
-                        name: selected.display_name,
-                      })
-                    : ""),
-              }));
-            }}
-          >
-            <option value="">{t("subscriptions.create.select_user")}</option>
-            {userOptions.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.label}
-              </option>
-            ))}
-          </Select>
+          {actor?.tenant_id ? null : (
+            <Select
+              value={createForm.tenant_id}
+              onChange={(event) =>
+                setCreateForm((current) => ({ ...current, tenant_id: event.target.value }))
+              }
+            >
+              <option value="">{t("subscriptions.create.select_tenant")}</option>
+              {tenantOptions.map((tenant) => (
+                <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                  {tenant.label}
+                </option>
+              ))}
+            </Select>
+          )}
 
           <Input
             placeholder={t("subscriptions.create.name_placeholder")}
@@ -580,7 +579,6 @@ export function SubscriptionsPage() {
             <Button
               disabled={
                 createSubscriptionMutation.isPending ||
-                !createForm.user_id ||
                 !createForm.tenant_id ||
                 bytesFromGigabytes(createForm.traffic_limit_gb) <= 0 ||
                 !expiresAt
