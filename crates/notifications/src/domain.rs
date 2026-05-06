@@ -10,7 +10,6 @@ pub enum NotificationKind {
     Quota80,
     Quota95,
     Quota100,
-    NodeOffline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

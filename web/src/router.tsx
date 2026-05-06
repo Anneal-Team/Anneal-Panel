@@ -11,9 +11,7 @@ import {
   Bell,
   LayoutDashboard,
   LogIn,
-  Network,
   RadioTower,
-  Settings2,
   Users,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -24,11 +22,8 @@ import { panelAssetUrl, panelBasePath } from "@/lib/panel-base";
 import { DashboardPage } from "@/routes/dashboard";
 import { DevicesPage } from "@/routes/devices";
 import { LoginPage } from "@/routes/login";
-import { NodeEndpointsPage } from "@/routes/node-endpoints";
-import { NodesPage } from "@/routes/nodes";
 import { NotificationsPage } from "@/routes/notifications";
 import { PublicSubscriptionPage } from "@/routes/public-subscription";
-import { RolloutsPage } from "@/routes/rollouts";
 import { SubscriptionsPage } from "@/routes/subscriptions";
 import { UsersPage } from "@/routes/users";
 
@@ -43,9 +38,7 @@ const navigationGroups = [
   {
     titleKey: "nav_group.infrastructure",
     items: [
-      { to: "/nodes", labelKey: "nav.nodes", icon: Network },
       { to: "/subscriptions", labelKey: "nav.subscriptions", icon: RadioTower },
-      { to: "/node-endpoints", labelKey: "nav.node_endpoints", icon: Settings2 },
     ],
   },
   {
@@ -170,28 +163,10 @@ const devicesRoute = createRoute({
   component: DevicesPage,
 });
 
-const nodesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/nodes",
-  component: NodesPage,
-});
-
-const nodeEndpointsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/node-endpoints",
-  component: NodeEndpointsPage,
-});
-
 const subscriptionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/subscriptions",
   component: SubscriptionsPage,
-});
-
-const rolloutsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/rollouts",
-  component: RolloutsPage,
 });
 
 const notificationsRoute = createRoute({
@@ -206,10 +181,7 @@ const routeTree = rootRoute.addChildren([
   publicSubscriptionRoute,
   usersRoute,
   devicesRoute,
-  nodesRoute,
-  nodeEndpointsRoute,
   subscriptionsRoute,
-  rolloutsRoute,
   notificationsRoute,
 ]);
 

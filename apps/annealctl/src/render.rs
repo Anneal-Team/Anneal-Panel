@@ -38,6 +38,25 @@ pub fn write_kv_file(path: &Path, values: &BTreeMap<String, String>) -> Result<(
     Ok(())
 }
 
+pub fn render_mihomo_config() -> String {
+    [
+        "mixed-port: 7890",
+        "allow-lan: false",
+        "mode: rule",
+        "log-level: warning",
+        "proxies: []",
+        "proxy-groups:",
+        "  - name: \"Anneal\"",
+        "    type: select",
+        "    proxies:",
+        "      - DIRECT",
+        "rules:",
+        "  - MATCH,DIRECT",
+        "",
+    ]
+    .join("\n")
+}
+
 fn escape_env_value(value: &str) -> String {
     if value.chars().all(|char| {
         char.is_ascii_alphanumeric() || matches!(char, '_' | '-' | '.' | '/' | ':' | ',')

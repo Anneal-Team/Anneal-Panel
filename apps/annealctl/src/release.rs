@@ -3,10 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
-
-use crate::config::InstallRole;
 
 #[derive(Debug, Clone)]
 pub struct ReleaseBundle {
@@ -24,10 +22,8 @@ pub struct ReleaseManifest {
 pub struct ManifestPaths {
     pub api: String,
     pub worker: String,
-    pub node_agent: String,
     pub annealctl: Option<String>,
-    pub xray: String,
-    pub singbox: String,
+    pub mihomo: String,
     pub web: String,
     pub migrations: String,
     pub deploy: String,
@@ -49,38 +45,17 @@ impl ReleaseBundle {
     }
 
     pub fn validate(&self) -> Result<()> {
-        let required = [
+        for path in [
             self.api_path(),
             self.worker_path(),
-            self.node_agent_path(),
             self.annealctl_path(),
-            self.xray_path(),
-            self.singbox_path(),
+            self.mihomo_path(),
             self.web_dir(),
             self.migrations_dir(),
             self.deploy_dir(),
-        ];
-        for path in required {
-            if !path.exists() {
-                bail!("missing bundle path: {}", path.display());
-            }
+        ] {
+            self.require(&path)?;
         }
-        Ok(())
-    }
-
-    pub fn validate_for(&self, role: InstallRole) -> Result<()> {
-        if role.includes_control_plane() {
-            self.require(&self.api_path())?;
-            self.require(&self.worker_path())?;
-            self.require(&self.web_dir())?;
-            self.require(&self.migrations_dir())?;
-        }
-        if role.includes_node() {
-            self.require(&self.node_agent_path())?;
-            self.require(&self.xray_path())?;
-            self.require(&self.singbox_path())?;
-        }
-        self.require(&self.annealctl_path())?;
         Ok(())
     }
 
@@ -90,10 +65,6 @@ impl ReleaseBundle {
 
     pub fn worker_path(&self) -> PathBuf {
         self.root.join(&self.manifest.paths.worker)
-    }
-
-    pub fn node_agent_path(&self) -> PathBuf {
-        self.root.join(&self.manifest.paths.node_agent)
     }
 
     pub fn annealctl_path(&self) -> PathBuf {
@@ -106,12 +77,8 @@ impl ReleaseBundle {
         )
     }
 
-    pub fn xray_path(&self) -> PathBuf {
-        self.root.join(&self.manifest.paths.xray)
-    }
-
-    pub fn singbox_path(&self) -> PathBuf {
-        self.root.join(&self.manifest.paths.singbox)
+    pub fn mihomo_path(&self) -> PathBuf {
+        self.root.join(&self.manifest.paths.mihomo)
     }
 
     pub fn web_dir(&self) -> PathBuf {

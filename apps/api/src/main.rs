@@ -6,20 +6,18 @@ mod transport;
 
 use anneal_audit::PgAuditRepository;
 use anneal_auth::{ArgonPasswordService, JwtService, OtpAuthTotpService, PgSessionRepository};
-use anneal_nodes::PgNodeRepository;
 use anneal_notifications::PgNotificationRepository;
 use anneal_platform::{Settings, connect_pool, init_telemetry, run_migrations};
 use anneal_rbac::RbacService;
 use anneal_subscriptions::PgSubscriptionRepository;
 use anneal_usage::PgUsageRepository;
 use anneal_users::PgUserRepository;
-use apalis_postgres::{Config, PostgresStorage};
 use axum::{
     Router,
     routing::{get, patch, post},
 };
 use openapi::ApiDoc;
-use transport::{audit, auth, nodes, notifications, subscriptions, usage, users};
+use transport::{audit, auth, notifications, subscriptions, usage, users};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -34,10 +32,6 @@ async fn main() -> anyhow::Result<()> {
     let pool = connect_pool(&settings.database_url).await?;
     run_migrations(&pool, &settings.migrations_dir).await?;
     anneal_platform::backfill_protected_data(&pool, &secret_box, &token_hasher).await?;
-    let deployment_queue = PostgresStorage::new_with_config(&pool, &Config::new("deployment_jobs"));
-    let notification_queue =
-        PostgresStorage::new_with_config(&pool, &Config::new("notification_jobs"));
-
     let state = AppState {
         settings: settings.clone(),
         pool: pool.clone(),
@@ -45,7 +39,6 @@ async fn main() -> anyhow::Result<()> {
         users: PgUserRepository::new(pool.clone(), secret_box.clone()),
         audit: PgAuditRepository::new(pool.clone()),
         sessions: PgSessionRepository::new(pool.clone()),
-        nodes: PgNodeRepository::new(pool.clone(), secret_box.clone()),
         subscriptions: PgSubscriptionRepository::new(pool.clone(), secret_box.clone()),
         usage: PgUsageRepository::new(pool.clone()),
         notifications: PgNotificationRepository::new(pool.clone()),
@@ -53,8 +46,6 @@ async fn main() -> anyhow::Result<()> {
         jwt_service: JwtService::new(&settings.access_jwt_secret, &settings.pre_auth_jwt_secret),
         totp_service: OtpAuthTotpService::new("Anneal"),
         token_hasher,
-        deployment_queue,
-        notification_queue,
     };
 
     let app = Router::new()
@@ -89,40 +80,6 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/resellers/{id}",
             patch(users::update_reseller).delete(users::delete_reseller),
         )
-        .route(
-            "/api/v1/nodes",
-            get(nodes::list_nodes).post(nodes::create_node),
-        )
-        .route(
-            "/api/v1/nodes/{id}",
-            patch(nodes::update_node).delete(nodes::delete_node),
-        )
-        .route(
-            "/api/v1/nodes/{id}/domains",
-            get(nodes::list_node_domains).post(nodes::replace_node_domains),
-        )
-        .route(
-            "/api/v1/node-runtimes/{id}/endpoints",
-            get(nodes::list_node_endpoints).post(nodes::replace_node_endpoints),
-        )
-        .route(
-            "/api/v1/nodes/{id}/bootstrap-sessions",
-            post(nodes::create_bootstrap_session),
-        )
-        .route(
-            "/api/v1/node-runtimes/{id}/reissue-bootstrap",
-            post(nodes::reissue_bootstrap),
-        )
-        .route("/api/v1/rollouts", get(nodes::list_rollouts))
-        .route("/api/v1/agent/bootstrap", post(nodes::bootstrap_agent))
-        .route("/api/v1/agent/heartbeat", post(nodes::heartbeat))
-        .route("/api/v1/agent/jobs/pull", post(nodes::pull_rollouts))
-        .route("/api/v1/agent/jobs/{id}/ack", post(nodes::ack_rollout))
-        .route(
-            "/api/v1/agent/node-token/rotate",
-            post(nodes::rotate_node_token),
-        )
-        .route("/api/v1/agent/usage/bulk", post(usage::ingest_usage))
         .route("/api/v1/usage", get(usage::list_usage))
         .route("/api/v1/devices", get(subscriptions::list_devices))
         .route(

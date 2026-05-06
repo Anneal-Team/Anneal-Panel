@@ -9,7 +9,6 @@ publish.workspace = true
 [dependencies]
 anneal-audit.workspace = true
 anneal-core.workspace = true
-anneal-nodes.workspace = true
 anneal-notifications.workspace = true
 anneal-platform.workspace = true
 anyhow.workspace = true

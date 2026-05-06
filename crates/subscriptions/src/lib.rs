@@ -3,7 +3,8 @@ pub mod domain;
 pub mod infrastructure;
 
 pub use application::{
-    InMemorySubscriptionRepository, SubscriptionRepository, SubscriptionService,
+    DeliveryEndpoint, DeliveryEndpointCatalog, InMemorySubscriptionRepository,
+    StaticDeliveryEndpointCatalog, SubscriptionRepository, SubscriptionService,
     UnifiedSubscriptionService, generate_token,
 };
 pub use domain::{

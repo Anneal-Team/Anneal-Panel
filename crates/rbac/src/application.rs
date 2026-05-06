@@ -43,7 +43,6 @@ impl RbacService {
         let tenant_matches = actor.tenant_id.is_some() && actor.tenant_id == scope.target_tenant_id;
         match permission {
             Permission::ManageTenantUsers
-            | Permission::ManageNodes
             | Permission::ManageSubscriptions
             | Permission::ManageUsage
             | Permission::ManageNotifications
@@ -77,7 +76,7 @@ mod tests {
 
         let allowed = RbacService.is_allowed(
             &actor,
-            Permission::ManageNodes,
+            Permission::ManageSubscriptions,
             AccessScope {
                 target_tenant_id: Some(tenant_id),
             },

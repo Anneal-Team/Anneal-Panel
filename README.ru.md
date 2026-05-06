@@ -1,171 +1,56 @@
-<p align="right">
-  <a href="./README.md"><img src="https://img.shields.io/badge/🇬🇧-English-4f46e5?style=flat-square&labelColor=1e1b4b" alt="English" /></a>
-  &nbsp;
-  <a href="./README.ru.md"><img src="https://img.shields.io/badge/🇷🇺-Русский-4f46e5?style=flat-square&labelColor=1e1b4b" alt="Русский" /></a>
-</p>
+# Anneal
 
-<p align="center">
-  <img src="./anneal-github-banner.svg" alt="Anneal" width="860" />
-</p>
+Anneal - это Rust control-plane для пользователей, подписок, лимитов трафика, аудита и выдачи Mihomo-совместимых клиентских конфигов.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Rust-2024-CE422B?style=for-the-badge&logo=rust&logoColor=white&labelColor=1a1a2e" alt="Rust 2024" />
-  &nbsp;
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=0d1117&labelColor=1a1a2e" alt="React 19" />
-  &nbsp;
-  <img src="https://img.shields.io/badge/PostgreSQL-16-336791?style=for-the-badge&logo=postgresql&logoColor=white&labelColor=1a1a2e" alt="PostgreSQL 16" />
-  &nbsp;
-  <img src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white&labelColor=1a1a2e" alt="Docker ready" />
-  &nbsp;
-  <img src="https://img.shields.io/badge/License-AGPL--3.0-a855f7?style=for-the-badge&labelColor=1a1a2e" alt="AGPL-3.0" />
-</p>
+Текущая сборка намеренно оставлена только в native-режиме. Установщик ставит API, worker, web-панель, Caddy, PostgreSQL и bundled Mihomo runtime. Legacy-оркестрация серверных узлов, контейнерный deploy и старые runtime-ядра удалены.
 
-<p align="center">
-  <a href="https://app.codacy.com/gh/Anneal-Team/Anneal-Panel/dashboard?utm_source=gh&amp;utm_medium=referral&amp;utm_content=&amp;utm_campaign=Badge_grade">
-    <img src="https://app.codacy.com/project/badge/Grade/34c8d80441074b9cb26e15489bd70569" alt="Codacy grade" />
-  </a>
-</p>
-
-<p align="center">
-  <b>Управление серверными группами &nbsp;·&nbsp; Доменные правила &nbsp;·&nbsp; Доставка подписок &nbsp;·&nbsp; Клиентские конфиги</b>
-</p>
-
----
-
-## 🔥 Что такое Anneal
-
-Anneal — это панель управления, которая объединяет всё необходимое для эксплуатации прокси-инфраструктуры в масштабе: runtime-агенты, правила маршрутизации по доменам, автоматическая генерация точек входа, управление подписками и выдача клиентских конфигов.
-
-Разработана для мультитенантных сред, где разные команды, реселлеры и пользователи нуждаются в изолированном контроле над своей частью инфраструктуры.
-
----
-
-## ⚡ Возможности
-
-```
-🏢  Мультиарендность     —  роли superadmin / admin / reseller / user
-🖥️  Web-интерфейс        —  ноды, пользователи, подписки, доменные правила
-🦀  API на Rust          —  миграции, аудит, TOTP, usage, уведомления
-🤖  Агент сервера        —  регистрация runtime, heartbeat, rollout-задачи
-🌐  Генерация endpoint   —  direct / legacy_direct / cdn / auto_cdn / relay / worker / reality / fake
-📦  Подписки             —  конфиги xray и sing-box, ссылки, лимиты на устройство
-```
-
----
-
-## 📁 Состав репозитория
+## Структура
 
 | Путь | Назначение |
-|------|-----------|
-| `apps/api` | 🔌 HTTP API, авторизация, Swagger UI, transport-слой |
-| `apps/node-agent` | 🤖 Агент сервера — регистрация, heartbeat, rollout |
-| `apps/worker` | ⚙️ Фоновые задачи и обработка очередей |
-| `crates/nodes` | 🗂️ Серверные группы, домены, endpoint-ы, rollout orchestration |
-| `crates/subscriptions` | 📋 Подписки, ссылки выдачи, устройства |
-| `crates/users` | 👥 Пользователи, реселлеры, tenant-ы |
-| `crates/config-engine` | 🔧 Генерация клиентских конфигов и bundle-форматов |
-| `web` | 🎨 Фронтенд — React / Vite |
-| `deploy/docker` | 🐳 Docker-образы и конфиги окружения |
-| `migrations` | 🗄️ SQL-миграции PostgreSQL |
+| --- | --- |
+| `apps/api` | HTTP API, auth, OpenAPI, transport layer |
+| `apps/annealctl` | Native installer, update и управление сервисами |
+| `apps/worker` | Фоновый worker уведомлений |
+| `crates/config-engine` | Рендер Mihomo/share-link конфигов |
+| `crates/subscriptions` | Подписки, delivery links, устройства |
+| `crates/users` | Пользователи, реселлеры, tenant-ы |
+| `crates/usage` | Usage samples, rollups, quota state |
+| `web` | React/Vite панель |
+| `deploy/systemd` | Native systemd units |
+| `migrations` | PostgreSQL схема |
 
----
+## Установка
 
-## 📦 Установка
-
-В Anneal есть bootstrap-обёртка, которая скачивает ровно один готовый релизный архив из GitHub Releases, проверяет встроенные SHA256-суммы и затем запускает `annealctl install --bundle-root ...`.
-
-- Файл установщика: [`scripts/install.sh`](./scripts/install.sh)
-- Прямая ссылка: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
-
-Быстрый запуск:
+Собрать release bundle:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
+scripts/package-release.sh
 ```
 
-Эта одна команда открывает интерактивный мастер установки, если не передавать явные CLI-флаги.
-
-Модель релизов:
-- raw `master` installer в первую очередь берёт rolling-release `rolling-master`, а на последний GitHub Release падает только как fallback
-- push в `master` обновляет bundle `rolling-master`, а стабильные bundle публикуются по semver-тегам `0.1.0` и `v0.1.0`
-- для жёсткой фиксации версии можно передать `ANNEAL_RELEASE_TAG=0.1.0`
-
-Поддерживаемые дистрибутивы:
-- Debian 10, 11, 12, 13
-- Ubuntu 22.04 LTS, 24.04 LTS, 25.04, 25.10
-
-Какие репозитории использует установщик:
-- PostgreSQL 17 ставится из официального PGDG-репозитория; для Debian 10 используется официальный PGDG archive
-- Caddy ставится из официального Caddy APT-репозитория
-- для Docker-режима используется официальный Docker-репозиторий там, где он доступен, а на старых платформах вроде Debian 10 идёт fallback на пакеты дистрибутива
-
-Установка конкретной версии:
+Установить bundle на сервере:
 
 ```bash
-curl -fsSLo /tmp/anneal-install.sh https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh
-sudo ANNEAL_RELEASE_TAG=0.1.0 bash /tmp/anneal-install.sh
+sudo ./install.sh --bundle-root /path/to/anneal-bundle
 ```
 
-Установщик:
-- использует `annealctl` как единственный источник правды для `install`, `resume`, `status`, `doctor`, `update`, `restart` и `uninstall`
-- открывает интерактивный мастер из one-line bootstrap-команды и при этом поддерживает полностью non-interactive запуск через CLI-флаги
-- предлагает выбрать роль сервера: `all-in-one`, `control-plane` или `node`
-- предлагает выбрать тип установки: `native` или `docker`
-- скачивает ровно один релизный архив вида `anneal-rolling-master-linux-amd64.tar.gz` или `anneal-0.1.0-linux-amd64.tar.gz` вместо сборки проекта на сервере
-- автоматически распаковывает bundle и запускает встроенный `bin/annealctl`
-- автоматически генерирует `panel path`, URL базы, admin credentials, reseller defaults, node defaults и bootstrap secrets
-- пишет типизированное состояние в `/etc/anneal/install.toml`, `/var/lib/anneal/install-state.json` и `/etc/anneal/admin-summary.env`
-- после установки показывает итоговую сводку для администратора
+Установщик пишет `/etc/anneal/install.toml`, `/etc/anneal/anneal.env`, `/etc/anneal/admin-summary.env`, `/var/lib/anneal/install-state.json` и запускает:
 
-Control-plane:
-- устанавливает web-панель, API, worker, обвязку базы и Caddy
+- `postgresql`
+- `anneal-api.service`
+- `anneal-worker.service`
+- `anneal-caddy.service`
+- `anneal-mihomo.service`
 
-Node server:
-- устанавливает отдельный Anneal-managed VPS/VDS node server
-- распаковывает Xray и Hiddify Core из того же релизного архива и запускает их под управлением Anneal
-- фиксирует автоподъём через декларативные restart policy: для native это `Restart=always`, для docker это `restart: unless-stopped`
-
-После установки:
-- используйте `annealctl status`, `annealctl doctor`, `annealctl restart`, `annealctl update --bundle-root ...` и `annealctl uninstall`
-- после рестарта VPS/VDS control-plane, node-agent и runtime-ядра автоматически поднимутся обратно через systemd или docker restart policy
-
-Примеры запуска по роли:
+## Операции
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role all-in-one --mode native
+annealctl status
+annealctl doctor
+annealctl restart
+annealctl update --bundle-root /path/to/new-bundle
+annealctl uninstall
 ```
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role control-plane --mode native
-```
+## Runtime
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- --role node --mode docker
-```
-
----
-
-## 🎯 Ключевые сценарии
-
-- 🏗️ Создание серверной группы и подключение runtime-агентов
-- 🌍 Настройка доменных правил и автоматическая генерация точек входа
-- 📬 Выпуск и редактирование подписок с лимитами и сроками
-- 📱 Выдача клиентских ссылок и конфигов по устройствам
-- 📊 Контроль rollout-ов, состояния нод, usage и уведомлений
-
----
-
-## 🤝 Участие в разработке
-
-Контрибьюторы приветствуются! Баг-репорт, идея для фичи, правка в доках или пул-реквест — любой вклад помогает проекту двигаться вперёд.
-
-Если планируешь контрибьютить код — сначала открой issue, чтобы обсудить направление. Для мелких фиксов и улучшений можно сразу отправлять PR.
-
-> [!NOTE]
-> Проект находится в активной разработке. Часть кодовой базы ещё формируется — самое время войти в проект на раннем этапе.
-
----
-
-## 💜 Благодарности
-
-Отдельное спасибо команде **[Hiddify](https://github.com/hiddify)** за вклад в экосистему и сильные идеи вокруг удобной настройки доменов, структуры клиентских конфигов и механизмов доставки.
+Подписки отдаются как raw links, base64 link list или Mihomo YAML в зависимости от режима запроса и client headers. Установщик создает минимальный native-конфиг Mihomo, а данные delivery endpoint-ов берутся из настроек API.
