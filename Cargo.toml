@@ -3,13 +3,11 @@ resolver = "2"
 members = [
     "apps/api",
     "apps/annealctl",
-    "apps/node-agent",
     "apps/worker",
     "crates/audit",
     "crates/auth",
     "crates/config-engine",
     "crates/core",
-    "crates/nodes",
     "crates/notifications",
     "crates/platform",
     "crates/rbac",
@@ -31,7 +29,6 @@ anneal-audit = { path = "crates/audit" }
 anneal-auth = { path = "crates/auth" }
 anneal-config-engine = { path = "crates/config-engine" }
 anneal-core = { path = "crates/core" }
-anneal-nodes = { path = "crates/nodes" }
 anneal-notifications = { path = "crates/notifications" }
 anneal-platform = { path = "crates/platform" }
 anneal-rbac = { path = "crates/rbac" }
@@ -47,7 +44,7 @@ axum = { version = "0.8.8", features = ["macros"] }
 base64 = "0.22.1"
 chrono = { version = "0.4.44", features = ["serde", "clock"] }
 clap = { version = "4.5.49", features = ["derive", "env"] }
-dialoguer = "0.11.0"
+dialoguer = "0.12.0"
 futures = "0.3.32"
 hmac = "0.13.0"
 indicatif = "0.18.4"
@@ -63,7 +60,7 @@ tokio = { version = "1.51.1", features = ["full"] }
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth"] }
-toml = "0.8.19"
+toml = "1.1.2"
 tracing = "0.1.44"
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
@@ -73,7 +70,6 @@ opentelemetry_sdk = "0.31.0"
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
-x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 
 [workspace.lints.clippy]
 all = "warn"

@@ -33,13 +33,12 @@ impl UsageRepository for PgUsageRepository {
             sqlx::query(
                 r#"
                 insert into usage_samples (
-                    id, tenant_id, node_id, subscription_id, device_id, bytes_in, bytes_out, measured_at, created_at
-                ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    id, tenant_id, subscription_id, device_id, bytes_in, bytes_out, measured_at, created_at
+                ) values ($1,$2,$3,$4,$5,$6,$7,$8)
                 "#,
             )
             .bind(sample.id)
             .bind(sample.tenant_id)
-            .bind(sample.node_id)
             .bind(sample.subscription_id)
             .bind(sample.device_id)
             .bind(sample.bytes_in)

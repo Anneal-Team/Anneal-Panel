@@ -5,10 +5,9 @@ use std::{
 
 use anneal_config_engine::{
     ClientCredential, InboundProfile, RenderedShareLink, ShareLinkRenderer, ShareLinkStrategy,
-    SubscriptionDocumentFormat, SubscriptionDocumentRenderer,
+    SubscriptionDocumentFormat, SubscriptionDocumentRenderer, TransportKind,
 };
 use anneal_core::{Actor, ApplicationError, ApplicationResult, QuotaState, TokenHasher, UserRole};
-use anneal_nodes::{DeliveryNodeEndpoint, NodeEndpointCatalog};
 use anneal_rbac::{AccessScope, Permission, RbacService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
@@ -437,6 +436,60 @@ pub struct UnifiedSubscriptionService<R, C> {
     catalog: C,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeliveryEndpoint {
+    pub name: String,
+    pub protocol: anneal_core::ProtocolKind,
+    pub listen_host: String,
+    pub listen_port: u16,
+    pub public_host: String,
+    pub public_port: u16,
+    pub transport: TransportKind,
+    pub security: anneal_config_engine::SecurityKind,
+    pub server_name: Option<String>,
+    pub host_header: Option<String>,
+    pub path: Option<String>,
+    pub service_name: Option<String>,
+    pub flow: Option<String>,
+    pub reality_public_key: Option<String>,
+    pub reality_private_key: Option<String>,
+    pub reality_short_id: Option<String>,
+    pub fingerprint: Option<String>,
+    pub alpn: Vec<String>,
+    pub cipher: Option<String>,
+    pub tls_certificate_path: Option<String>,
+    pub tls_key_path: Option<String>,
+}
+
+#[async_trait]
+pub trait DeliveryEndpointCatalog: Send + Sync {
+    async fn list_delivery_endpoints(
+        &self,
+        tenant_id: Uuid,
+    ) -> ApplicationResult<Vec<DeliveryEndpoint>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct StaticDeliveryEndpointCatalog {
+    endpoints: Vec<DeliveryEndpoint>,
+}
+
+impl StaticDeliveryEndpointCatalog {
+    pub fn new(endpoints: Vec<DeliveryEndpoint>) -> Self {
+        Self { endpoints }
+    }
+}
+
+#[async_trait]
+impl DeliveryEndpointCatalog for StaticDeliveryEndpointCatalog {
+    async fn list_delivery_endpoints(
+        &self,
+        _tenant_id: Uuid,
+    ) -> ApplicationResult<Vec<DeliveryEndpoint>> {
+        Ok(self.endpoints.clone())
+    }
+}
+
 impl<R, C> UnifiedSubscriptionService<R, C> {
     pub fn new(subscriptions: R, catalog: C) -> Self {
         Self::with_token_hasher(
@@ -458,7 +511,7 @@ impl<R, C> UnifiedSubscriptionService<R, C> {
 impl<R, C> UnifiedSubscriptionService<R, C>
 where
     R: SubscriptionRepository,
-    C: NodeEndpointCatalog,
+    C: DeliveryEndpointCatalog,
 {
     pub async fn render_bundle(
         &self,
@@ -480,7 +533,7 @@ where
             .await?;
         if endpoints.is_empty() {
             return Err(ApplicationError::NotFound(
-                "no online node endpoints available".into(),
+                "no mihomo delivery endpoints configured".into(),
             ));
         }
         let mut endpoints = endpoints;
@@ -800,17 +853,13 @@ fn decide_quota_state(traffic_limit_bytes: i64, used_bytes: i64) -> QuotaState {
     }
 }
 
-fn map_delivery_endpoint(endpoint: &DeliveryNodeEndpoint) -> ApplicationResult<InboundProfile> {
-    let listen_port = u16::try_from(endpoint.listen_port)
-        .map_err(|_| ApplicationError::Validation("invalid listen_port".into()))?;
-    let public_port = u16::try_from(endpoint.public_port)
-        .map_err(|_| ApplicationError::Validation("invalid public_port".into()))?;
+fn map_delivery_endpoint(endpoint: &DeliveryEndpoint) -> ApplicationResult<InboundProfile> {
     Ok(InboundProfile {
         protocol: endpoint.protocol,
         listen_host: endpoint.listen_host.clone(),
-        listen_port,
+        listen_port: endpoint.listen_port,
         public_host: endpoint.public_host.clone(),
-        public_port,
+        public_port: endpoint.public_port,
         transport: endpoint.transport,
         security: endpoint.security,
         server_name: endpoint.server_name.clone(),
@@ -849,10 +898,10 @@ fn transport_name(transport: anneal_config_engine::TransportKind) -> &'static st
     }
 }
 
-fn delivery_label(name: &str, endpoint: &DeliveryNodeEndpoint) -> String {
+fn delivery_label(name: &str, endpoint: &DeliveryEndpoint) -> String {
     let mut parts = vec![
         name.to_owned(),
-        endpoint.node_name.clone(),
+        endpoint.name.clone(),
         protocol_name(endpoint.protocol).to_owned(),
         transport_name(endpoint.transport).to_owned(),
         endpoint.public_host.clone(),
@@ -902,7 +951,6 @@ mod tests {
 
     use anneal_config_engine::SubscriptionDocumentFormat;
     use anneal_core::{Actor, ApplicationError, ProtocolKind, UserRole};
-    use anneal_nodes::{InMemoryNodeRepository, NodeEndpointDraft, NodeService};
     use anneal_rbac::RbacService;
     use base64::{Engine as _, engine::general_purpose};
     use chrono::{Duration, Utc};
@@ -910,11 +958,41 @@ mod tests {
 
     use crate::{
         application::{
-            InMemorySubscriptionRepository, SubscriptionService, UnifiedSubscriptionService,
-            generate_access_key,
+            DeliveryEndpoint, InMemorySubscriptionRepository, StaticDeliveryEndpointCatalog,
+            SubscriptionService, UnifiedSubscriptionService, generate_access_key,
         },
         domain::CreateSubscriptionCommand,
     };
+
+    fn endpoint(protocol: ProtocolKind, public_host: &str, public_port: u16) -> DeliveryEndpoint {
+        DeliveryEndpoint {
+            name: "mihomo".into(),
+            protocol,
+            listen_host: "::".into(),
+            listen_port: public_port,
+            public_host: public_host.into(),
+            public_port,
+            transport: anneal_config_engine::TransportKind::Tcp,
+            security: if protocol == ProtocolKind::VlessReality {
+                anneal_config_engine::SecurityKind::Reality
+            } else {
+                anneal_config_engine::SecurityKind::Tls
+            },
+            server_name: Some(public_host.into()),
+            host_header: None,
+            path: None,
+            service_name: None,
+            flow: Some("xtls-rprx-vision".into()),
+            reality_public_key: Some("public-key".into()),
+            reality_private_key: Some("private-key".into()),
+            reality_short_id: Some("deadbeef".into()),
+            fingerprint: Some("chrome".into()),
+            alpn: vec!["h2".into()],
+            cipher: Some("2022-blake3-aes-128-gcm".into()),
+            tls_certificate_path: None,
+            tls_key_path: None,
+        }
+    }
 
     #[test]
     fn generated_access_key_is_valid_ss2022_psk() {
@@ -968,96 +1046,16 @@ mod tests {
     async fn unified_bundle_contains_multiple_protocols() {
         let subscriptions = InMemorySubscriptionRepository::default();
         let subscription_service = SubscriptionService::new(&subscriptions, RbacService);
-        let nodes = InMemoryNodeRepository::default();
-        let node_service = NodeService::new(&nodes, RbacService);
+        let catalog = StaticDeliveryEndpointCatalog::new(vec![
+            endpoint(ProtocolKind::VlessReality, "edge.example.com", 443),
+            endpoint(ProtocolKind::Tuic, "edge.example.com", 8443),
+        ]);
         let actor = Actor {
             user_id: Uuid::new_v4(),
             tenant_id: Some(Uuid::new_v4()),
             role: UserRole::Reseller,
         };
         subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
-
-        let group = node_service
-            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
-            .await
-            .expect("group");
-        let grant = node_service
-            .create_enrollment_token(
-                &actor,
-                actor.tenant_id.expect("tenant"),
-                group.id,
-                anneal_core::ProxyEngine::Singbox,
-            )
-            .await
-            .expect("grant");
-        let node = node_service
-            .register_node(
-                &grant.token,
-                anneal_nodes::RuntimeRegistration {
-                    name: "edge-1".into(),
-                    version: "1.0.0".into(),
-                    engine: anneal_core::ProxyEngine::Singbox,
-                    protocols: vec![ProtocolKind::VlessReality, ProtocolKind::Tuic],
-                },
-            )
-            .await
-            .expect("node");
-        node_service
-            .replace_node_endpoints(
-                &actor,
-                actor.tenant_id.expect("tenant"),
-                node.id,
-                vec![
-                    NodeEndpointDraft {
-                        protocol: ProtocolKind::VlessReality,
-                        listen_host: "::".into(),
-                        listen_port: 443,
-                        public_host: "edge.example.com".into(),
-                        public_port: 443,
-                        transport: anneal_config_engine::TransportKind::Tcp,
-                        security: anneal_config_engine::SecurityKind::Reality,
-                        server_name: Some("edge.example.com".into()),
-                        host_header: None,
-                        path: None,
-                        service_name: None,
-                        flow: Some("xtls-rprx-vision".into()),
-                        reality_public_key: Some("public-key".into()),
-                        reality_private_key: Some("private-key".into()),
-                        reality_short_id: Some("deadbeef".into()),
-                        fingerprint: Some("chrome".into()),
-                        alpn: vec!["h2".into()],
-                        cipher: None,
-                        tls_certificate_path: None,
-                        tls_key_path: None,
-                        enabled: true,
-                    },
-                    NodeEndpointDraft {
-                        protocol: ProtocolKind::Tuic,
-                        listen_host: "::".into(),
-                        listen_port: 8443,
-                        public_host: "edge.example.com".into(),
-                        public_port: 8443,
-                        transport: anneal_config_engine::TransportKind::Tcp,
-                        security: anneal_config_engine::SecurityKind::Tls,
-                        server_name: Some("edge.example.com".into()),
-                        host_header: None,
-                        path: None,
-                        service_name: None,
-                        flow: None,
-                        reality_public_key: None,
-                        reality_private_key: None,
-                        reality_short_id: None,
-                        fingerprint: Some("chrome".into()),
-                        alpn: vec!["h3".into()],
-                        cipher: None,
-                        tls_certificate_path: Some("/var/lib/anneal/tls/server.crt".into()),
-                        tls_key_path: Some("/var/lib/anneal/tls/server.key".into()),
-                        enabled: true,
-                    },
-                ],
-            )
-            .await
-            .expect("endpoints");
 
         let (_subscription, link) = subscription_service
             .create_subscription(
@@ -1074,7 +1072,7 @@ mod tests {
             .expect("subscription");
         let link_token = link.id.to_string();
 
-        let unified = UnifiedSubscriptionService::new(&subscriptions, &nodes)
+        let unified = UnifiedSubscriptionService::new(&subscriptions, catalog)
             .render_bundle(&link_token, SubscriptionDocumentFormat::Raw)
             .await
             .expect("bundle");
@@ -1085,99 +1083,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn singbox_bundle_uses_unique_tags_for_same_protocol_endpoints() {
+    async fn mihomo_json_bundle_uses_unique_tags_for_same_protocol_endpoints() {
         let subscriptions = InMemorySubscriptionRepository::default();
         let subscription_service = SubscriptionService::new(&subscriptions, RbacService);
-        let nodes = InMemoryNodeRepository::default();
-        let node_service = NodeService::new(&nodes, RbacService);
+        let catalog = StaticDeliveryEndpointCatalog::new(vec![
+            endpoint(ProtocolKind::Vmess, "edge.example.com", 24443),
+            endpoint(ProtocolKind::Vmess, "edge.example.com", 24444),
+        ]);
         let actor = Actor {
             user_id: Uuid::new_v4(),
             tenant_id: Some(Uuid::new_v4()),
             role: UserRole::Reseller,
         };
         subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
-
-        let group = node_service
-            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
-            .await
-            .expect("group");
-        let grant = node_service
-            .create_enrollment_token(
-                &actor,
-                actor.tenant_id.expect("tenant"),
-                group.id,
-                anneal_core::ProxyEngine::Singbox,
-            )
-            .await
-            .expect("grant");
-        let node = node_service
-            .register_node(
-                &grant.token,
-                anneal_nodes::RuntimeRegistration {
-                    name: "edge-1".into(),
-                    version: "1.0.0".into(),
-                    engine: anneal_core::ProxyEngine::Singbox,
-                    protocols: vec![ProtocolKind::Vmess],
-                },
-            )
-            .await
-            .expect("node");
-        node_service
-            .replace_node_endpoints(
-                &actor,
-                actor.tenant_id.expect("tenant"),
-                node.id,
-                vec![
-                    NodeEndpointDraft {
-                        protocol: ProtocolKind::Vmess,
-                        listen_host: "::".into(),
-                        listen_port: 24443,
-                        public_host: "edge.example.com".into(),
-                        public_port: 24443,
-                        transport: anneal_config_engine::TransportKind::Tcp,
-                        security: anneal_config_engine::SecurityKind::None,
-                        server_name: None,
-                        host_header: None,
-                        path: None,
-                        service_name: None,
-                        flow: None,
-                        reality_public_key: None,
-                        reality_private_key: None,
-                        reality_short_id: None,
-                        fingerprint: None,
-                        alpn: vec![],
-                        cipher: None,
-                        tls_certificate_path: None,
-                        tls_key_path: None,
-                        enabled: true,
-                    },
-                    NodeEndpointDraft {
-                        protocol: ProtocolKind::Vmess,
-                        listen_host: "::".into(),
-                        listen_port: 24444,
-                        public_host: "edge.example.com".into(),
-                        public_port: 24444,
-                        transport: anneal_config_engine::TransportKind::Tcp,
-                        security: anneal_config_engine::SecurityKind::None,
-                        server_name: None,
-                        host_header: None,
-                        path: None,
-                        service_name: None,
-                        flow: None,
-                        reality_public_key: None,
-                        reality_private_key: None,
-                        reality_short_id: None,
-                        fingerprint: None,
-                        alpn: vec![],
-                        cipher: None,
-                        tls_certificate_path: None,
-                        tls_key_path: None,
-                        enabled: true,
-                    },
-                ],
-            )
-            .await
-            .expect("endpoints");
 
         let (_subscription, link) = subscription_service
             .create_subscription(
@@ -1194,122 +1112,44 @@ mod tests {
             .expect("subscription");
         let link_token = link.id.to_string();
 
-        let unified = UnifiedSubscriptionService::new(&subscriptions, &nodes)
-            .render_bundle(&link_token, SubscriptionDocumentFormat::SingBox)
+        let unified = UnifiedSubscriptionService::new(&subscriptions, catalog)
+            .render_bundle(&link_token, SubscriptionDocumentFormat::Mihomo)
             .await
             .expect("bundle");
 
-        let json: serde_json::Value = serde_json::from_str(&unified.content).expect("json");
-        let tags = json["outbounds"]
-            .as_array()
-            .expect("outbounds")
-            .iter()
-            .filter_map(|entry| entry["tag"].as_str())
-            .filter(|tag| tag.starts_with("main edge-1 vmess"))
+        let tags = unified
+            .content
+            .lines()
+            .skip_while(|line| *line != "proxies:")
+            .skip(1)
+            .take_while(|line| *line != "proxy-groups:")
+            .filter_map(|line| line.strip_prefix("  - name: "))
+            .map(|line| line.trim_matches('"'))
+            .filter(|tag| tag.starts_with("main mihomo vmess"))
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let unique = tags.iter().cloned().collect::<HashSet<_>>();
 
         assert_eq!(tags.len(), 2);
         assert_eq!(unique.len(), 2);
-        assert!(unique.contains("main edge-1 vmess tcp edge.example.com 24443"));
-        assert!(unique.contains("main edge-1 vmess tcp edge.example.com 24444"));
+        assert!(unique.contains("main mihomo vmess tcp edge.example.com 24443"));
+        assert!(unique.contains("main mihomo vmess tcp edge.example.com 24444"));
     }
 
     #[tokio::test]
-    async fn clash_bundle_uses_unique_names_for_same_protocol_endpoints() {
+    async fn mihomo_bundle_uses_unique_names_for_same_protocol_endpoints() {
         let subscriptions = InMemorySubscriptionRepository::default();
         let subscription_service = SubscriptionService::new(&subscriptions, RbacService);
-        let nodes = InMemoryNodeRepository::default();
-        let node_service = NodeService::new(&nodes, RbacService);
+        let catalog = StaticDeliveryEndpointCatalog::new(vec![
+            endpoint(ProtocolKind::Vmess, "edge-a.example.com", 24443),
+            endpoint(ProtocolKind::Vmess, "edge-b.example.com", 24443),
+        ]);
         let actor = Actor {
             user_id: Uuid::new_v4(),
             tenant_id: Some(Uuid::new_v4()),
             role: UserRole::Reseller,
         };
         subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
-
-        let group = node_service
-            .create_server_node(&actor, actor.tenant_id.expect("tenant"), "main".into())
-            .await
-            .expect("group");
-        let grant = node_service
-            .create_enrollment_token(
-                &actor,
-                actor.tenant_id.expect("tenant"),
-                group.id,
-                anneal_core::ProxyEngine::Singbox,
-            )
-            .await
-            .expect("grant");
-        let node = node_service
-            .register_node(
-                &grant.token,
-                anneal_nodes::RuntimeRegistration {
-                    name: "edge-1".into(),
-                    version: "1.0.0".into(),
-                    engine: anneal_core::ProxyEngine::Singbox,
-                    protocols: vec![ProtocolKind::Vmess],
-                },
-            )
-            .await
-            .expect("node");
-        node_service
-            .replace_node_endpoints(
-                &actor,
-                actor.tenant_id.expect("tenant"),
-                node.id,
-                vec![
-                    NodeEndpointDraft {
-                        protocol: ProtocolKind::Vmess,
-                        listen_host: "::".into(),
-                        listen_port: 24443,
-                        public_host: "edge-a.example.com".into(),
-                        public_port: 24443,
-                        transport: anneal_config_engine::TransportKind::Tcp,
-                        security: anneal_config_engine::SecurityKind::None,
-                        server_name: None,
-                        host_header: None,
-                        path: None,
-                        service_name: None,
-                        flow: None,
-                        reality_public_key: None,
-                        reality_private_key: None,
-                        reality_short_id: None,
-                        fingerprint: None,
-                        alpn: vec![],
-                        cipher: None,
-                        tls_certificate_path: None,
-                        tls_key_path: None,
-                        enabled: true,
-                    },
-                    NodeEndpointDraft {
-                        protocol: ProtocolKind::Vmess,
-                        listen_host: "::".into(),
-                        listen_port: 24443,
-                        public_host: "edge-b.example.com".into(),
-                        public_port: 24443,
-                        transport: anneal_config_engine::TransportKind::Tcp,
-                        security: anneal_config_engine::SecurityKind::None,
-                        server_name: None,
-                        host_header: None,
-                        path: None,
-                        service_name: None,
-                        flow: None,
-                        reality_public_key: None,
-                        reality_private_key: None,
-                        reality_short_id: None,
-                        fingerprint: None,
-                        alpn: vec![],
-                        cipher: None,
-                        tls_certificate_path: None,
-                        tls_key_path: None,
-                        enabled: true,
-                    },
-                ],
-            )
-            .await
-            .expect("endpoints");
 
         let (_subscription, link) = subscription_service
             .create_subscription(
@@ -1326,8 +1166,8 @@ mod tests {
             .expect("subscription");
         let link_token = link.id.to_string();
 
-        let unified = UnifiedSubscriptionService::new(&subscriptions, &nodes)
-            .render_bundle(&link_token, SubscriptionDocumentFormat::ClashMeta)
+        let unified = UnifiedSubscriptionService::new(&subscriptions, catalog)
+            .render_bundle(&link_token, SubscriptionDocumentFormat::Mihomo)
             .await
             .expect("bundle");
 
@@ -1344,8 +1184,8 @@ mod tests {
 
         assert_eq!(proxy_names.len(), 2);
         assert_eq!(unique.len(), 2);
-        assert!(unique.contains("main edge-1 vmess tcp edge-a.example.com 24443"));
-        assert!(unique.contains("main edge-1 vmess tcp edge-b.example.com 24443"));
+        assert!(unique.contains("main mihomo vmess tcp edge-a.example.com 24443"));
+        assert!(unique.contains("main mihomo vmess tcp edge-b.example.com 24443"));
     }
 
     #[tokio::test]

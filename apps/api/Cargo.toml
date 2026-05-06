@@ -11,7 +11,6 @@ anneal-audit.workspace = true
 anneal-auth.workspace = true
 anneal-config-engine.workspace = true
 anneal-core.workspace = true
-anneal-nodes.workspace = true
 anneal-notifications.workspace = true
 anneal-platform.workspace = true
 anneal-rbac.workspace = true

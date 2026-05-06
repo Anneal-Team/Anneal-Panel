@@ -349,11 +349,11 @@ export function UsersPage() {
                   <td className="px-3 py-3 text-foreground/80">{formatDate(user.created_at)}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="secondary" onClick={() => openEditDialog(user)}>
+                      <Button type="button" variant="secondary" onClick={() => { openEditDialog(user); }}>
                         Редактировать
                       </Button>
                       {user.role !== "superadmin" ? (
-                        <Button type="button" variant="danger" onClick={() => setDeleteTarget(user)}>
+                        <Button type="button" variant="danger" onClick={() => { setDeleteTarget(user); }}>
                           Удалить
                         </Button>
                       ) : null}
@@ -368,7 +368,7 @@ export function UsersPage() {
 
       <Dialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { setCreateOpen(false); }}
         title={createMode === "user" ? "Новый пользователь" : "Новый реселлер"}
         description="Выбери тип аккаунта и заполни только нужные поля."
       >
@@ -377,14 +377,14 @@ export function UsersPage() {
             <Button
               type="button"
               variant={createMode === "user" ? "default" : "secondary"}
-              onClick={() => setCreateMode("user")}
+              onClick={() => { setCreateMode("user"); }}
             >
               Пользователь
             </Button>
             <Button
               type="button"
               variant={createMode === "reseller" ? "default" : "secondary"}
-              onClick={() => setCreateMode("reseller")}
+              onClick={() => { setCreateMode("reseller"); }}
             >
               Реселлер
             </Button>
@@ -401,34 +401,34 @@ export function UsersPage() {
               <Input
                 placeholder="Название тенанта"
                 value={resellerForm.tenant_name}
-                onChange={(event) =>
-                  setResellerForm((current) => ({ ...current, tenant_name: event.target.value }))
-                }
+                onChange={(event) => {
+                  setResellerForm((current) => ({ ...current, tenant_name: event.target.value }));
+                }}
               />
               <Input
                 placeholder="Имя"
                 value={resellerForm.display_name}
-                onChange={(event) =>
-                  setResellerForm((current) => ({ ...current, display_name: event.target.value }))
-                }
+                onChange={(event) => {
+                  setResellerForm((current) => ({ ...current, display_name: event.target.value }));
+                }}
               />
               <Input
                 placeholder="Email"
                 value={resellerForm.email}
-                onChange={(event) =>
-                  setResellerForm((current) => ({ ...current, email: event.target.value }))
-                }
+                onChange={(event) => {
+                  setResellerForm((current) => ({ ...current, email: event.target.value }));
+                }}
               />
               <Input
                 placeholder="Пароль"
                 type="password"
                 value={resellerForm.password}
-                onChange={(event) =>
-                  setResellerForm((current) => ({ ...current, password: event.target.value }))
-                }
+                onChange={(event) => {
+                  setResellerForm((current) => ({ ...current, password: event.target.value }));
+                }}
               />
               <div className="flex justify-end gap-3">
-                <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)}>
+                <Button type="button" variant="secondary" onClick={() => { setCreateOpen(false); }}>
                   Отмена
                 </Button>
                 <Button
@@ -455,9 +455,9 @@ export function UsersPage() {
             >
               <Select
                 value={userForm.role}
-                onChange={(event) =>
-                  setUserForm((current) => ({ ...current, role: event.target.value as UserRole }))
-                }
+                onChange={(event) => {
+                  setUserForm((current) => ({ ...current, role: event.target.value as UserRole }));
+                }}
               >
                 {createUserRoles.map((role) => (
                   <option key={role} value={role}>
@@ -486,27 +486,27 @@ export function UsersPage() {
               <Input
                 placeholder="Имя"
                 value={userForm.display_name}
-                onChange={(event) =>
-                  setUserForm((current) => ({ ...current, display_name: event.target.value }))
-                }
+                onChange={(event) => {
+                  setUserForm((current) => ({ ...current, display_name: event.target.value }));
+                }}
               />
               <Input
                 placeholder="Email"
                 value={userForm.email}
-                onChange={(event) =>
-                  setUserForm((current) => ({ ...current, email: event.target.value }))
-                }
+                onChange={(event) => {
+                  setUserForm((current) => ({ ...current, email: event.target.value }));
+                }}
               />
               <Input
                 placeholder="Пароль"
                 type="password"
                 value={userForm.password}
-                onChange={(event) =>
-                  setUserForm((current) => ({ ...current, password: event.target.value }))
-                }
+                onChange={(event) => {
+                  setUserForm((current) => ({ ...current, password: event.target.value }));
+                }}
               />
               <div className="flex justify-end gap-3">
-                <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)}>
+                <Button type="button" variant="secondary" onClick={() => { setCreateOpen(false); }}>
                   Отмена
                 </Button>
                 <Button
@@ -566,9 +566,9 @@ export function UsersPage() {
             />
             <Select
               value={resellerForm.status}
-              onChange={(event) =>
-                setResellerForm((current) => ({ ...current, status: event.target.value as UserStatus }))
-              }
+              onChange={(event) => {
+                setResellerForm((current) => ({ ...current, status: event.target.value as UserStatus }));
+              }}
             >
               {userStatuses.map((status) => (
                 <option key={status} value={status}>
@@ -647,9 +647,9 @@ export function UsersPage() {
             </Select>
             <Select
               value={userForm.status}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, status: event.target.value as UserStatus }))
-              }
+              onChange={(event) => {
+                setUserForm((current) => ({ ...current, status: event.target.value as UserStatus }));
+              }}
             >
               {userStatuses.map((status) => (
                 <option key={status} value={status}>
@@ -693,7 +693,7 @@ export function UsersPage() {
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { setDeleteTarget(null); }}
         title={deleteTarget?.role === "reseller" ? "Удалить реселлера" : "Удалить аккаунт"}
         description={
           deleteTarget

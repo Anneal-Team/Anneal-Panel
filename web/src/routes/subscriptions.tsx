@@ -464,14 +464,14 @@ export function SubscriptionsPage() {
                       <Button
                         type="button"
                         variant="secondary"
-                        onClick={() => openEditDialog(subscription)}
+                        onClick={() => { openEditDialog(subscription); }}
                       >
                         {t("common.actions.edit")}
                       </Button>
                       <Button
                         type="button"
                         variant="danger"
-                        onClick={() => setDeleteTarget(subscription)}
+                        onClick={() => { setDeleteTarget(subscription); }}
                       >
                         {t("common.actions.delete")}
                       </Button>
@@ -490,7 +490,7 @@ export function SubscriptionsPage() {
 
       <Dialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { setCreateOpen(false); }}
         title={t("subscriptions.create.title")}
         description={t("subscriptions.create.description")}
       >
@@ -504,9 +504,9 @@ export function SubscriptionsPage() {
           {actor?.tenant_id ? null : (
             <Select
               value={createForm.tenant_id}
-              onChange={(event) =>
-                setCreateForm((current) => ({ ...current, tenant_id: event.target.value }))
-              }
+              onChange={(event) => {
+                setCreateForm((current) => ({ ...current, tenant_id: event.target.value }));
+              }}
             >
               <option value="">{t("subscriptions.create.select_tenant")}</option>
               {tenantOptions.map((tenant) => (
@@ -520,29 +520,29 @@ export function SubscriptionsPage() {
           <Input
             placeholder={t("subscriptions.create.name_placeholder")}
             value={createForm.name}
-            onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))}
+            onChange={(event) => { setCreateForm((current) => ({ ...current, name: event.target.value })); }}
           />
 
           <Textarea
             placeholder={t("subscriptions.create.note_placeholder")}
             value={createForm.note}
-            onChange={(event) => setCreateForm((current) => ({ ...current, note: event.target.value }))}
+            onChange={(event) => { setCreateForm((current) => ({ ...current, note: event.target.value })); }}
           />
 
           <div className="grid gap-3 md:grid-cols-2">
             <Input
               placeholder={t("subscriptions.create.limit_placeholder")}
               value={createForm.traffic_limit_gb}
-              onChange={(event) =>
-                setCreateForm((current) => ({ ...current, traffic_limit_gb: event.target.value }))
-              }
+              onChange={(event) => {
+                setCreateForm((current) => ({ ...current, traffic_limit_gb: event.target.value }));
+              }}
             />
             <Input
               placeholder={t("subscriptions.create.days_placeholder")}
               value={createForm.package_days}
-              onChange={(event) =>
-                setCreateForm((current) => ({ ...current, package_days: event.target.value }))
-              }
+              onChange={(event) => {
+                setCreateForm((current) => ({ ...current, package_days: event.target.value }));
+              }}
             />
           </div>
 
@@ -573,7 +573,7 @@ export function SubscriptionsPage() {
           </div>
 
           <div className="flex justify-end gap-3">
-            <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => { setCreateOpen(false); }}>
               {t("common.cancel")}
             </Button>
             <Button
@@ -613,17 +613,17 @@ export function SubscriptionsPage() {
             <Input
               placeholder={t("subscriptions.edit.name_placeholder")}
               value={editForm.name}
-              onChange={(event) =>
-                setEditForm((current) => (current ? { ...current, name: event.target.value } : current))
-              }
+              onChange={(event) => {
+                setEditForm((current) => (current ? { ...current, name: event.target.value } : current));
+              }}
             />
 
             <Textarea
               placeholder={t("subscriptions.edit.note_placeholder")}
               value={editForm.note}
-              onChange={(event) =>
-                setEditForm((current) => (current ? { ...current, note: event.target.value } : current))
-              }
+              onChange={(event) => {
+                setEditForm((current) => (current ? { ...current, note: event.target.value } : current));
+              }}
             />
 
             <div className="grid gap-3 md:grid-cols-2">
@@ -691,7 +691,7 @@ export function SubscriptionsPage() {
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { setDeleteTarget(null); }}
         title={t("subscriptions.delete.title")}
         description={
           deleteTarget ? t("subscriptions.delete.description", { name: deleteTarget.name }) : ""

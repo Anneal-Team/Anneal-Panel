@@ -13,9 +13,6 @@ import { api } from "@/lib/api";
 import {
   formatBytes,
   formatDate,
-  formatDeploymentStatus,
-  formatNodeName,
-  formatNodeStatus,
   formatNotificationBody,
   formatQuotaState,
 } from "@/lib/format";
@@ -36,29 +33,13 @@ function sumBytes(values: number[]) {
   return values.reduce((total, value) => total + value, 0);
 }
 
-function rolloutTone(status: string) {
-  if (status === "applied" || status === "ready") {
-    return "success" as const;
-  }
-  if (status === "failed" || status === "rolled_back") {
-    return "danger" as const;
-  }
-  return "warning" as const;
-}
-
 function notificationTone(kind: string) {
-  if (kind === "node_offline" || kind === "quota100") {
-    return "danger" as const;
-  }
-  return "warning" as const;
+  return kind === "quota100" ? "danger" as const : "warning" as const;
 }
 
 function sessionLabel(userAgent: string | null, ipAddress: string | null, fallback: string) {
   const parts = [userAgent?.trim(), ipAddress?.trim()].filter(Boolean);
-  if (parts.length === 0) {
-    return fallback;
-  }
-  return parts.join(" / ");
+  return parts.length === 0 ? fallback : parts.join(" / ");
 }
 
 export function DashboardPage() {
@@ -74,16 +55,14 @@ export function DashboardPage() {
   const [securityMessage, setSecurityMessage] = useState<string | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
 
-  const usersQuery = useQuery({ queryKey: ["users"], queryFn: api.listUsers, enabled: Boolean(session.accessToken) });
-  const nodesQuery = useQuery({ queryKey: ["nodes"], queryFn: api.listNodes, enabled: Boolean(session.accessToken) });
+  const usersQuery = useQuery({
+    queryKey: ["users"],
+    queryFn: api.listUsers,
+    enabled: Boolean(session.accessToken),
+  });
   const subscriptionsQuery = useQuery({
     queryKey: ["subscriptions"],
     queryFn: api.listSubscriptions,
-    enabled: Boolean(session.accessToken),
-  });
-  const rolloutsQuery = useQuery({
-    queryKey: ["rollouts"],
-    queryFn: api.listRollouts,
     enabled: Boolean(session.accessToken),
   });
   const notificationsQuery = useQuery({
@@ -98,29 +77,7 @@ export function DashboardPage() {
   });
 
   const users = usersQuery.data ?? [];
-  const serverNodes = [...(nodesQuery.data ?? [])].sort((left, right) => {
-    const leftTime = new Date(left.updated_at).getTime();
-    const rightTime = new Date(right.updated_at).getTime();
-    return rightTime - leftTime;
-  });
-  const nodes = serverNodes
-    .flatMap((node) =>
-      node.runtimes.map((runtime) => ({
-        ...runtime,
-        node_name: node.name,
-      })),
-    )
-    .sort((left, right) => {
-      const leftTime = new Date(left.updated_at).getTime();
-      const rightTime = new Date(right.updated_at).getTime();
-      return rightTime - leftTime;
-    });
   const subscriptions = [...(subscriptionsQuery.data ?? [])].sort((left, right) => {
-    const leftTime = new Date(left.updated_at).getTime();
-    const rightTime = new Date(right.updated_at).getTime();
-    return rightTime - leftTime;
-  });
-  const rollouts = [...(rolloutsQuery.data ?? [])].sort((left, right) => {
     const leftTime = new Date(left.updated_at).getTime();
     const rightTime = new Date(right.updated_at).getTime();
     return rightTime - leftTime;
@@ -138,8 +95,6 @@ export function DashboardPage() {
 
   const activeUsers = users.filter((user) => user.status === "active");
   const resellers = users.filter((user) => user.role === "reseller");
-  const onlineNodes = nodes.filter((node) => node.status === "online");
-  const offlineNodes = nodes.filter((node) => node.status === "offline");
   const activeSubscriptions = subscriptions.filter((subscription) => !subscription.suspended);
   const suspendedSubscriptions = subscriptions.filter((subscription) => subscription.suspended);
   const quotaProblems = subscriptions.filter((subscription) => subscription.quota_state !== "normal");
@@ -147,26 +102,11 @@ export function DashboardPage() {
     (subscription) => !subscription.suspended && isExpiringSoon(subscription.expires_at, now),
   );
   const activeSessions = sessions.filter((entry) => !entry.revoked_at && new Date(entry.expires_at).getTime() > now);
-  const failedRollouts = rollouts.filter((rollout) => rollout.status === "failed");
-  const queuedRollouts = rollouts.filter((rollout) =>
-    ["queued", "rendering", "validating", "ready"].includes(rollout.status),
-  );
   const totalUsedBytes = sumBytes(subscriptions.map((subscription) => subscription.used_bytes));
   const totalLimitBytes = sumBytes(subscriptions.map((subscription) => subscription.traffic_limit_bytes));
+  const activeAlerts = quotaProblems.length + suspendedSubscriptions.length + expiringSoon.length;
 
   const attentionItems: AttentionItem[] = [
-    ...offlineNodes.map((node) => ({
-      id: `node-${node.id}`,
-      title: `${formatNodeName(node.node_name)} / ${node.engine}`,
-      description: t("dashboard.attention.node_offline", { date: formatDate(node.last_seen_at) }),
-      tone: "danger" as const,
-    })),
-    ...failedRollouts.map((rollout) => ({
-      id: `rollout-${rollout.id}`,
-      title: t("dashboard.attention.rollout_failed", { name: rollout.revision_name }),
-      description: rollout.failure_reason ?? `${rollout.engine} / ${rollout.target_path}`,
-      tone: "danger" as const,
-    })),
     ...subscriptions
       .filter((subscription) => subscription.suspended || subscription.quota_state === "exhausted")
       .map((subscription) => ({
@@ -258,9 +198,7 @@ export function DashboardPage() {
           {t("nav_group.overview")}
         </div>
         <h1 className="mt-4 text-4xl font-bold text-[#1d271a]">{t("dashboard.title")}</h1>
-        <p className="mt-3 max-w-4xl text-base text-[#485644]">
-          {t("dashboard.subtitle")}
-        </p>
+        <p className="mt-3 max-w-4xl text-base text-[#485644]">{t("dashboard.subtitle")}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -272,17 +210,12 @@ export function DashboardPage() {
         <MetricCard
           label={t("dashboard.metrics.subscriptions_label")}
           value={String(activeSubscriptions.length)}
-          hint={t("dashboard.metrics.subscriptions_hint", {
-            count: quotaProblems.length + suspendedSubscriptions.length,
-          })}
+          hint={t("dashboard.metrics.subscriptions_hint", { count: quotaProblems.length + suspendedSubscriptions.length })}
         />
         <MetricCard
-          label={t("dashboard.metrics.runtimes_label")}
-          value={String(onlineNodes.length)}
-          hint={t("dashboard.metrics.runtimes_hint", {
-            total: nodes.length,
-            offline: offlineNodes.length,
-          })}
+          label={t("dashboard.metrics.alerts_label")}
+          value={String(activeAlerts)}
+          hint={t("dashboard.metrics.alerts_hint", { count: expiringSoon.length })}
         />
         <MetricCard
           label={t("dashboard.metrics.traffic_label")}
@@ -311,8 +244,8 @@ export function DashboardPage() {
                       </Badge>
                     </div>
                     <div className="mt-2 text-sm text-foreground/80">
-                    <ExpandableText text={item.description} />
-                  </div>
+                      <ExpandableText text={item.description} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -321,37 +254,6 @@ export function DashboardPage() {
                 {t("dashboard.attention.empty")}
               </div>
             )}
-          </Card>
-
-          <Card className="space-y-4 shadow-sm">
-            <div>
-              <div className="text-xs uppercase tracking-widest text-[#485644]">{t("dashboard.rollouts.group")}</div>
-              <h2 className="mt-2 text-xl font-bold text-[#1d271a]">{t("dashboard.rollouts.title")}</h2>
-            </div>
-            <div className="space-y-3">
-              {rollouts.slice(0, 6).map((rollout) => (
-                <div key={rollout.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="text-lg font-semibold">{rollout.revision_name}</div>
-                    <Badge tone={rolloutTone(rollout.status)}>{formatDeploymentStatus(rollout.status)}</Badge>
-                  </div>
-                  <div className="mt-2 text-sm text-foreground/80">
-                    {rollout.engine} / {rollout.target_path}
-                  </div>
-                  {rollout.failure_reason ? (
-                    <div className="mt-2 text-sm text-danger">
-                      <ExpandableText text={rollout.failure_reason} />
-                    </div>
-                  ) : null}
-                  <div className="mt-2 text-xs text-foreground/90">{formatDate(rollout.updated_at)}</div>
-                </div>
-              ))}
-              {rollouts.length === 0 ? (
-                <div className="rounded-[24px] border border-dashed border-border bg-[#f8f5f0] px-4 py-8 text-center text-sm text-[#485644]">
-                  {t("dashboard.rollouts.empty")}
-                </div>
-              ) : null}
-            </div>
           </Card>
 
           <Card className="space-y-4 shadow-sm">
@@ -389,10 +291,7 @@ export function DashboardPage() {
             </div>
             <div className="grid gap-3">
               <div className="rounded-[18px] bg-[#fbf7ef] px-4 py-3 text-sm text-[#485644]">
-                {t("dashboard.stat.node_groups")}: <span className="font-bold text-[#1d271a]">{serverNodes.length}</span>
-              </div>
-              <div className="rounded-[18px] bg-[#fbf7ef] px-4 py-3 text-sm text-[#485644]">
-                {t("dashboard.stat.pending_runtimes")}: <span className="font-bold text-[#1d271a]">{nodes.filter((node) => node.status === "pending").length}</span>
+                {t("dashboard.stat.active_subscriptions")}: <span className="font-bold text-[#1d271a]">{activeSubscriptions.length}</span>
               </div>
               <div className="rounded-[18px] bg-[#fbf7ef] px-4 py-3 text-sm text-[#485644]">
                 {t("dashboard.stat.expiring_soon")}: <span className="font-bold text-[#1d271a]">{expiringSoon.length}</span>
@@ -401,47 +300,8 @@ export function DashboardPage() {
                 {t("dashboard.stat.active_sessions")}: <span className="font-bold text-[#1d271a]">{activeSessions.length}</span>
               </div>
               <div className="rounded-[18px] bg-[#fbf7ef] px-4 py-3 text-sm text-[#485644]">
-                {t("dashboard.stat.queued_rollouts")}: <span className="font-bold text-[#1d271a]">{queuedRollouts.length}</span>
+                {t("dashboard.stat.notifications")}: <span className="font-bold text-[#1d271a]">{notifications.length}</span>
               </div>
-            </div>
-          </Card>
-
-          <Card className="space-y-4 shadow-sm">
-            <div>
-              <div className="text-xs uppercase tracking-widest text-[#485644]">{t("dashboard.nodes.group")}</div>
-              <h2 className="mt-2 text-xl font-bold text-[#1d271a]">{t("dashboard.nodes.title")}</h2>
-            </div>
-            <div className="space-y-3">
-              {nodes.slice(0, 6).map((node) => (
-                <div key={node.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="text-lg font-semibold">{formatNodeName(node.node_name)}</div>
-                    <Badge
-                      tone={
-                        node.status === "online"
-                          ? "success"
-                          : node.status === "offline"
-                            ? "danger"
-                            : "warning"
-                      }
-                    >
-                      {formatNodeStatus(node.status)}
-                    </Badge>
-                    <Badge tone="muted">{node.engine}</Badge>
-                  </div>
-                  <div className="mt-2 text-sm text-foreground/80">
-                    {t("dashboard.nodes.version", { version: node.version })}
-                  </div>
-                  <div className="mt-2 text-xs text-foreground/90">
-                    {t("dashboard.nodes.last_seen")}: {formatDate(node.last_seen_at)}
-                  </div>
-                </div>
-              ))}
-              {nodes.length === 0 ? (
-                <div className="rounded-[24px] border border-dashed border-border bg-[#f8f5f0] px-4 py-8 text-center text-sm text-[#485644]">
-                  {t("dashboard.nodes.empty")}
-                </div>
-              ) : null}
             </div>
           </Card>
 
@@ -484,10 +344,7 @@ export function DashboardPage() {
                 type="password"
                 value={passwordForm.current_password}
                 onChange={(event) => {
-                  setPasswordForm((current) => ({
-                    ...current,
-                    current_password: event.target.value,
-                  }));
+                  setPasswordForm((current) => ({ ...current, current_password: event.target.value }));
                 }}
               />
               <Input
@@ -495,10 +352,7 @@ export function DashboardPage() {
                 type="password"
                 value={passwordForm.new_password}
                 onChange={(event) => {
-                  setPasswordForm((current) => ({
-                    ...current,
-                    new_password: event.target.value,
-                  }));
+                  setPasswordForm((current) => ({ ...current, new_password: event.target.value }));
                 }}
               />
               <Button disabled={changePasswordMutation.isPending} type="submit">

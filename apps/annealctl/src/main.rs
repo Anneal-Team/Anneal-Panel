@@ -7,7 +7,6 @@ mod release;
 mod render;
 mod state;
 mod system;
-mod ui;
 
 use anyhow::Result;
 use clap::Parser;

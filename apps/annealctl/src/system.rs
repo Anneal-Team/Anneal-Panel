@@ -1,19 +1,15 @@
 use std::{
     ffi::OsStr,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Output, Stdio},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
-use serde_json::Value;
 
-use crate::config::{DeploymentMode, InstallConfig, InstallLayout, InstallRole};
-
-const XRAY_PLACEHOLDER: &str = "{\"log\":{\"loglevel\":\"warning\"},\"inbounds\":[],\"outbounds\":[{\"protocol\":\"freedom\",\"tag\":\"direct\"}]}";
-const SINGBOX_PLACEHOLDER: &str = "{\"log\":{\"level\":\"warn\"},\"inbounds\":[],\"outbounds\":[{\"type\":\"direct\",\"tag\":\"direct\"}]}";
+use crate::config::{InstallConfig, InstallLayout};
 
 #[derive(Debug, Clone)]
 pub struct DatabaseParts {
@@ -48,53 +44,31 @@ impl System {
         }
     }
 
-    pub fn install_packages(&self, role: InstallRole, mode: DeploymentMode) -> Result<()> {
+    pub fn install_packages(&self) -> Result<()> {
         let os = self.load_os_release()?;
         self.require_supported_platform(&os)?;
-        match mode {
-            DeploymentMode::Native => {
-                if role.includes_control_plane() {
-                    self.setup_postgres_repository(&os)?;
-                    self.setup_caddy_repository()?;
-                    self.run("apt-get", ["update"])?;
-                    self.run(
-                        "apt-get",
-                        [
-                            "install",
-                            "-y",
-                            "ca-certificates",
-                            "curl",
-                            "tar",
-                            "openssl",
-                            "iproute2",
-                            "debian-keyring",
-                            "debian-archive-keyring",
-                            "apt-transport-https",
-                            "postgresql-17",
-                            "postgresql-client-17",
-                            "postgresql-contrib-17",
-                            "caddy",
-                        ],
-                    )?;
-                } else {
-                    self.run("apt-get", ["update"])?;
-                    self.run(
-                        "apt-get",
-                        [
-                            "install",
-                            "-y",
-                            "curl",
-                            "tar",
-                            "ca-certificates",
-                            "openssl",
-                            "iproute2",
-                        ],
-                    )?;
-                }
-            }
-            DeploymentMode::Docker => self.install_docker_packages(&os)?,
-        }
-        Ok(())
+        self.setup_postgres_repository(&os)?;
+        self.setup_caddy_repository()?;
+        self.run("apt-get", ["update"])?;
+        self.run(
+            "apt-get",
+            [
+                "install",
+                "-y",
+                "ca-certificates",
+                "curl",
+                "tar",
+                "openssl",
+                "iproute2",
+                "debian-keyring",
+                "debian-archive-keyring",
+                "apt-transport-https",
+                "postgresql-17",
+                "postgresql-client-17",
+                "postgresql-contrib-17",
+                "caddy",
+            ],
+        )
     }
 
     pub fn ensure_user(&self, config: &InstallConfig, layout: &InstallLayout) -> Result<()> {
@@ -123,6 +97,7 @@ impl System {
             layout.migrations_dir(),
             layout.config_dir.clone(),
             layout.data_root.clone(),
+            layout.data_root.join("mihomo"),
         ] {
             fs::create_dir_all(&path)
                 .with_context(|| format!("failed to create {}", path.display()))?;
@@ -146,7 +121,10 @@ impl System {
                 "-p",
                 &parts.port.to_string(),
                 "-tAc",
-                &format!("select 1 from pg_roles where rolname='{}'", parts.user),
+                &format!(
+                    "select 1 from pg_roles where rolname={};",
+                    quote_pg_literal(&parts.user)
+                ),
             ],
         )?;
         if !role_exists.trim().contains('1') {
@@ -161,8 +139,9 @@ impl System {
                     &parts.port.to_string(),
                     "-c",
                     &format!(
-                        "create role {} login password '{}';",
-                        parts.user, parts.password
+                        "create role {} login password {};",
+                        quote_pg_ident(&parts.user),
+                        quote_pg_literal(&parts.password)
                     ),
                 ],
             )?;
@@ -177,7 +156,10 @@ impl System {
                 "-p",
                 &parts.port.to_string(),
                 "-tAc",
-                &format!("select 1 from pg_database where datname='{}'", parts.name),
+                &format!(
+                    "select 1 from pg_database where datname={};",
+                    quote_pg_literal(&parts.name)
+                ),
             ],
         )?;
         if !db_exists.trim().contains('1') {
@@ -215,8 +197,8 @@ impl System {
                 &parts.port.to_string(),
                 "-c",
                 &format!(
-                    "select pg_terminate_backend(pid) from pg_stat_activity where datname='{}' and pid <> pg_backend_pid();",
-                    parts.name
+                    "select pg_terminate_backend(pid) from pg_stat_activity where datname={} and pid <> pg_backend_pid();",
+                    quote_pg_literal(&parts.name)
                 ),
             ],
         );
@@ -243,7 +225,7 @@ impl System {
                 "-p",
                 &parts.port.to_string(),
                 "-c",
-                &format!("drop role if exists {};", parts.user),
+                &format!("drop role if exists {};", quote_pg_ident(&parts.user)),
             ],
         );
         Ok(())
@@ -384,167 +366,6 @@ impl System {
         bail!("timeout waiting for {url}")
     }
 
-    pub fn generate_self_signed_cert(
-        &self,
-        cert: &Path,
-        key: &Path,
-        common_name: &str,
-    ) -> Result<()> {
-        if cert.exists() && key.exists() {
-            return Ok(());
-        }
-        if let Some(parent) = cert.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        self.run(
-            "openssl",
-            [
-                "req",
-                "-x509",
-                "-nodes",
-                "-newkey",
-                "rsa:2048",
-                "-keyout",
-                key.to_str().ok_or_else(|| anyhow!("invalid key path"))?,
-                "-out",
-                cert.to_str().ok_or_else(|| anyhow!("invalid cert path"))?,
-                "-subj",
-                &format!("/CN={common_name}"),
-                "-days",
-                "3650",
-            ],
-        )
-    }
-
-    pub fn cleanup_runtime_placeholder_configs(&self, root: &Path) -> Result<()> {
-        self.remove_placeholder(root.join("xray").join("config.json"), XRAY_PLACEHOLDER)?;
-        self.remove_placeholder(
-            root.join("singbox").join("config.json"),
-            SINGBOX_PLACEHOLDER,
-        )?;
-        Ok(())
-    }
-
-    pub fn docker_compose_up(
-        &self,
-        stack_root: &Path,
-        env_file: &Path,
-        rebuild: bool,
-    ) -> Result<()> {
-        let compose_file = stack_root.join("compose.yml");
-        let mut args = vec![
-            "-f".to_owned(),
-            compose_file.display().to_string(),
-            "--env-file".to_owned(),
-            env_file.display().to_string(),
-        ];
-        if rebuild {
-            args.extend(["build".into()]);
-            self.compose(&args)?;
-            args.truncate(4);
-        }
-        args.extend(["up".into(), "-d".into()]);
-        self.compose(&args)
-    }
-
-    pub fn docker_compose_restart(&self, stack_root: &Path, env_file: &Path) -> Result<()> {
-        let compose_file = stack_root.join("compose.yml");
-        self.compose(&[
-            "-f".into(),
-            compose_file.display().to_string(),
-            "--env-file".into(),
-            env_file.display().to_string(),
-            "restart".into(),
-        ])
-    }
-
-    pub fn docker_compose_down(&self, stack_root: &Path, env_file: &Path) -> Result<()> {
-        let compose_file = stack_root.join("compose.yml");
-        self.compose(&[
-            "-f".into(),
-            compose_file.display().to_string(),
-            "--env-file".into(),
-            env_file.display().to_string(),
-            "down".into(),
-            "-v".into(),
-        ])
-    }
-
-    pub fn wait_for_agent_state(
-        &self,
-        state_path: &Path,
-        timeout: Duration,
-        agent_service: Option<&str>,
-    ) -> Result<Value> {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if let Ok(raw) = fs::read_to_string(state_path) {
-                let json: Value = serde_json::from_str(&raw)
-                    .with_context(|| format!("failed to parse {}", state_path.display()))?;
-                if agent_state_ready(&json) {
-                    return Ok(json);
-                }
-            }
-            std::thread::sleep(Duration::from_secs(2));
-        }
-        if let Some(service) = agent_service {
-            let logs = self
-                .capture(
-                    "journalctl",
-                    ["-u", service, "-n", "40", "--no-pager", "-l"],
-                )
-                .unwrap_or_default();
-            let logs = logs.trim();
-            if !logs.is_empty() {
-                bail!(
-                    "timeout waiting for node agent state at {}\nrecent {} logs:\n{}",
-                    state_path.display(),
-                    service,
-                    logs
-                );
-            }
-        }
-        bail!(
-            "timeout waiting for node agent state at {}",
-            state_path.display()
-        )
-    }
-
-    pub fn wait_for_runtime_rollout(
-        &self,
-        data_root: &Path,
-        engines: &[&str],
-        timeout: Duration,
-        agent_service: &str,
-        runtime_mode: DeploymentMode,
-    ) -> Result<()> {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let agent_active = match runtime_mode {
-                DeploymentMode::Native => self
-                    .service_status(agent_service)
-                    .map(|status| status == "active")
-                    .unwrap_or(false),
-                DeploymentMode::Docker => true,
-            };
-            if !agent_active {
-                std::thread::sleep(Duration::from_secs(2));
-                continue;
-            }
-            let ready = engines.iter().all(|engine| match *engine {
-                "xray" => data_root.join("xray").join("config.json").exists(),
-                "singbox" => data_root.join("singbox").join("config.json").exists(),
-                _ => false,
-            });
-            if ready {
-                return Ok(());
-            }
-            std::thread::sleep(Duration::from_secs(2));
-        }
-        bail!("timeout waiting for runtime rollout")
-    }
-
     pub fn remove_path(&self, path: &Path) -> Result<()> {
         if !path.exists() {
             return Ok(());
@@ -579,72 +400,6 @@ impl System {
             user,
             password,
         })
-    }
-
-    fn install_docker_packages(&self, os: &OsRelease) -> Result<()> {
-        if self.docker_repository_supported_platform(os) {
-            self.remove_conflicting_docker_packages()?;
-            self.setup_docker_repository(os)?;
-            self.run("apt-get", ["update"])?;
-            self.run(
-                "apt-get",
-                [
-                    "install",
-                    "-y",
-                    "curl",
-                    "tar",
-                    "ca-certificates",
-                    "openssl",
-                    "iproute2",
-                    "docker-ce",
-                    "docker-ce-cli",
-                    "containerd.io",
-                    "docker-buildx-plugin",
-                    "docker-compose-plugin",
-                ],
-            )?;
-        } else {
-            self.run("apt-get", ["update"])?;
-            self.run(
-                "apt-get",
-                [
-                    "install",
-                    "-y",
-                    "curl",
-                    "tar",
-                    "ca-certificates",
-                    "openssl",
-                    "iproute2",
-                    "docker.io",
-                    "docker-compose-plugin",
-                ],
-            )?;
-        }
-        self.run("systemctl", ["enable", "--now", "docker"])?;
-        Ok(())
-    }
-
-    fn remove_conflicting_docker_packages(&self) -> Result<()> {
-        let mut packages = Vec::new();
-        for package in [
-            "docker.io",
-            "docker-doc",
-            "docker-compose",
-            "docker-compose-v2",
-            "podman-docker",
-            "containerd",
-            "runc",
-        ] {
-            if self.status_ok("dpkg", ["-s", package]) {
-                packages.push(package);
-            }
-        }
-        if !packages.is_empty() {
-            let mut args = vec!["remove", "-y"];
-            args.extend(packages);
-            self.run("apt-get", args)?;
-        }
-        Ok(())
     }
 
     fn load_os_release(&self) -> Result<OsRelease> {
@@ -724,7 +479,7 @@ impl System {
     }
 
     fn setup_postgres_repository(&self, os: &OsRelease) -> Result<()> {
-        let keyring_dir = PathBuf::from("/usr/share/postgresql-common/pgdg");
+        let keyring_dir = std::path::PathBuf::from("/usr/share/postgresql-common/pgdg");
         fs::create_dir_all(&keyring_dir)
             .with_context(|| format!("failed to create {}", keyring_dir.display()))?;
         let keyring_path = keyring_dir.join("apt.postgresql.org.asc");
@@ -759,82 +514,6 @@ impl System {
             ),
         )
         .context("failed to write pgdg repository")?;
-        Ok(())
-    }
-
-    fn setup_docker_repository(&self, os: &OsRelease) -> Result<()> {
-        let keyring_dir = PathBuf::from("/etc/apt/keyrings");
-        fs::create_dir_all(&keyring_dir)
-            .with_context(|| format!("failed to create {}", keyring_dir.display()))?;
-        let keyring_path = keyring_dir.join("docker.asc");
-        let base_url = if os.id == "ubuntu" {
-            "https://download.docker.com/linux/ubuntu"
-        } else {
-            "https://download.docker.com/linux/debian"
-        };
-        self.run(
-            "curl",
-            [
-                "--fail",
-                "--retry",
-                "5",
-                "--retry-all-errors",
-                "--location",
-                "--silent",
-                "--show-error",
-                &format!("{base_url}/gpg"),
-                "-o",
-                keyring_path
-                    .to_str()
-                    .ok_or_else(|| anyhow!("invalid docker key path"))?,
-            ],
-        )?;
-        fs::write(
-            "/etc/apt/sources.list.d/docker.sources",
-            format!(
-                "Types: deb\nURIs: {base_url}\nSuites: {}\nComponents: stable\nSigned-By: {}\n",
-                os.codename,
-                keyring_path.display()
-            ),
-        )
-        .context("failed to write docker repository")?;
-        Ok(())
-    }
-
-    fn docker_repository_supported_platform(&self, os: &OsRelease) -> bool {
-        if os.id == "debian" {
-            return matches!(os.version_id.as_str(), "11" | "12" | "13");
-        }
-        matches!(os.codename.as_str(), "jammy" | "noble" | "questing")
-    }
-
-    fn compose(&self, args: &[String]) -> Result<()> {
-        if self.status_ok("docker", ["compose", "version"]) {
-            let mut command = Command::new("docker");
-            command.args(["compose"]);
-            command.args(args);
-            return self.check_output(command.output().context("failed to run docker compose")?);
-        }
-        let mut command = Command::new("docker-compose");
-        command.args(args);
-        self.check_output(command.output().context("failed to run docker-compose")?)
-    }
-
-    fn remove_placeholder(&self, path: PathBuf, placeholder: &str) -> Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-        let current = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        if current
-            .chars()
-            .filter(|char| !char.is_ascii_whitespace())
-            .collect::<String>()
-            == placeholder
-        {
-            fs::remove_file(&path)
-                .with_context(|| format!("failed to remove {}", path.display()))?;
-        }
         Ok(())
     }
 
@@ -898,22 +577,12 @@ impl System {
     }
 }
 
-fn agent_state_ready(json: &Value) -> bool {
-    json.get("runtimes")
-        .and_then(Value::as_object)
-        .is_some_and(|runtimes| {
-            !runtimes.is_empty()
-                && runtimes.values().all(|runtime| {
-                    runtime
-                        .get("node_id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| !value.is_empty())
-                        && runtime
-                            .get("node_token")
-                            .and_then(Value::as_str)
-                            .is_some_and(|value| !value.is_empty())
-                })
-        })
+fn quote_pg_ident(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn quote_pg_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn set_executable(_path: &Path) -> Result<()> {

@@ -35,21 +35,11 @@ pub enum UserStatus {
     Suspended,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, ToSchema)]
-#[sqlx(type_name = "node_status", rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub enum NodeStatus {
-    Pending,
-    Online,
-    Offline,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type, ToSchema)]
 #[sqlx(type_name = "proxy_engine", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyEngine {
-    Xray,
-    Singbox,
+    Mihomo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, ToSchema)]
@@ -64,19 +54,6 @@ pub enum ProtocolKind {
     Shadowsocks2022,
     Tuic,
     Hysteria2,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, ToSchema)]
-#[sqlx(type_name = "deployment_status", rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub enum DeploymentStatus {
-    Queued,
-    Rendering,
-    Validating,
-    Ready,
-    Applied,
-    RolledBack,
-    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, ToSchema)]
