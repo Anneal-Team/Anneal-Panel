@@ -11,10 +11,7 @@ use utoipa::ToSchema;
 use anneal_config_engine::SubscriptionDocumentFormat;
 use anneal_subscriptions::{CreateSubscriptionCommand, UpdateSubscriptionCommand};
 
-use crate::{
-    app_state::AppState, error::ApiError, extractors::authenticated_actor,
-    transport::rollout_sync::queue_tenant_rollouts_for_current_state,
-};
+use crate::{app_state::AppState, error::ApiError, extractors::authenticated_actor};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DeviceResponse {
@@ -142,9 +139,6 @@ pub async fn create_subscription(
         )
         .await
         .map_err(ApiError)?;
-    queue_tenant_rollouts_for_current_state(&state, subscription.tenant_id, "subscription-sync")
-        .await
-        .map_err(ApiError)?;
     Ok(Json(CreateSubscriptionResponse {
         delivery_url: format_delivery_url(&state.settings.public_base_url, &link.id),
         subscription: subscription_response(&state.settings.public_base_url, subscription),
@@ -226,9 +220,6 @@ pub async fn update_subscription(
         )
         .await
         .map_err(ApiError)?;
-    queue_tenant_rollouts_for_current_state(&state, subscription.tenant_id, "subscription-sync")
-        .await
-        .map_err(ApiError)?;
     Ok(Json(subscription_response(
         &state.settings.public_base_url,
         subscription,
@@ -267,9 +258,6 @@ pub async fn delete_subscription(
             Some(subscription_id),
             json!({}),
         )
-        .await
-        .map_err(ApiError)?;
-    queue_tenant_rollouts_for_current_state(&state, tenant_id, "subscription-sync")
         .await
         .map_err(ApiError)?;
     Ok(Json(json!({ "ok": true })))
@@ -369,15 +357,11 @@ fn detect_subscription_format(headers: &HeaderMap) -> SubscriptionDocumentFormat
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if user_agent.contains("hiddify") {
-        SubscriptionDocumentFormat::HiddifyJson
-    } else if user_agent.contains("clash.meta")
+    if user_agent.contains("clash.meta")
         || user_agent.contains("clash")
         || user_agent.contains("mihomo")
     {
-        SubscriptionDocumentFormat::ClashMeta
-    } else if user_agent.contains("sing-box") || user_agent.contains("singbox") {
-        SubscriptionDocumentFormat::SingBox
+        SubscriptionDocumentFormat::Mihomo
     } else {
         SubscriptionDocumentFormat::Base64
     }
@@ -508,11 +492,8 @@ fn is_browser_request(headers: &HeaderMap) -> bool {
 
 fn is_subscription_client(user_agent: &str) -> bool {
     [
-        "hiddify",
         "clash",
         "mihomo",
-        "sing-box",
-        "singbox",
         "stash",
         "shadowrocket",
         "surge",
@@ -554,7 +535,7 @@ mod tests {
             "accept",
             HeaderValue::from_static("text/html,application/xhtml+xml"),
         );
-        headers.insert("user-agent", HeaderValue::from_static("Hiddify"));
+        headers.insert("user-agent", HeaderValue::from_static("Mihomo"));
 
         let mode = detect_delivery_mode(&headers, &ResolveSubscriptionQuery::default());
 

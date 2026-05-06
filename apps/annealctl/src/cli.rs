@@ -77,20 +77,6 @@ pub struct InstallArgs {
     pub reseller_display_name: Option<String>,
     #[arg(long, env = "ANNEAL_RESELLER_PASSWORD")]
     pub reseller_password: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_SERVER_URL")]
-    pub agent_server_url: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_NAME")]
-    pub agent_name: Option<String>,
-    #[arg(long, env = "ANNEAL_NODE_GROUP_NAME")]
-    pub node_group_name: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_ENGINES")]
-    pub agent_engines: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_PROTOCOLS_XRAY")]
-    pub agent_protocols_xray: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_PROTOCOLS_SINGBOX")]
-    pub agent_protocols_singbox: Option<String>,
-    #[arg(long, env = "ANNEAL_AGENT_BOOTSTRAP_TOKEN")]
-    pub agent_bootstrap_token: Option<String>,
     #[arg(long, env = "ANNEAL_STARTER_SUBSCRIPTION_NAME")]
     pub starter_subscription_name: Option<String>,
     #[arg(long, env = "ANNEAL_STARTER_SUBSCRIPTION_TRAFFIC_LIMIT_BYTES")]

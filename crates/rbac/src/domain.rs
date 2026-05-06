@@ -7,7 +7,6 @@ pub enum Permission {
     ManageGlobalUsers,
     ManageResellers,
     ManageTenantUsers,
-    ManageNodes,
     ManageSubscriptions,
     ManageUsage,
     ManageAudit,

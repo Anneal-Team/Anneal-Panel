@@ -51,59 +51,6 @@ export function formatQuotaState(value: string) {
   }
 }
 
-export function formatNodeStatus(value: string) {
-  switch (value) {
-    case "pending":
-      return i18n.t("status.pending");
-    case "online":
-      return i18n.t("status.online");
-    case "offline":
-      return i18n.t("status.offline");
-    default:
-      return value;
-  }
-}
-
-export function formatNodeName(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return value;
-  }
-  return trimmed
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
-
 export function formatNotificationBody(kind: string, value: string) {
-  if (kind !== "node_offline") {
-    return value;
-  }
-  const match = /^Node (.+) is offline$/.exec(value.trim());
-  if (!match) {
-    return value;
-  }
-  return `Node ${formatNodeName(match[1])} is offline`;
-}
-
-export function formatDeploymentStatus(value: string) {
-  switch (value) {
-    case "queued":
-      return i18n.t("deploy.queued");
-    case "rendering":
-      return i18n.t("deploy.rendering");
-    case "validating":
-      return i18n.t("deploy.validating");
-    case "ready":
-      return i18n.t("deploy.ready");
-    case "applied":
-      return i18n.t("deploy.applied");
-    case "rolled_back":
-      return i18n.t("deploy.rolled_back");
-    case "failed":
-      return i18n.t("deploy.failed");
-    default:
-      return value;
-  }
+  return value;
 }

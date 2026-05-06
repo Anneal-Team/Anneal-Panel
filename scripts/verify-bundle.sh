@@ -21,15 +21,13 @@ for required_path in \
   "${BUNDLE_ROOT}/bin/annealctl" \
   "${BUNDLE_ROOT}/bin/api" \
   "${BUNDLE_ROOT}/bin/worker" \
-  "${BUNDLE_ROOT}/bin/node-agent" \
-  "${BUNDLE_ROOT}/runtime/xray" \
-  "${BUNDLE_ROOT}/runtime/sing-box" \
+  "${BUNDLE_ROOT}/runtime/mihomo" \
   "${BUNDLE_ROOT}/migrations" \
   "${BUNDLE_ROOT}/web" \
   "${BUNDLE_ROOT}/deploy/systemd/anneal-api.service" \
   "${BUNDLE_ROOT}/deploy/systemd/anneal-worker.service" \
   "${BUNDLE_ROOT}/deploy/systemd/anneal-caddy.service" \
-  "${BUNDLE_ROOT}/deploy/systemd/anneal-node-agent.service" \
+  "${BUNDLE_ROOT}/deploy/systemd/anneal-mihomo.service" \
   "${BUNDLE_ROOT}/install.sh" \
   "${BUNDLE_ROOT}/release-manifest.json" \
   "${BUNDLE_ROOT}/SHA256SUMS"; do
@@ -43,8 +41,7 @@ if command -v file >/dev/null 2>&1; then
   for binary_path in \
     "${BUNDLE_ROOT}/bin/annealctl" \
     "${BUNDLE_ROOT}/bin/api" \
-    "${BUNDLE_ROOT}/bin/worker" \
-    "${BUNDLE_ROOT}/bin/node-agent"; do
+    "${BUNDLE_ROOT}/bin/worker"; do
     file_output="$(file "${binary_path}")"
     printf '%s' "${file_output}" | grep -Eqi "statically linked|static-pie linked" || {
       echo "bundle binary is not statically linked: ${binary_path}" >&2

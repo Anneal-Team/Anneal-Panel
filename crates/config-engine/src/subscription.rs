@@ -41,9 +41,7 @@ impl ShareLinkStrategy for ShareLinkRenderer {
 pub enum SubscriptionDocumentFormat {
     Raw,
     Base64,
-    ClashMeta,
-    SingBox,
-    HiddifyJson,
+    Mihomo,
 }
 
 #[derive(Debug, Clone)]
@@ -79,19 +77,9 @@ impl SubscriptionDocumentRenderer {
                 content: general_purpose::STANDARD.encode(raw.as_bytes()),
                 content_type: "text/plain; charset=utf-8",
             }),
-            SubscriptionDocumentFormat::ClashMeta => Ok(RenderedSubscriptionDocument {
+            SubscriptionDocumentFormat::Mihomo => Ok(RenderedSubscriptionDocument {
                 content: render_clash_meta(links),
                 content_type: "application/yaml; charset=utf-8",
-            }),
-            SubscriptionDocumentFormat::SingBox => Ok(RenderedSubscriptionDocument {
-                content: serde_json::to_string_pretty(&render_sing_box_document(links))
-                    .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?,
-                content_type: "application/json; charset=utf-8",
-            }),
-            SubscriptionDocumentFormat::HiddifyJson => Ok(RenderedSubscriptionDocument {
-                content: serde_json::to_string_pretty(&render_hiddify_json(links))
-                    .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?,
-                content_type: "application/json; charset=utf-8",
             }),
         }
     }
@@ -103,171 +91,6 @@ fn render_raw_links(links: &[RenderedShareLink]) -> String {
         .map(|entry| entry.uri.as_str())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn render_hiddify_json(links: &[RenderedShareLink]) -> serde_json::Value {
-    json!({
-        "version": 1,
-        "profile_count": links.len(),
-        "profiles": links.iter().map(|entry| json!({
-            "name": entry.label,
-            "protocol": protocol_name(entry.profile.protocol),
-            "uri": entry.uri,
-            "server": entry.profile.public_host,
-            "port": entry.profile.public_port,
-            "transport": transport_name(entry.profile.transport),
-            "security": security_name(entry.profile.security),
-            "sni": entry.profile.server_name,
-            "alpn": entry.profile.alpn,
-            "host": entry.profile.host_header,
-            "path": entry.profile.path,
-            "service_name": entry.profile.service_name,
-            "flow": entry.profile.flow,
-            "fingerprint": entry.profile.fingerprint,
-            "cipher": entry.profile.cipher,
-        })).collect::<Vec<_>>()
-    })
-}
-
-fn render_sing_box_document(links: &[RenderedShareLink]) -> serde_json::Value {
-    let tags = links
-        .iter()
-        .map(|entry| entry.label.clone())
-        .collect::<Vec<_>>();
-    json!({
-        "log": {
-            "level": "warn"
-        },
-        "outbounds": links.iter().map(render_sing_box_outbound).chain([
-            json!({
-                "type": "selector",
-                "tag": "anneal",
-                "outbounds": tags,
-                "default": "urltest"
-            }),
-            json!({
-                "type": "urltest",
-                "tag": "urltest",
-                "outbounds": links.iter().map(|entry| entry.label.clone()).collect::<Vec<_>>(),
-                "url": "https://www.gstatic.com/generate_204",
-                "interval": "10m"
-            }),
-            json!({
-                "type": "direct",
-                "tag": "direct"
-            })
-        ]).collect::<Vec<_>>(),
-        "route": {
-            "auto_detect_interface": true,
-            "final": "anneal"
-        }
-    })
-}
-
-fn render_sing_box_outbound(entry: &RenderedShareLink) -> serde_json::Value {
-    let tls = match entry.profile.security {
-        SecurityKind::None => serde_json::Value::Null,
-        SecurityKind::Tls => json!({
-            "enabled": true,
-            "server_name": entry.profile.server_name,
-            "alpn": nullable_vec(&entry.profile.alpn),
-            "utls": nullable_json(entry.profile.fingerprint.as_ref().map(|fingerprint| json!({
-                "enabled": true,
-                "fingerprint": fingerprint
-            }))),
-        }),
-        SecurityKind::Reality => json!({
-            "enabled": true,
-            "server_name": entry.profile.server_name,
-            "alpn": nullable_vec(&entry.profile.alpn),
-            "utls": nullable_json(entry.profile.fingerprint.as_ref().map(|fingerprint| json!({
-                "enabled": true,
-                "fingerprint": fingerprint
-            }))),
-            "reality": {
-                "enabled": true,
-                "public_key": entry.profile.reality_public_key,
-                "short_id": entry.profile.reality_short_id
-            }
-        }),
-    };
-
-    let transport = match entry.profile.transport {
-        TransportKind::Tcp => serde_json::Value::Null,
-        TransportKind::Ws => json!({
-            "type": "ws",
-            "path": entry.profile.path,
-            "headers": nullable_json(entry.profile.host_header.as_ref().map(|host| json!({"Host": host}))),
-        }),
-        TransportKind::Grpc => json!({
-            "type": "grpc",
-            "service_name": entry.profile.service_name,
-        }),
-        TransportKind::HttpUpgrade => json!({
-            "type": "httpupgrade",
-            "path": entry.profile.path,
-            "host": entry.profile.host_header,
-        }),
-    };
-
-    match entry.profile.protocol {
-        ProtocolKind::VlessReality => json!({
-            "type": "vless",
-            "tag": entry.label,
-            "server": entry.profile.public_host,
-            "server_port": entry.profile.public_port,
-            "uuid": entry.credential.uuid,
-            "flow": entry.profile.flow,
-            "tls": tls,
-            "transport": transport,
-        }),
-        ProtocolKind::Vmess => json!({
-            "type": "vmess",
-            "tag": entry.label,
-            "server": entry.profile.public_host,
-            "server_port": entry.profile.public_port,
-            "uuid": entry.credential.uuid,
-            "security": "auto",
-            "alter_id": 0,
-            "tls": tls,
-            "transport": transport,
-        }),
-        ProtocolKind::Trojan => json!({
-            "type": "trojan",
-            "tag": entry.label,
-            "server": entry.profile.public_host,
-            "server_port": entry.profile.public_port,
-            "password": entry.credential.password,
-            "tls": tls,
-            "transport": transport,
-        }),
-        ProtocolKind::Shadowsocks2022 => json!({
-            "type": "shadowsocks",
-            "tag": entry.label,
-            "server": entry.profile.public_host,
-            "server_port": entry.profile.public_port,
-            "method": entry.profile.cipher,
-            "password": entry.credential.password,
-        }),
-        ProtocolKind::Tuic => json!({
-            "type": "tuic",
-            "tag": entry.label,
-            "server": entry.profile.public_host,
-            "server_port": entry.profile.public_port,
-            "uuid": entry.credential.uuid,
-            "password": entry.credential.password,
-            "congestion_control": "bbr",
-            "tls": tls,
-        }),
-        ProtocolKind::Hysteria2 => json!({
-            "type": "hysteria2",
-            "tag": entry.label,
-            "server": entry.profile.public_host,
-            "server_port": entry.profile.public_port,
-            "password": entry.credential.password,
-            "tls": tls,
-        }),
-    }
 }
 
 fn render_clash_meta(links: &[RenderedShareLink]) -> String {
@@ -451,37 +274,6 @@ fn append_clash_transport(lines: &mut Vec<String>, profile: &InboundProfile) {
 
 fn yaml_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn nullable_vec(values: &[String]) -> serde_json::Value {
-    if values.is_empty() {
-        serde_json::Value::Null
-    } else {
-        json!(values)
-    }
-}
-
-fn nullable_json(value: Option<serde_json::Value>) -> serde_json::Value {
-    value.unwrap_or(serde_json::Value::Null)
-}
-
-fn protocol_name(protocol: ProtocolKind) -> &'static str {
-    match protocol {
-        ProtocolKind::VlessReality => "vless_reality",
-        ProtocolKind::Vmess => "vmess",
-        ProtocolKind::Trojan => "trojan",
-        ProtocolKind::Shadowsocks2022 => "shadowsocks_2022",
-        ProtocolKind::Tuic => "tuic",
-        ProtocolKind::Hysteria2 => "hysteria2",
-    }
-}
-
-fn security_name(security: SecurityKind) -> &'static str {
-    match security {
-        SecurityKind::None => "none",
-        SecurityKind::Tls => "tls",
-        SecurityKind::Reality => "reality",
-    }
 }
 
 fn clash_protocol_name(protocol: ProtocolKind) -> &'static str {
@@ -841,23 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn subscription_document_renders_hiddify_json_bundle() {
-        let entries = vec![RenderedShareLink {
-            label: "edge-vless".into(),
-            uri: "vless://one".into(),
-            profile: profile(ProtocolKind::VlessReality),
-            credential: credential(),
-        }];
-        let rendered = SubscriptionDocumentRenderer
-            .render(&entries, SubscriptionDocumentFormat::HiddifyJson)
-            .expect("json");
-        assert_eq!(rendered.content_type, "application/json; charset=utf-8");
-        assert!(rendered.content.contains("\"profiles\""));
-        assert!(rendered.content.contains("\"protocol\": \"vless_reality\""));
-    }
-
-    #[test]
-    fn subscription_document_renders_clash_meta_bundle() {
+    fn subscription_document_renders_mihomo_bundle() {
         let entries = vec![RenderedShareLink {
             label: "edge-vmess".into(),
             uri: "vmess://two".into(),
@@ -865,8 +641,8 @@ mod tests {
             credential: credential(),
         }];
         let rendered = SubscriptionDocumentRenderer
-            .render(&entries, SubscriptionDocumentFormat::ClashMeta)
-            .expect("clash");
+            .render(&entries, SubscriptionDocumentFormat::Mihomo)
+            .expect("mihomo");
         assert_eq!(rendered.content_type, "application/yaml; charset=utf-8");
         assert!(rendered.content.contains("proxies:"));
         assert!(rendered.content.contains("type: vmess"));

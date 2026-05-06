@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 
 use crate::{
-    config::{DeploymentMode, InstallConfig, InstallLayout},
+    config::{InstallConfig, InstallLayout},
     state::InstallState,
     system::System,
 };
@@ -22,35 +22,15 @@ pub async fn run(layout: InstallLayout) -> Result<()> {
     for (step, step_state) in state.steps {
         println!("step.{step:?}={:?}", step_state.status);
     }
-    match config.deployment_mode {
-        DeploymentMode::Native => {
-            for service in [
-                "postgresql",
-                "anneal-api.service",
-                "anneal-worker.service",
-                "anneal-caddy.service",
-                "anneal-node-agent.service",
-                "anneal-xray.service",
-                "anneal-singbox.service",
-            ] {
-                if let Ok(status) = system.service_status(service) {
-                    println!("service.{service}={status}");
-                }
-            }
-        }
-        DeploymentMode::Docker => {
-            println!(
-                "docker.control_plane_root={}",
-                layout
-                    .docker_stack_root(crate::config::InstallRole::ControlPlane)
-                    .display()
-            );
-            println!(
-                "docker.node_root={}",
-                layout
-                    .docker_stack_root(crate::config::InstallRole::Node)
-                    .display()
-            );
+    for service in [
+        "postgresql",
+        "anneal-api.service",
+        "anneal-worker.service",
+        "anneal-caddy.service",
+        "anneal-mihomo.service",
+    ] {
+        if let Ok(status) = system.service_status(service) {
+            println!("service.{service}={status}");
         }
     }
     Ok(())

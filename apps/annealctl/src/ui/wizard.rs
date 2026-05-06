@@ -7,51 +7,39 @@ use ratatui::{
     prelude::{Line, Modifier, Span, Style},
     widgets::{List, ListItem, Paragraph, Wrap},
 };
+use reqwest::Url;
 
 use crate::{
     cli::InstallArgs,
-    config::{InstallConfig, InstallRole, engines_csv},
-    i18n::{Language, Translator, terminal_supports_utf8},
+    config::{DeploymentMode, InstallConfig, InstallRole},
 };
 
 use super::tui::{
-    ACCENT, BG, DANGER, MUTED, PANEL_ALT, TEXT, TuiSession, WARNING, brand, card,
-    footer as footer_widget, frame_layout, muted_card, page_background, split_main,
+    ACCENT, BG, DANGER, MUTED, TEXT, TuiSession, WARNING, brand, card, footer as footer_widget,
+    frame_layout, muted_card, page_background, split_main,
 };
 
-pub fn prepare_install_args(args: InstallArgs) -> Result<(InstallArgs, Translator)> {
-    let interactive =
-        !args.non_interactive && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let unicode = terminal_supports_utf8();
-    let explicit_language = args.lang.is_some() || !unicode;
-    let language = if unicode {
-        args.lang.unwrap_or_else(|| Language::resolve(None))
-    } else {
-        Language::En
-    };
-    if !interactive || !unicode {
-        let mut args = args;
-        args.lang = Some(language);
-        let translator = Translator::new(language);
-        return Ok((args, translator));
+pub fn prepare_install_args(args: InstallArgs) -> Result<InstallArgs> {
+    if !should_open_wizard(&args) {
+        return Ok(args);
     }
-    RatatuiWizard::new(args, language, explicit_language).run()
+    RatatuiWizard::new(args).run()
+}
+
+fn should_open_wizard(args: &InstallArgs) -> bool {
+    !args.non_interactive
+        && std::io::stdin().is_terminal()
+        && std::io::stderr().is_terminal()
+        && (args.domain.as_deref().is_none_or(str::is_empty)
+            && args.public_base_url.as_deref().is_none_or(str::is_empty))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Prompt {
-    Language,
-    Role,
-    Mode,
-    Domain,
+    PanelUrl,
     SuperadminEmail,
     SuperadminDisplayName,
-    TenantName,
-    NodeGroup,
-    ServerUrl,
-    BootstrapToken,
-    NodeName,
-    Engines,
+    ResellerTenantName,
     Confirm,
 }
 
@@ -64,12 +52,7 @@ enum Flow {
 
 struct RatatuiWizard {
     args: InstallArgs,
-    language: Language,
-    explicit_language: bool,
-    prompt_role: bool,
-    prompt_mode: bool,
     prompt_index: usize,
-    selection_index: usize,
     input: String,
     cursor: usize,
     error: Option<String>,
@@ -77,17 +60,12 @@ struct RatatuiWizard {
 }
 
 impl RatatuiWizard {
-    fn new(args: InstallArgs, language: Language, explicit_language: bool) -> Self {
-        let prompt_role = args.role.is_none();
-        let prompt_mode = args.deployment_mode.is_none();
+    fn new(mut args: InstallArgs) -> Self {
+        args.role.get_or_insert(InstallRole::ControlPlane);
+        args.deployment_mode.get_or_insert(DeploymentMode::Native);
         Self {
             args,
-            language,
-            explicit_language,
-            prompt_role,
-            prompt_mode,
             prompt_index: 0,
-            selection_index: 0,
             input: String::new(),
             cursor: 0,
             error: None,
@@ -95,7 +73,7 @@ impl RatatuiWizard {
         }
     }
 
-    fn run(mut self) -> Result<(InstallArgs, Translator)> {
+    fn run(mut self) -> Result<InstallArgs> {
         let mut session = TuiSession::new()?;
         loop {
             self.prepare_for_prompt();
@@ -112,13 +90,11 @@ impl RatatuiWizard {
                     Flow::Continue => {}
                     Flow::Finish => {
                         session.restore()?;
-                        self.args.lang = Some(self.language);
-                        let translator = Translator::new(self.language);
-                        return Ok((self.args, translator));
+                        return Ok(self.args);
                     }
                     Flow::Cancel => {
                         session.restore()?;
-                        bail!(Translator::new(self.language).cancelled().to_owned());
+                        bail!("installation cancelled");
                     }
                 }
             }
@@ -126,7 +102,6 @@ impl RatatuiWizard {
     }
 
     fn render(&self, frame: &mut ratatui::Frame<'_>) {
-        let translator = Translator::new(self.language);
         let area = frame.area();
         frame.render_widget(page_background(), area);
 
@@ -137,14 +112,10 @@ impl RatatuiWizard {
             .split(header_area);
         frame.render_widget(brand(), header[0]);
 
-        let title = self.current_prompt().title(translator);
+        let title = self.current_prompt().title();
         let hero = Paragraph::new(vec![
             Line::from(Span::styled(
-                format!(
-                    "{}/{}",
-                    self.prompt_index + 1,
-                    self.prompts().len().max(self.prompt_index + 1)
-                ),
+                format!("{}/{}", self.prompt_index + 1, self.prompts().len()),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
@@ -152,7 +123,7 @@ impl RatatuiWizard {
                 Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
-                self.current_prompt().subtitle(translator),
+                self.current_prompt().subtitle(),
                 Style::default().fg(MUTED),
             )),
         ])
@@ -160,36 +131,36 @@ impl RatatuiWizard {
         frame.render_widget(hero, header[1]);
 
         let [sidebar_area, content_area] = split_main(main_area);
-        self.render_sidebar(frame, sidebar_area, translator);
+        self.render_sidebar(frame, sidebar_area);
 
         let content = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(10), Constraint::Length(12)])
             .split(content_area);
-        self.render_prompt(frame, content[0], translator);
-        self.render_preview(frame, content[1], translator);
-
-        self.render_status(frame, status_area, translator);
-        frame.render_widget(footer_widget(self.footer(translator)), footer_area);
+        match self.current_prompt() {
+            Prompt::Confirm => self.render_confirm(frame, content[0]),
+            _ => self.render_text_prompt(frame, content[0]),
+        }
+        self.render_preview(frame, content[1]);
+        self.render_status(frame, status_area);
+        frame.render_widget(
+            footer_widget("enter save/confirm  esc back  ctrl+c cancel"),
+            footer_area,
+        );
     }
 
-    fn render_sidebar(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
+    fn render_sidebar(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         let items = self
             .prompts()
             .iter()
             .enumerate()
             .map(|(index, prompt)| {
                 let prefix = if index < self.prompt_index {
-                    "●"
+                    "*"
                 } else if index == self.prompt_index {
-                    "▶"
+                    ">"
                 } else {
-                    "○"
+                    "-"
                 };
                 let style = if index == self.prompt_index {
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
@@ -199,118 +170,26 @@ impl RatatuiWizard {
                     Style::default().fg(MUTED)
                 };
                 ListItem::new(Line::from(Span::styled(
-                    format!("{prefix} {}", prompt.sidebar_label(translator)),
+                    format!("{prefix} {}", prompt.sidebar_label()),
                     style,
                 )))
             })
             .collect::<Vec<_>>();
-        frame.render_widget(List::new(items).block(muted_card("Flow")), area);
+        frame.render_widget(List::new(items).block(muted_card("Setup")), area);
     }
 
-    fn render_prompt(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
-        match self.current_prompt() {
-            Prompt::Language | Prompt::Role | Prompt::Mode => {
-                self.render_select_prompt(frame, area, translator);
-            }
-            Prompt::Engines => {
-                self.render_engine_prompt(frame, area, translator);
-            }
-            Prompt::Confirm => {
-                self.render_confirm(frame, area, translator);
-            }
-            _ => {
-                self.render_text_prompt(frame, area, translator);
-            }
-        }
-    }
-
-    fn render_select_prompt(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
-        let options = self.current_prompt().options(translator, self.language);
-        let items = options
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let selected = index == self.selection_index;
-                let style = if selected {
-                    Style::default()
-                        .fg(ACCENT)
-                        .bg(PANEL_ALT)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(TEXT)
-                };
-                let marker = if selected { "›" } else { " " };
-                ListItem::new(Line::from(Span::styled(format!("{marker} {value}"), style)))
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            List::new(items).block(card(self.current_prompt().title(translator))),
-            area,
-        );
-    }
-
-    fn render_engine_prompt(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
-        let items = ["xray", "singbox"]
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let selected = index == self.selection_index;
-                let enabled = self.selected_engines().contains(&value.to_owned());
-                let checkbox = if enabled { "[x]" } else { "[ ]" };
-                let style = if selected {
-                    Style::default()
-                        .fg(ACCENT)
-                        .bg(PANEL_ALT)
-                        .add_modifier(Modifier::BOLD)
-                } else if enabled {
-                    Style::default().fg(TEXT)
-                } else {
-                    Style::default().fg(MUTED)
-                };
-                ListItem::new(Line::from(Span::styled(
-                    format!("{checkbox} {value}"),
-                    style,
-                )))
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            List::new(items).block(card(self.current_prompt().title(translator))),
-            area,
-        );
-    }
-
-    fn render_text_prompt(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
+    fn render_text_prompt(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(4), Constraint::Min(3)])
             .split(area);
         let help = Paragraph::new(vec![
             Line::from(Span::styled(
-                self.current_prompt().title(translator),
+                self.current_prompt().title(),
                 Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
-                self.current_prompt().subtitle(translator),
+                self.current_prompt().subtitle(),
                 Style::default().fg(MUTED),
             )),
         ])
@@ -322,51 +201,24 @@ impl RatatuiWizard {
         frame.render_widget(input, chunks[1]);
     }
 
-    fn render_confirm(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
-        let content = match preview_config(&self.args) {
-            Ok(config) => summary_text(translator, &config),
-            Err(error) => error.to_string(),
-        };
-        let paragraph = Paragraph::new(content)
-            .block(card(translator.summary_title()))
+    fn render_confirm(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+        let paragraph = Paragraph::new(self.summary_text())
+            .block(card("Review"))
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
-    fn render_preview(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
-        let paragraph = Paragraph::new(self.preview_text(translator))
-            .block(muted_card(pick(translator, "Предпросмотр", "Preview")))
+    fn render_preview(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+        let paragraph = Paragraph::new(self.summary_text())
+            .block(muted_card("Preview"))
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
-    fn render_status(
-        &self,
-        frame: &mut ratatui::Frame<'_>,
-        area: ratatui::layout::Rect,
-        translator: Translator,
-    ) {
+    fn render_status(&self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
         let (title, color, body) = match self.error.as_deref() {
-            Some(message) => (
-                pick(translator, "Ошибка", "Error"),
-                DANGER,
-                message.to_owned(),
-            ),
-            None => (
-                pick(translator, "Подсказка", "Hint"),
-                WARNING,
-                self.current_prompt().hint(translator),
-            ),
+            Some(message) => ("Error", DANGER, message.to_owned()),
+            None => ("Hint", WARNING, self.current_prompt().hint().to_owned()),
         };
         let paragraph = Paragraph::new(body)
             .style(Style::default().fg(color))
@@ -381,114 +233,22 @@ impl RatatuiWizard {
         {
             return Ok(Flow::Cancel);
         }
-        if matches!(key.code, KeyCode::Char('q')) {
-            return Ok(Flow::Cancel);
-        }
         if matches!(key.code, KeyCode::Esc | KeyCode::BackTab) {
             self.go_back();
             return Ok(Flow::Continue);
         }
-        match self.current_prompt() {
-            Prompt::Language | Prompt::Role | Prompt::Mode => self.handle_select_key(key),
-            Prompt::Engines => self.handle_engine_key(key),
-            Prompt::Confirm => self.handle_confirm_key(key),
-            _ => self.handle_text_key(key),
+        if self.current_prompt() == Prompt::Confirm {
+            return self.handle_confirm_key(key);
         }
-    }
-
-    fn handle_select_key(&mut self, key: KeyEvent) -> Result<Flow> {
-        let max = self
-            .current_prompt()
-            .options(Translator::new(self.language), self.language)
-            .len();
-        match key.code {
-            KeyCode::Up => {
-                self.selection_index = self.selection_index.saturating_sub(1);
-            }
-            KeyCode::Down if self.selection_index + 1 < max => {
-                self.selection_index += 1;
-            }
-            _ if is_submit_key(key) => {
-                match self.current_prompt() {
-                    Prompt::Language => {
-                        self.language = if self.selection_index == 0 {
-                            Language::Ru
-                        } else {
-                            Language::En
-                        };
-                    }
-                    Prompt::Role => {
-                        self.args.role = Some(match self.selection_index {
-                            0 => InstallRole::AllInOne,
-                            1 => InstallRole::ControlPlane,
-                            _ => InstallRole::Node,
-                        });
-                    }
-                    Prompt::Mode => {
-                        self.args.deployment_mode = Some(if self.selection_index == 0 {
-                            crate::config::DeploymentMode::Native
-                        } else {
-                            crate::config::DeploymentMode::Docker
-                        });
-                    }
-                    _ => {}
-                }
-                self.advance();
-            }
-            _ => {}
-        }
-        Ok(Flow::Continue)
-    }
-
-    fn handle_engine_key(&mut self, key: KeyEvent) -> Result<Flow> {
-        match key.code {
-            KeyCode::Up => {
-                self.selection_index = self.selection_index.saturating_sub(1);
-            }
-            KeyCode::Down if self.selection_index < 1 => {
-                self.selection_index += 1;
-            }
-            KeyCode::Char(' ') => {
-                let engine = if self.selection_index == 0 {
-                    "xray"
-                } else {
-                    "singbox"
-                };
-                self.toggle_engine(engine);
-            }
-            _ if is_submit_key(key) => {
-                if self.selected_engines().is_empty() {
-                    self.error = Some(
-                        pick(
-                            Translator::new(self.language),
-                            "Выбери хотя бы один движок.",
-                            "Select at least one engine.",
-                        )
-                        .to_owned(),
-                    );
-                } else {
-                    self.advance();
-                }
-            }
-            _ => {}
-        }
-        Ok(Flow::Continue)
+        self.handle_text_key(key)
     }
 
     fn handle_text_key(&mut self, key: KeyEvent) -> Result<Flow> {
         match key.code {
-            KeyCode::Left => {
-                self.cursor = self.cursor.saturating_sub(1);
-            }
-            KeyCode::Right if self.cursor < self.input.len() => {
-                self.cursor += 1;
-            }
-            KeyCode::Home => {
-                self.cursor = 0;
-            }
-            KeyCode::End => {
-                self.cursor = self.input.len();
-            }
+            KeyCode::Left => self.cursor = self.cursor.saturating_sub(1),
+            KeyCode::Right if self.cursor < self.input.len() => self.cursor += 1,
+            KeyCode::Home => self.cursor = 0,
+            KeyCode::End => self.cursor = self.input.len(),
             KeyCode::Backspace if self.cursor > 0 && self.cursor <= self.input.len() => {
                 self.cursor -= 1;
                 self.input.remove(self.cursor);
@@ -516,7 +276,7 @@ impl RatatuiWizard {
         if !is_submit_key(key) {
             return Ok(Flow::Continue);
         }
-        match preview_config(&self.args) {
+        match InstallConfig::from_args(self.args.clone()) {
             Ok(_) => Ok(Flow::Finish),
             Err(error) => {
                 self.error = Some(error.to_string());
@@ -527,229 +287,148 @@ impl RatatuiWizard {
 
     fn prepare_for_prompt(&mut self) {
         self.prime_defaults();
-        let prompts = self.prompts();
-        if prompts.is_empty() {
-            return;
-        }
-        if self.prompt_index >= prompts.len() {
-            self.prompt_index = prompts.len() - 1;
-        }
-        let prompt = prompts[self.prompt_index];
+        let prompt = self.current_prompt();
         if self.last_prompt == Some(prompt) {
             return;
         }
         self.last_prompt = Some(prompt);
         self.error = None;
         match prompt {
-            Prompt::Language => {
-                self.selection_index = if self.language == Language::Ru { 0 } else { 1 };
-            }
-            Prompt::Role => {
-                self.selection_index = match self.args.role.unwrap_or(InstallRole::AllInOne) {
-                    InstallRole::AllInOne => 0,
-                    InstallRole::ControlPlane => 1,
-                    InstallRole::Node => 2,
-                };
-            }
-            Prompt::Mode => {
-                self.selection_index = match self
-                    .args
-                    .deployment_mode
-                    .unwrap_or(crate::config::DeploymentMode::Native)
-                {
-                    crate::config::DeploymentMode::Native => 0,
-                    crate::config::DeploymentMode::Docker => 1,
-                };
-            }
-            Prompt::Domain => self.set_input(self.domain_value()),
-            Prompt::SuperadminEmail => self.set_input(self.superadmin_email_value()),
+            Prompt::PanelUrl => self.set_input(
+                self.args
+                    .public_base_url
+                    .clone()
+                    .or_else(|| self.args.domain.clone())
+                    .unwrap_or_else(|| "https://panel.example.com/panel".into()),
+            ),
+            Prompt::SuperadminEmail => self.set_input(
+                self.args
+                    .superadmin_email
+                    .clone()
+                    .unwrap_or_else(|| "admin@panel.example.com".into()),
+            ),
             Prompt::SuperadminDisplayName => {
                 self.set_input(self.args.superadmin_display_name.clone())
             }
-            Prompt::TenantName => self.set_input(self.tenant_name_value()),
-            Prompt::NodeGroup => self.set_input(self.node_group_value()),
-            Prompt::ServerUrl => self.set_input(
+            Prompt::ResellerTenantName => self.set_input(
                 self.args
-                    .agent_server_url
+                    .reseller_tenant_name
                     .clone()
-                    .unwrap_or_else(|| "https://panel.example.com/private-path".into()),
+                    .unwrap_or_else(|| "Default Tenant".into()),
             ),
-            Prompt::BootstrapToken => {
-                self.set_input(self.args.agent_bootstrap_token.clone().unwrap_or_default())
-            }
-            Prompt::NodeName => self.set_input(self.node_name_value()),
-            Prompt::Engines => {
-                self.selection_index = 0;
-            }
             Prompt::Confirm => {}
         }
     }
 
     fn commit_text(&mut self) -> Result<()> {
         let value = self.input.trim().to_owned();
-        if value.is_empty() {
-            bail!(pick(
-                Translator::new(self.language),
-                "Поле не должно быть пустым.",
-                "Field must not be empty.",
-            ));
-        }
         match self.current_prompt() {
-            Prompt::Domain => {
-                self.args.domain = Some(value);
+            Prompt::PanelUrl => {
+                if value.is_empty() {
+                    bail!("domain or panel URL is required");
+                }
+                if value.starts_with("http://") {
+                    bail!("panel URL must use https");
+                }
+                if value.starts_with("https://") {
+                    let url = Url::parse(&value)?;
+                    if url.host_str().is_none() {
+                        bail!("panel URL host is required");
+                    }
+                    self.args.public_base_url = Some(value);
+                    self.args.domain = None;
+                } else if value.contains('/') {
+                    bail!("domain must not contain path segments; use a full https URL instead");
+                } else {
+                    self.args.domain = Some(value);
+                    self.args.public_base_url = None;
+                }
             }
             Prompt::SuperadminEmail => {
+                if value.is_empty() || !value.contains('@') {
+                    bail!("admin email is required");
+                }
                 self.args.superadmin_email = Some(value);
             }
             Prompt::SuperadminDisplayName => {
+                if value.is_empty() {
+                    bail!("admin display name is required");
+                }
                 self.args.superadmin_display_name = value;
             }
-            Prompt::TenantName => {
+            Prompt::ResellerTenantName => {
+                if value.is_empty() {
+                    bail!("tenant name is required");
+                }
                 self.args.reseller_tenant_name = Some(value);
             }
-            Prompt::NodeGroup => {
-                self.args.node_group_name = Some(value);
-            }
-            Prompt::ServerUrl => {
-                self.args.agent_server_url = Some(value);
-            }
-            Prompt::BootstrapToken => {
-                self.args.agent_bootstrap_token = Some(value);
-            }
-            Prompt::NodeName => {
-                self.args.agent_name = Some(value);
-            }
-            _ => {}
+            Prompt::Confirm => {}
         }
         Ok(())
     }
 
-    fn advance(&mut self) {
-        self.prompt_index += 1;
-        self.last_prompt = None;
-        self.error = None;
-    }
-
-    fn go_back(&mut self) {
-        if self.prompt_index > 0 {
-            self.prompt_index -= 1;
-            self.last_prompt = None;
-            self.error = None;
+    fn prime_defaults(&mut self) {
+        self.args.role.get_or_insert(InstallRole::ControlPlane);
+        self.args
+            .deployment_mode
+            .get_or_insert(DeploymentMode::Native);
+        if self.args.superadmin_display_name.trim().is_empty() {
+            self.args.superadmin_display_name = "Superadmin".into();
         }
     }
 
     fn current_prompt(&self) -> Prompt {
-        let prompts = self.prompts();
-        prompts[self.prompt_index.min(prompts.len().saturating_sub(1))]
+        self.prompts()[self.prompt_index.min(self.prompts().len() - 1)]
     }
 
     fn prompts(&self) -> Vec<Prompt> {
         let mut prompts = Vec::new();
-        if !self.explicit_language {
-            prompts.push(Prompt::Language);
+        if self.args.domain.as_deref().is_none_or(str::is_empty)
+            && self
+                .args
+                .public_base_url
+                .as_deref()
+                .is_none_or(str::is_empty)
+        {
+            prompts.push(Prompt::PanelUrl);
         }
-        if self.prompt_role {
-            prompts.push(Prompt::Role);
+        if self
+            .args
+            .superadmin_email
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            prompts.push(Prompt::SuperadminEmail);
         }
-        if self.prompt_mode {
-            prompts.push(Prompt::Mode);
+        if self.args.superadmin_display_name.trim().is_empty() {
+            prompts.push(Prompt::SuperadminDisplayName);
         }
-        if let Some(role) = self.args.role {
-            if role.includes_control_plane() {
-                prompts.extend([
-                    Prompt::Domain,
-                    Prompt::SuperadminEmail,
-                    Prompt::SuperadminDisplayName,
-                ]);
-            }
-            match role {
-                InstallRole::AllInOne => {
-                    prompts.extend([Prompt::TenantName, Prompt::NodeGroup, Prompt::Engines]);
-                }
-                InstallRole::Node => {
-                    prompts.extend([
-                        Prompt::ServerUrl,
-                        Prompt::BootstrapToken,
-                        Prompt::NodeName,
-                        Prompt::Engines,
-                    ]);
-                }
-                InstallRole::ControlPlane => {}
-            }
+        if self
+            .args
+            .reseller_tenant_name
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            prompts.push(Prompt::ResellerTenantName);
         }
-        if self.args.role.is_some() && self.args.deployment_mode.is_some() {
-            prompts.push(Prompt::Confirm);
-        }
+        prompts.push(Prompt::Confirm);
         prompts
     }
 
-    fn footer(&self, translator: Translator) -> String {
-        match self.current_prompt() {
-            Prompt::Engines => pick(
-                translator,
-                "↑/↓ выбор  space переключить  enter дальше  esc назад  q выход",
-                "↑/↓ select  space toggle  enter continue  esc back  q quit",
-            ),
-            Prompt::Confirm => pick(
-                translator,
-                "enter подтвердить  esc назад  q выход",
-                "enter confirm  esc back  q quit",
-            ),
-            Prompt::Language | Prompt::Role | Prompt::Mode => pick(
-                translator,
-                "↑/↓ выбор  enter продолжить  esc назад  q выход",
-                "↑/↓ select  enter continue  esc back  q quit",
-            ),
-            _ => pick(
-                translator,
-                "печать для ввода  enter сохранить  esc назад  q выход",
-                "type to edit  enter save  esc back  q quit",
-            ),
-        }
-        .to_owned()
+    fn advance(&mut self) {
+        let last = self.prompts().len().saturating_sub(1);
+        self.prompt_index = (self.prompt_index + 1).min(last);
+        self.last_prompt = None;
     }
 
-    fn preview_text(&self, translator: Translator) -> String {
-        if let Ok(config) = preview_config(&self.args) {
-            return summary_text(translator, &config);
-        }
-        let mut lines = Vec::new();
-        lines.push(format!(
-            "{}: {}",
-            pick(translator, "Язык", "Language"),
-            match self.language {
-                Language::Ru => "Русский",
-                Language::En => "English",
-            }
-        ));
-        if let Some(role) = self.args.role {
-            lines.push(format!(
-                "{}: {}",
-                translator.role_label(),
-                translator.install_role(role)
-            ));
-        }
-        if let Some(mode) = self.args.deployment_mode {
-            lines.push(format!(
-                "{}: {}",
-                translator.mode_label(),
-                translator.deployment_mode(mode)
-            ));
-        }
-        if let Some(domain) = self.args.domain.as_deref() {
-            lines.push(format!("{}: {domain}", translator.domain_prompt()));
-        }
-        if let Some(url) = self.args.agent_server_url.as_deref() {
-            lines.push(format!("{}: {url}", translator.server_url_prompt()));
-        }
-        if !self.selected_engines().is_empty() {
-            lines.push(format!(
-                "{}: {}",
-                translator.engines_label(),
-                self.selected_engines().join(",")
-            ));
-        }
-        lines.join("\n")
+    fn go_back(&mut self) {
+        self.prompt_index = self.prompt_index.saturating_sub(1);
+        self.last_prompt = None;
+    }
+
+    fn set_input(&mut self, value: String) {
+        self.input = value;
+        self.cursor = self.input.len();
     }
 
     fn render_input_line(&self) -> Line<'static> {
@@ -772,143 +451,69 @@ impl RatatuiWizard {
         ])
     }
 
-    fn set_input(&mut self, value: String) {
-        self.input = value;
-        self.cursor = self.input.len();
-    }
-
-    fn prime_defaults(&mut self) {
-        if self.args.role.is_some() {
-            self.args.lang = Some(self.language);
-        }
-        if self
-            .args
-            .role
-            .is_some_and(InstallRole::includes_control_plane)
-            && self.args.superadmin_display_name.trim().is_empty()
-        {
-            self.args.superadmin_display_name = "Superadmin".into();
-        }
-        if self.args.role.is_some_and(InstallRole::includes_node)
-            && empty(self.args.agent_engines.as_deref())
-        {
-            self.args.agent_engines = Some("xray,singbox".into());
-        }
-        if self
-            .args
-            .role
-            .is_some_and(InstallRole::includes_control_plane)
-            && empty(self.args.domain.as_deref())
-        {
-            self.args.domain = Some(
-                self.args
-                    .public_base_url
-                    .clone()
-                    .unwrap_or_else(|| "panel.example.com".into()),
-            );
-        }
-        if empty(self.args.superadmin_email.as_deref())
-            && let Ok(config) = preview_config(&self.args)
-            && let Some(control_plane) = config.control_plane
-        {
-            self.args.superadmin_email = Some(control_plane.superadmin.email);
-        }
-        if self.args.role == Some(InstallRole::AllInOne) {
-            if empty(self.args.reseller_tenant_name.as_deref())
-                && let Ok(config) = preview_config(&self.args)
-                && let Some(reseller) = config.control_plane.and_then(|item| item.reseller)
-            {
-                self.args.reseller_tenant_name = Some(reseller.tenant_name);
+    fn summary_text(&self) -> String {
+        match InstallConfig::from_args(self.args.clone()) {
+            Ok(config) => {
+                let control_plane = config.control_plane;
+                let reseller = control_plane
+                    .reseller
+                    .as_ref()
+                    .map(|item| item.tenant_name.as_str())
+                    .unwrap_or("not configured");
+                format!(
+                    "Mode: native control-plane\nPublic URL: {}\nPanel path: {}\nAdmin email: {}\nAdmin password: {}\nTenant: {}\nDatabase: {}",
+                    control_plane.public_base_url,
+                    control_plane.panel_path,
+                    control_plane.superadmin.email,
+                    control_plane.superadmin.password,
+                    reseller,
+                    control_plane.database_url,
+                )
             }
-            if empty(self.args.node_group_name.as_deref())
-                && let Ok(config) = preview_config(&self.args)
-                && let Some(node) = config.node
-            {
-                self.args.node_group_name = Some(node.group_name.unwrap_or(node.name));
-            }
+            Err(error) => format!("Fill required values to preview install config.\n\n{error}"),
         }
-        if self.args.role == Some(InstallRole::Node) {
-            if empty(self.args.agent_server_url.as_deref()) {
-                self.args.agent_server_url = Some("https://panel.example.com/private-path".into());
-            }
-            if empty(self.args.agent_name.as_deref())
-                && !empty(self.args.agent_bootstrap_token.as_deref())
-                && let Ok(config) = preview_config(&self.args)
-                && let Some(node) = config.node
-            {
-                self.args.agent_name = Some(node.name);
-            }
+    }
+}
+
+impl Prompt {
+    fn title(self) -> &'static str {
+        match self {
+            Self::PanelUrl => "Panel domain or URL",
+            Self::SuperadminEmail => "Superadmin email",
+            Self::SuperadminDisplayName => "Superadmin display name",
+            Self::ResellerTenantName => "Default tenant",
+            Self::Confirm => "Review installation",
         }
     }
 
-    fn domain_value(&self) -> String {
-        self.args
-            .domain
-            .clone()
-            .or_else(|| self.args.public_base_url.clone())
-            .unwrap_or_else(|| "panel.example.com".into())
-    }
-
-    fn superadmin_email_value(&self) -> String {
-        self.args
-            .superadmin_email
-            .clone()
-            .unwrap_or_else(|| "admin@panel.example.com".into())
-    }
-
-    fn tenant_name_value(&self) -> String {
-        self.args
-            .reseller_tenant_name
-            .clone()
-            .unwrap_or_else(|| "Default Tenant".into())
-    }
-
-    fn node_group_value(&self) -> String {
-        self.args
-            .node_group_name
-            .clone()
-            .or_else(|| self.args.agent_name.clone())
-            .unwrap_or_else(|| "edge-main".into())
-    }
-
-    fn node_name_value(&self) -> String {
-        self.args
-            .agent_name
-            .clone()
-            .unwrap_or_else(|| "node-main".into())
-    }
-
-    fn selected_engines(&self) -> Vec<String> {
-        let mut engines = Vec::new();
-        let current = self
-            .args
-            .agent_engines
-            .clone()
-            .unwrap_or_else(|| "xray,singbox".into());
-        if current.split(',').any(|value| value.trim() == "xray") {
-            engines.push("xray".into());
+    fn subtitle(self) -> &'static str {
+        match self {
+            Self::PanelUrl => "Enter a domain or full https URL for the panel.",
+            Self::SuperadminEmail => "This email becomes the first admin login.",
+            Self::SuperadminDisplayName => "This name is shown in the panel and audit log.",
+            Self::ResellerTenantName => "The installer creates this tenant automatically.",
+            Self::Confirm => "Press Enter to start installation.",
         }
-        if current
-            .split(',')
-            .any(|value| matches!(value.trim(), "singbox" | "sing-box"))
-        {
-            engines.push("singbox".into());
-        }
-        engines
     }
 
-    fn toggle_engine(&mut self, engine: &str) {
-        let mut engines = self.selected_engines();
-        if let Some(index) = engines.iter().position(|value| value == engine) {
-            engines.remove(index);
-        } else {
-            engines.push(engine.to_owned());
+    fn hint(self) -> &'static str {
+        match self {
+            Self::PanelUrl => "Example: panel.example.com or https://panel.example.com/private",
+            Self::SuperadminEmail => "Use an email you will remember for the first login.",
+            Self::SuperadminDisplayName => "Default value is fine for most installs.",
+            Self::ResellerTenantName => "You can rename tenants later from the panel.",
+            Self::Confirm => "The password shown here will also be written to admin-summary.env.",
         }
-        let ordered = ["xray", "singbox"]
-            .into_iter()
-            .filter(|value| engines.iter().any(|item| item == value))
-            .collect::<Vec<_>>();
-        self.args.agent_engines = Some(ordered.join(","));
+    }
+
+    fn sidebar_label(self) -> &'static str {
+        match self {
+            Self::PanelUrl => "Panel URL",
+            Self::SuperadminEmail => "Admin email",
+            Self::SuperadminDisplayName => "Admin name",
+            Self::ResellerTenantName => "Tenant",
+            Self::Confirm => "Review",
+        }
     }
 }
 
@@ -919,251 +524,8 @@ fn is_submit_key(key: KeyEvent) -> bool {
             && matches!(key.code, KeyCode::Char('m' | 'j')))
 }
 
-impl Prompt {
-    fn title(self, translator: Translator) -> &'static str {
-        match self {
-            Self::Language => "Language / Язык",
-            Self::Role => translator.install_role_prompt(),
-            Self::Mode => translator.deployment_mode_prompt(),
-            Self::Domain => translator.domain_prompt(),
-            Self::SuperadminEmail => translator.superadmin_email_prompt(),
-            Self::SuperadminDisplayName => translator.superadmin_display_name_prompt(),
-            Self::TenantName => translator.tenant_name_prompt(),
-            Self::NodeGroup => translator.node_group_prompt(),
-            Self::ServerUrl => translator.server_url_prompt(),
-            Self::BootstrapToken => translator.bootstrap_token_prompt(),
-            Self::NodeName => translator.node_name_prompt(),
-            Self::Engines => translator.engines_prompt(),
-            Self::Confirm => translator.summary_title(),
-        }
-    }
-
-    fn subtitle(self, translator: Translator) -> String {
-        match self {
-            Self::Language => pick(
-                translator,
-                "Выбери язык мастера установки.",
-                "Choose the installer language.",
-            )
-            .into(),
-            Self::Role => pick(
-                translator,
-                "Определи целевой сценарий установки.",
-                "Choose the deployment role.",
-            )
-            .into(),
-            Self::Mode => pick(
-                translator,
-                "Native ставит systemd-сервисы, Docker поднимает compose-стек.",
-                "Native installs systemd services, Docker starts a compose stack.",
-            )
-            .into(),
-            Self::Domain => pick(
-                translator,
-                "Можно ввести домен или полный URL панели.",
-                "You can enter a bare domain or a full panel URL.",
-            )
-            .into(),
-            Self::SuperadminEmail => pick(
-                translator,
-                "Этот email будет логином первого суперадмина.",
-                "This email becomes the first superadmin login.",
-            )
-            .into(),
-            Self::SuperadminDisplayName => pick(
-                translator,
-                "Имя будет видно в панели и аудите.",
-                "This name is shown in the panel and audit log.",
-            )
-            .into(),
-            Self::TenantName => pick(
-                translator,
-                "Tenant создаётся автоматически для локальной ноды.",
-                "The tenant is created automatically for the local node.",
-            )
-            .into(),
-            Self::NodeGroup => pick(
-                translator,
-                "Название группы для локальной ноды и bootstrap-сессии.",
-                "This group name is used for the local node bootstrap.",
-            )
-            .into(),
-            Self::ServerUrl => pick(
-                translator,
-                "URL должен указывать на control-plane с https.",
-                "The URL must point to the control-plane over https.",
-            )
-            .into(),
-            Self::BootstrapToken => pick(
-                translator,
-                "Токен bootstrap выдаётся control-plane перед регистрацией ноды.",
-                "The bootstrap token is issued by the control-plane.",
-            )
-            .into(),
-            Self::NodeName => pick(
-                translator,
-                "Имя станет базой для runtime-регистрации.",
-                "This name is used for runtime registration.",
-            )
-            .into(),
-            Self::Engines => pick(
-                translator,
-                "Выбери runtime-ядра, которые надо запускать на ноде.",
-                "Choose which runtime engines should be enabled.",
-            )
-            .into(),
-            Self::Confirm => pick(
-                translator,
-                "Проверь значения перед стартом установки.",
-                "Review values before starting installation.",
-            )
-            .into(),
-        }
-    }
-
-    fn hint(self, translator: Translator) -> String {
-        match self {
-            Self::Domain => pick(
-                translator,
-                "Если введёшь полный URL, panel path подставится автоматически.",
-                "If you enter a full URL, the panel path is derived automatically.",
-            )
-            .into(),
-            Self::Mode => pick(
-                translator,
-                "Для быстрого single-host чаще нужен native.",
-                "For a simple single-host setup, native is usually the right choice.",
-            )
-            .into(),
-            Self::Confirm => pick(
-                translator,
-                "После подтверждения installer сохранит конфиг и пойдёт по шагам bootstrap.",
-                "After confirmation the installer saves config and starts bootstrap.",
-            )
-            .into(),
-            _ => pick(
-                translator,
-                "Текущие значения справа обновляются на лету.",
-                "The preview on the right updates live.",
-            )
-            .into(),
-        }
-    }
-
-    fn sidebar_label(self, translator: Translator) -> &'static str {
-        match self {
-            Self::Language => "Language",
-            Self::Role => translator.role_label(),
-            Self::Mode => translator.mode_label(),
-            Self::Domain => translator.domain_prompt(),
-            Self::SuperadminEmail => translator.admin_email_label(),
-            Self::SuperadminDisplayName => translator.superadmin_display_name_prompt(),
-            Self::TenantName => translator.tenant_label(),
-            Self::NodeGroup => translator.node_group_prompt(),
-            Self::ServerUrl => translator.server_url_prompt(),
-            Self::BootstrapToken => translator.bootstrap_token_prompt(),
-            Self::NodeName => translator.node_label(),
-            Self::Engines => translator.engines_label(),
-            Self::Confirm => translator.summary_title(),
-        }
-    }
-
-    fn options(self, translator: Translator, language: Language) -> Vec<String> {
-        match self {
-            Self::Language => vec!["Русский".into(), "English".into()],
-            Self::Role => vec!["all-in-one".into(), "control-plane".into(), "node".into()],
-            Self::Mode => vec!["native".into(), "docker".into()],
-            _ => vec![
-                pick(translator, "Русский", "English").into(),
-                match language {
-                    Language::Ru => "English".into(),
-                    Language::En => "Русский".into(),
-                },
-            ],
-        }
-    }
-}
-
-fn preview_config(args: &InstallArgs) -> Result<InstallConfig> {
-    let mut args = args.clone();
-    args.lang = Some(args.lang.unwrap_or(Language::En));
-    args.non_interactive = true;
-    InstallConfig::from_args(args)
-}
-
-fn summary_text(translator: Translator, config: &InstallConfig) -> String {
-    let mut lines = vec![
-        format!(
-            "{}: {}",
-            translator.role_label(),
-            translator.install_role(config.role)
-        ),
-        format!(
-            "{}: {}",
-            translator.mode_label(),
-            translator.deployment_mode(config.deployment_mode)
-        ),
-    ];
-    if let Some(control_plane) = config.control_plane.as_ref() {
-        lines.push(format!(
-            "{}: {}",
-            translator.public_url_label(),
-            control_plane.public_base_url
-        ));
-        lines.push(format!(
-            "{}: {}",
-            translator.panel_path_label(),
-            control_plane.panel_path
-        ));
-        lines.push(format!(
-            "{}: {}",
-            translator.admin_email_label(),
-            control_plane.superadmin.email
-        ));
-        lines.push(format!(
-            "{}: {}",
-            translator.admin_password_label(),
-            control_plane.superadmin.password
-        ));
-        lines.push(format!(
-            "{}: {}",
-            translator.database_label(),
-            control_plane.database_url
-        ));
-        if let Some(reseller) = control_plane.reseller.as_ref() {
-            lines.push(format!(
-                "{}: {}",
-                translator.tenant_label(),
-                reseller.tenant_name
-            ));
-        }
-    }
-    if let Some(node) = config.node.as_ref() {
-        lines.push(format!("{}: {}", translator.node_label(), node.name));
-        lines.push(format!(
-            "{}: {}",
-            translator.engines_label(),
-            engines_csv(&node.engines)
-        ));
-    }
-    lines.join("\n")
-}
-
-fn empty(value: Option<&str>) -> bool {
-    value.is_none_or(|item| item.trim().is_empty())
-}
-
-fn pick(translator: Translator, ru: &'static str, en: &'static str) -> &'static str {
-    match translator.language() {
-        Language::Ru => ru,
-        Language::En => en,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::config::DeploymentMode;
-
     use super::*;
 
     fn sample_args() -> InstallArgs {
@@ -1189,13 +551,6 @@ mod tests {
             reseller_email: None,
             reseller_display_name: None,
             reseller_password: None,
-            agent_server_url: None,
-            agent_name: None,
-            node_group_name: None,
-            agent_engines: None,
-            agent_protocols_xray: None,
-            agent_protocols_singbox: None,
-            agent_bootstrap_token: None,
             starter_subscription_name: None,
             starter_subscription_traffic_limit_bytes: None,
             starter_subscription_days: None,
@@ -1204,53 +559,28 @@ mod tests {
     }
 
     #[test]
-    fn prompt_sequence_for_all_in_one_contains_control_plane_and_node_steps() {
-        let mut args = sample_args();
-        args.role = Some(InstallRole::AllInOne);
-        args.deployment_mode = Some(DeploymentMode::Native);
-        let wizard = RatatuiWizard::new(args, Language::En, false);
+    fn wizard_prompts_required_interactive_values() {
+        let wizard = RatatuiWizard::new(sample_args());
 
         assert_eq!(
             wizard.prompts(),
             vec![
-                Prompt::Language,
-                Prompt::Domain,
+                Prompt::PanelUrl,
                 Prompt::SuperadminEmail,
-                Prompt::SuperadminDisplayName,
-                Prompt::TenantName,
-                Prompt::NodeGroup,
-                Prompt::Engines,
-                Prompt::Confirm
+                Prompt::ResellerTenantName,
+                Prompt::Confirm,
             ]
         );
     }
 
     #[test]
-    fn prompt_sequence_for_node_keeps_bootstrap_token_step() {
+    fn wizard_keeps_non_interactive_args_unchanged() {
         let mut args = sample_args();
-        args.role = Some(InstallRole::Node);
-        args.deployment_mode = Some(DeploymentMode::Docker);
-        let wizard = RatatuiWizard::new(args, Language::En, true);
+        args.non_interactive = true;
 
-        assert_eq!(
-            wizard.prompts(),
-            vec![
-                Prompt::ServerUrl,
-                Prompt::BootstrapToken,
-                Prompt::NodeName,
-                Prompt::Engines,
-                Prompt::Confirm
-            ]
-        );
-    }
+        let prepared = prepare_install_args(args.clone()).expect("prepared args");
 
-    #[test]
-    fn mode_prompt_stays_in_flow_after_selection() {
-        let mut wizard = RatatuiWizard::new(sample_args(), Language::En, false);
-        wizard.args.role = Some(InstallRole::AllInOne);
-        wizard.args.deployment_mode = Some(DeploymentMode::Native);
-
-        assert!(wizard.prompts().contains(&Prompt::Mode));
-        assert_eq!(wizard.prompts().last(), Some(&Prompt::Confirm));
+        assert_eq!(prepared.domain, args.domain);
+        assert_eq!(prepared.public_base_url, args.public_base_url);
     }
 }

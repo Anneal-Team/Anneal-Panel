@@ -126,15 +126,15 @@ pub fn brand() -> Paragraph<'static> {
     Paragraph::new(vec![
         Line::from(vec![
             Span::styled("      ", Style::default().bg(BG)),
-            Span::styled("▇", Style::default().fg(ACCENT)),
+            Span::styled("#", Style::default().fg(ACCENT)),
         ]),
         Line::from(vec![
-            Span::styled("   ▅  ", Style::default().fg(ACCENT_DIM)),
-            Span::styled("▇", Style::default().fg(ACCENT)),
+            Span::styled("   #  ", Style::default().fg(ACCENT_DIM)),
+            Span::styled("#", Style::default().fg(ACCENT)),
         ]),
         Line::from(vec![
-            Span::styled(" ▃ ▆ ", Style::default().fg(ACCENT_SOFT)),
-            Span::styled("▇", Style::default().fg(ACCENT)),
+            Span::styled(" # # ", Style::default().fg(ACCENT_SOFT)),
+            Span::styled("#", Style::default().fg(ACCENT)),
             Span::raw("  "),
             Span::styled(
                 "Anne",

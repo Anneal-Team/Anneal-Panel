@@ -4,9 +4,6 @@ pub mod secret;
 pub mod token;
 
 pub use error::{ApplicationError, ApplicationResult};
-pub use model::{
-    Actor, AuditStamp, DeploymentStatus, NodeStatus, ProtocolKind, ProxyEngine, QuotaState,
-    UserRole, UserStatus,
-};
+pub use model::{Actor, AuditStamp, ProtocolKind, ProxyEngine, QuotaState, UserRole, UserStatus};
 pub use secret::SecretBox;
 pub use token::TokenHasher;

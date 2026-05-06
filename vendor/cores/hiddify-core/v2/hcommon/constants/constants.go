@@ -1,6 +1,0 @@
-package constants
-
-const (
-	DEFAULT_GRPC_NORMAL_PORT = 24354
-	DEFAULT_GRPC_PORXY_PORT  = 24355
-)

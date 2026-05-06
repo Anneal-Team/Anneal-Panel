@@ -5,8 +5,6 @@ BASE_URL="${ANNEAL_SMOKE_BASE_URL:-http://127.0.0.1}"
 API_URL="${ANNEAL_SMOKE_API_URL:-${BASE_URL}/api/v1}"
 SUPERADMIN_EMAIL="${ANNEAL_SMOKE_SUPERADMIN_EMAIL:?set ANNEAL_SMOKE_SUPERADMIN_EMAIL}"
 SUPERADMIN_PASSWORD="${ANNEAL_SMOKE_SUPERADMIN_PASSWORD:?set ANNEAL_SMOKE_SUPERADMIN_PASSWORD}"
-X_RAY_NODE_NAME="${ANNEAL_SMOKE_XRAY_NODE_NAME:-}"
-SINGBOX_NODE_NAME="${ANNEAL_SMOKE_SINGBOX_NODE_NAME:-}"
 
 totp_code() {
   python3 - "$1" <<'PY'
@@ -41,11 +39,6 @@ api_post_auth() {
   curl -fsS "${API_URL}${path}" -H 'content-type: application/json' -H "authorization: Bearer ${ACCESS_TOKEN}" --data "${payload}"
 }
 
-api_get_auth() {
-  local path="$1"
-  curl -fsS "${API_URL}${path}" -H "authorization: Bearer ${ACCESS_TOKEN}"
-}
-
 curl -fsS "${API_URL}/health" >/dev/null
 LOGIN_RESPONSE="$(api_post "/auth/login" "$(jq -nc --arg email "${SUPERADMIN_EMAIL}" --arg password "${SUPERADMIN_PASSWORD}" '{email:$email, password:$password}')" )"
 STATUS="$(echo "${LOGIN_RESPONSE}" | jq -r '.status')"
@@ -70,15 +63,5 @@ DELIVERY_URL="$(echo "${SUBSCRIPTION}" | jq -r '.delivery_url')"
 
 echo "native smoke created subscription: ${DELIVERY_URL}"
 curl -fsS "${DELIVERY_URL}" >/dev/null
-
-if [[ -n "${X_RAY_NODE_NAME}" || -n "${SINGBOX_NODE_NAME}" ]]; then
-  NODES="$(api_get_auth "/nodes")"
-  if [[ -n "${X_RAY_NODE_NAME}" ]]; then
-    echo "${NODES}" | jq -e --arg name "${X_RAY_NODE_NAME}" '.[] | select(.name == $name and .status == "online")' >/dev/null
-  fi
-  if [[ -n "${SINGBOX_NODE_NAME}" ]]; then
-    echo "${NODES}" | jq -e --arg name "${SINGBOX_NODE_NAME}" '.[] | select(.name == $name and .status == "online")' >/dev/null
-  fi
-fi
 
 echo "native smoke completed"

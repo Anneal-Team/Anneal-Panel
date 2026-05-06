@@ -1,4 +1,3 @@
-use anneal_core::ProxyEngine;
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{Duration, Utc};
 use reqwest::{Client, StatusCode};
@@ -7,10 +6,7 @@ use serde::{Deserialize, Serialize};
 use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 
-use crate::{
-    config::{NodeConfig, StarterSubscriptionConfig},
-    state::InstallState,
-};
+use crate::{config::StarterSubscriptionConfig, state::InstallState};
 
 #[derive(Debug, Clone)]
 pub struct ApiClient {
@@ -42,18 +38,8 @@ struct TotpSetup {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct BootstrapSession {
-    pub bootstrap_token: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ResellerResponse {
     pub tenant_id: Option<Uuid>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NodeResponse {
-    pub id: Uuid,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -97,18 +83,6 @@ struct CreateResellerRequest<'a> {
     email: &'a str,
     display_name: &'a str,
     password: &'a str,
-}
-
-#[derive(Debug, Serialize)]
-struct CreateNodeRequest<'a> {
-    tenant_id: Uuid,
-    name: &'a str,
-}
-
-#[derive(Debug, Serialize)]
-struct CreateBootstrapSessionRequest {
-    tenant_id: Uuid,
-    engines: Vec<ProxyEngine>,
 }
 
 #[derive(Debug, Serialize)]
@@ -232,46 +206,6 @@ impl ApiClient {
         reseller
             .tenant_id
             .ok_or_else(|| anyhow!("reseller response did not include tenant_id"))
-    }
-
-    pub async fn create_node(
-        &self,
-        access_token: &str,
-        tenant_id: Uuid,
-        name: &str,
-    ) -> Result<Uuid> {
-        let response = self
-            .client
-            .post(self.url("/nodes"))
-            .bearer_auth(access_token)
-            .json(&CreateNodeRequest { tenant_id, name })
-            .send()
-            .await
-            .context("failed to create node")?;
-        let node: NodeResponse = self.json_response(response, "create node").await?;
-        Ok(node.id)
-    }
-
-    pub async fn create_bootstrap_session(
-        &self,
-        access_token: &str,
-        tenant_id: Uuid,
-        node_id: Uuid,
-        node: &NodeConfig,
-    ) -> Result<BootstrapSession> {
-        let response = self
-            .client
-            .post(self.url(&format!("/nodes/{node_id}/bootstrap-sessions")))
-            .bearer_auth(access_token)
-            .json(&CreateBootstrapSessionRequest {
-                tenant_id,
-                engines: node.engines.clone(),
-            })
-            .send()
-            .await
-            .context("failed to create node bootstrap session")?;
-        self.json_response(response, "create bootstrap session")
-            .await
     }
 
     pub async fn list_subscriptions(

@@ -76,7 +76,6 @@ where
             .map(|sample| UsageSample {
                 id: Uuid::new_v4(),
                 tenant_id: sample.tenant_id,
-                node_id: sample.node_id,
                 subscription_id: sample.subscription_id,
                 device_id: sample.device_id,
                 bytes_in: sample.bytes_in,
@@ -224,7 +223,6 @@ mod tests {
             .ingest(
                 vec![UsageBatchItem {
                     tenant_id: Uuid::new_v4(),
-                    node_id: Uuid::new_v4(),
                     subscription_id,
                     device_id: Uuid::new_v4(),
                     bytes_in: 500,

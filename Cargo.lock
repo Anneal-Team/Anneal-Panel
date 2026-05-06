@@ -135,28 +135,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anneal-nodes"
-version = "0.1.0"
-dependencies = [
- "anneal-config-engine",
- "anneal-core",
- "anneal-rbac",
- "async-trait",
- "base64",
- "chrono",
- "rand 0.10.1",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "utoipa",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "anneal-notifications"
 version = "0.1.0"
 dependencies = [
@@ -207,7 +185,6 @@ version = "0.1.0"
 dependencies = [
  "anneal-config-engine",
  "anneal-core",
- "anneal-nodes",
  "anneal-rbac",
  "async-trait",
  "base64",
@@ -414,7 +391,6 @@ dependencies = [
  "anneal-auth",
  "anneal-config-engine",
  "anneal-core",
- "anneal-nodes",
  "anneal-notifications",
  "anneal-platform",
  "anneal-rbac",
@@ -2344,25 +2320,6 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "memoffset",
-]
-
-[[package]]
-name = "node-agent"
-version = "0.1.0"
-dependencies = [
- "anneal-config-engine",
- "anneal-core",
- "anneal-nodes",
- "anneal-platform",
- "anyhow",
- "chrono",
- "clap",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -5393,7 +5350,6 @@ version = "0.1.0"
 dependencies = [
  "anneal-audit",
  "anneal-core",
- "anneal-nodes",
  "anneal-notifications",
  "anneal-platform",
  "anyhow",
@@ -5413,18 +5369,6 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
-
-[[package]]
-name = "x25519-dalek"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
-dependencies = [
- "curve25519-dalek",
- "rand_core 0.6.4",
- "serde",
- "zeroize",
-]
 
 [[package]]
 name = "yoke"
@@ -5495,20 +5439,6 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
-dependencies = [
- "zeroize_derive",
-]
-
-[[package]]
-name = "zeroize_derive"
-version = "1.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "zerotrie"

@@ -52,7 +52,7 @@ export function NotificationsPage() {
               <div key={event.id} className="rounded-[24px] border border-border bg-[#f8f5f0] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-lg font-semibold">{event.title}</div>
-                  <Badge tone={event.kind === "node_offline" ? "danger" : "warning"}>
+                  <Badge tone={event.kind === "quota100" ? "danger" : "warning"}>
                     {event.kind}
                   </Badge>
                 </div>

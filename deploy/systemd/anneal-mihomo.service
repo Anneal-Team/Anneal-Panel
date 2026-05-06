@@ -1,0 +1,20 @@
+[Unit]
+Description=Anneal Mihomo Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=anneal
+Group=anneal
+EnvironmentFile=/etc/anneal/anneal.env
+ExecStart=/opt/anneal/bin/mihomo -f /var/lib/anneal/mihomo/config.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/anneal /etc/anneal
+
+[Install]
+WantedBy=multi-user.target

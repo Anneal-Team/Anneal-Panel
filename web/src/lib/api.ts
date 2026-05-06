@@ -3,7 +3,6 @@ import { panelBasePath } from "./panel-base";
 
 export type UserRole = "superadmin" | "admin" | "reseller" | "user";
 export type UserStatus = "active" | "suspended";
-export type ProxyEngine = "xray" | "singbox";
 export type ProtocolKind =
   | "vless_reality"
   | "vmess"
@@ -11,26 +10,9 @@ export type ProtocolKind =
   | "shadowsocks_2022"
   | "tuic"
   | "hysteria2";
-export type DeploymentStatus =
-  | "queued"
-  | "rendering"
-  | "validating"
-  | "ready"
-  | "applied"
-  | "rolled_back"
-  | "failed";
 export type QuotaState = "normal" | "warning80" | "warning95" | "exhausted";
 export type TransportKind = "tcp" | "ws" | "grpc" | "http_upgrade";
 export type SecurityKind = "none" | "tls" | "reality";
-export type NodeDomainMode =
-  | "direct"
-  | "legacy_direct"
-  | "cdn"
-  | "auto_cdn"
-  | "relay"
-  | "worker"
-  | "reality"
-  | "fake";
 
 export interface SessionTokens {
   access_token: string;
@@ -109,120 +91,10 @@ export interface PublicSubscription {
   delivery_url: string;
 }
 
-export interface NodeRuntime {
-  id: string;
-  tenant_id: string;
-  node_id: string;
-  engine: ProxyEngine;
-  version: string;
-  status: "pending" | "online" | "offline";
-  last_seen_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Node {
-  id: string;
-  tenant_id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-  runtimes: NodeRuntime[];
-}
-
-export interface NodeDomain {
-  id: string;
-  node_id: string;
-  mode: NodeDomainMode;
-  domain: string;
-  alias: string | null;
-  server_names: string[];
-  host_headers: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface NodeEndpoint {
-  id: string;
-  node_runtime_id: string;
-  protocol: ProtocolKind;
-  listen_host: string;
-  listen_port: number;
-  public_host: string;
-  public_port: number;
-  transport: TransportKind;
-  security: SecurityKind;
-  server_name: string | null;
-  host_header: string | null;
-  path: string | null;
-  service_name: string | null;
-  flow: string | null;
-  reality_public_key: string | null;
-  reality_short_id: string | null;
-  fingerprint: string | null;
-  alpn: string[];
-  cipher: string | null;
-  tls_certificate_path: string | null;
-  tls_key_path: string | null;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface NodeEndpointInput {
-  protocol: ProtocolKind;
-  listen_host: string;
-  listen_port: number;
-  public_host: string;
-  public_port: number;
-  transport: TransportKind;
-  security: SecurityKind;
-  server_name: string | null;
-  host_header: string | null;
-  path: string | null;
-  service_name: string | null;
-  flow: string | null;
-  fingerprint: string | null;
-  alpn: string[];
-  cipher: string | null;
-  tls_certificate_path: string | null;
-  tls_key_path: string | null;
-  enabled: boolean;
-}
-
-export interface EnrollmentGrant {
-  token: string;
-  record: {
-    id: string;
-    tenant_id: string;
-    node_id: string;
-    token_hash: string;
-    engine: ProxyEngine;
-    expires_at: string;
-    created_at: string;
-    used_at: string | null;
-  };
-}
-
-export interface DeploymentRollout {
-  id: string;
-  tenant_id: string;
-  node_runtime_id: string;
-  config_revision_id: string;
-  engine: ProxyEngine;
-  revision_name: string;
-  target_path: string;
-  status: DeploymentStatus;
-  failure_reason: string | null;
-  created_at: string;
-  updated_at: string;
-  applied_at: string | null;
-}
-
 export interface NotificationEvent {
   id: string;
   tenant_id: string;
-  kind: "quota80" | "quota95" | "quota100" | "node_offline";
+  kind: "quota80" | "quota95" | "quota100";
   title: string;
   body: string;
   delivered_at: string | null;
@@ -640,69 +512,6 @@ export const api = {
       `/subscriptions/${subscriptionId}/rotate-link?tenant_id=${tenantId}`,
       { method: "POST" },
     );
-  },
-  createNode(input: { tenant_id: string; name: string }) {
-    return apiFetch<Node>("/nodes", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  updateNode(nodeId: string, input: { tenant_id: string; name: string }) {
-    return apiFetch<Node>(`/nodes/${nodeId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-  deleteNode(nodeId: string, tenantId: string) {
-    return apiFetch<{ ok: true }>(`/nodes/${nodeId}?tenant_id=${tenantId}`, {
-      method: "DELETE",
-    });
-  },
-  listNodes() {
-    return apiFetch<Node[]>("/nodes");
-  },
-  listNodeDomains(nodeId: string, tenantId: string) {
-    return apiFetch<NodeDomain[]>(`/nodes/${nodeId}/domains?tenant_id=${tenantId}`);
-  },
-  replaceNodeDomains(
-    nodeId: string,
-    input: {
-      tenant_id: string;
-      domains: Omit<NodeDomain, "id" | "node_id" | "created_at" | "updated_at">[];
-    },
-  ) {
-    return apiFetch<NodeDomain[]>(`/nodes/${nodeId}/domains`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  listNodeRuntimeEndpoints(runtimeId: string, tenantId: string) {
-    return apiFetch<NodeEndpoint[]>(`/node-runtimes/${runtimeId}/endpoints?tenant_id=${tenantId}`);
-  },
-  replaceNodeRuntimeEndpoints(
-    runtimeId: string,
-    input: { tenant_id: string; endpoints: NodeEndpointInput[] },
-  ) {
-    return apiFetch<NodeEndpoint[]>(`/node-runtimes/${runtimeId}/endpoints`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  createBootstrapToken(nodeId: string, input: { tenant_id: string; engines: ProxyEngine[] }) {
-    return apiFetch<{
-      bootstrap_token: string;
-      tenant_id: string;
-      node_id: string;
-      node_name: string;
-      engines: ProxyEngine[];
-      expires_at: string;
-    }>(`/nodes/${nodeId}/bootstrap-sessions`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  listRollouts() {
-    return apiFetch<DeploymentRollout[]>("/rollouts");
   },
   listNotifications() {
     return apiFetch<NotificationEvent[]>("/notifications");

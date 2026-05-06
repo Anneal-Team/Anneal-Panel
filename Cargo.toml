@@ -3,13 +3,11 @@ resolver = "2"
 members = [
     "apps/api",
     "apps/annealctl",
-    "apps/node-agent",
     "apps/worker",
     "crates/audit",
     "crates/auth",
     "crates/config-engine",
     "crates/core",
-    "crates/nodes",
     "crates/notifications",
     "crates/platform",
     "crates/rbac",
@@ -31,7 +29,6 @@ anneal-audit = { path = "crates/audit" }
 anneal-auth = { path = "crates/auth" }
 anneal-config-engine = { path = "crates/config-engine" }
 anneal-core = { path = "crates/core" }
-anneal-nodes = { path = "crates/nodes" }
 anneal-notifications = { path = "crates/notifications" }
 anneal-platform = { path = "crates/platform" }
 anneal-rbac = { path = "crates/rbac" }
@@ -73,7 +70,6 @@ opentelemetry_sdk = "0.31.0"
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
-x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 
 [workspace.lints.clippy]
 all = "warn"

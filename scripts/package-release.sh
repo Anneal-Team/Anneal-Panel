@@ -6,10 +6,9 @@ DIST_DIR="${ROOT_DIR}/dist"
 TMP_DIR="${DIST_DIR}/tmp"
 TARGET_TRIPLE="${TARGET_TRIPLE:-linux-amd64}"
 RUST_TARGET="${RUST_TARGET:-x86_64-unknown-linux-musl}"
-XRAY_RELEASE_URL="${XRAY_RELEASE_URL:-https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip}"
-XRAY_RELEASE_FALLBACK_URL="${XRAY_RELEASE_FALLBACK_URL:-https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip}"
-SINGBOX_RELEASE_URL="${SINGBOX_RELEASE_URL:-https://github.com/SagerNet/sing-box/releases/download/v1.13.11/sing-box-1.13.11-linux-amd64.tar.gz}"
-SINGBOX_RELEASE_FALLBACK_URL="${SINGBOX_RELEASE_FALLBACK_URL:-https://github.com/SagerNet/sing-box/releases/download/v1.13.11/sing-box-1.13.11-linux-amd64.tar.gz}"
+MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.23}"
+MIHOMO_RELEASE_URL="${MIHOMO_RELEASE_URL:-https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-v1-${MIHOMO_VERSION}.gz}"
+MIHOMO_RELEASE_FALLBACK_URL="${MIHOMO_RELEASE_FALLBACK_URL:-https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-compatible-${MIHOMO_VERSION}.gz}"
 BUNDLE_VERSION_LABEL="${BUNDLE_VERSION_LABEL:-}"
 ANNEAL_VERSION=""
 BUNDLE_NAME=""
@@ -81,14 +80,9 @@ download_asset() {
     -o "${destination}"
 }
 
-validate_zip() {
+validate_gzip() {
   local archive="$1"
-  unzip -tq "${archive}" >/dev/null
-}
-
-validate_tar_gz() {
-  local archive="$1"
-  tar -tzf "${archive}" >/dev/null
+  gzip -t "${archive}" >/dev/null
 }
 
 download_validated_asset() {
@@ -130,7 +124,7 @@ prepare_workspace() {
 }
 
 build_backend() {
-  cargo build --locked --release --target "${RUST_TARGET}" -p api -p annealctl -p worker -p node-agent
+  cargo build --locked --release --target "${RUST_TARGET}" -p api -p annealctl -p worker
 }
 
 build_web() {
@@ -145,7 +139,6 @@ package_backend() {
   install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/api" "${BUNDLE_ROOT}/bin/api"
   install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/annealctl" "${BUNDLE_ROOT}/bin/annealctl"
   install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/worker" "${BUNDLE_ROOT}/bin/worker"
-  install -m 0755 "${ROOT_DIR}/target/${RUST_TARGET}/release/node-agent" "${BUNDLE_ROOT}/bin/node-agent"
   cp -a "${ROOT_DIR}/migrations"/. "${BUNDLE_ROOT}/migrations/"
 }
 
@@ -154,28 +147,13 @@ package_web() {
 }
 
 package_runtime_bundle() {
-  local xray_dir="${TMP_DIR}/runtime-xray"
-  local singbox_dir="${TMP_DIR}/runtime-singbox"
-
-  rm -rf "${xray_dir}" "${singbox_dir}"
-  mkdir -p "${xray_dir}" "${singbox_dir}"
-
   download_validated_asset \
-    "${XRAY_RELEASE_URL}" \
-    "${XRAY_RELEASE_FALLBACK_URL}" \
-    "${TMP_DIR}/xray-runtime.zip" \
-    validate_zip
-  unzip -oq "${TMP_DIR}/xray-runtime.zip" -d "${xray_dir}"
-
-  download_validated_asset \
-    "${SINGBOX_RELEASE_URL}" \
-    "${SINGBOX_RELEASE_FALLBACK_URL}" \
-    "${TMP_DIR}/singbox-runtime.tar.gz" \
-    validate_tar_gz
-  tar -xzf "${TMP_DIR}/singbox-runtime.tar.gz" -C "${singbox_dir}"
-
-  install -m 0755 "${xray_dir}/xray" "${BUNDLE_ROOT}/runtime/xray"
-  install -m 0755 "$(find "${singbox_dir}" -type f -name 'sing-box' | head -n 1)" "${BUNDLE_ROOT}/runtime/sing-box"
+    "${MIHOMO_RELEASE_URL}" \
+    "${MIHOMO_RELEASE_FALLBACK_URL}" \
+    "${TMP_DIR}/mihomo-runtime.gz" \
+    validate_gzip
+  gzip -dc "${TMP_DIR}/mihomo-runtime.gz" > "${BUNDLE_ROOT}/runtime/mihomo"
+  chmod 0755 "${BUNDLE_ROOT}/runtime/mihomo"
 }
 
 package_deploy_bundle() {
@@ -193,9 +171,7 @@ write_release_manifest() {
     "api": "bin/api",
     "annealctl": "bin/annealctl",
     "worker": "bin/worker",
-    "node_agent": "bin/node-agent",
-    "xray": "runtime/xray",
-    "singbox": "runtime/sing-box",
+    "mihomo": "runtime/mihomo",
     "web": "web",
     "migrations": "migrations",
     "deploy": "deploy",
@@ -228,7 +204,7 @@ main() {
   require_tool node
   require_tool curl
   require_tool tar
-  require_tool unzip
+  require_tool gzip
   require_tool sha256sum
   require_tool find
   require_tool sort

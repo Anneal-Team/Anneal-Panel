@@ -15,7 +15,6 @@ pub enum InstallStep {
     Files,
     Services,
     ControlPlaneBootstrap,
-    NodeBootstrap,
     StarterSubscription,
     Summary,
     Cleanup,
@@ -42,7 +41,6 @@ pub struct StepState {
 pub struct BootstrapState {
     pub superadmin_totp_secret: Option<String>,
     pub tenant_id: Option<Uuid>,
-    pub node_group_id: Option<Uuid>,
     pub starter_subscription_name: Option<String>,
     pub starter_subscription_url: Option<String>,
 }

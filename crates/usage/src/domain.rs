@@ -9,7 +9,6 @@ use anneal_core::QuotaState;
 pub struct UsageSample {
     pub id: Uuid,
     pub tenant_id: Uuid,
-    pub node_id: Uuid,
     pub subscription_id: Uuid,
     pub device_id: Uuid,
     pub bytes_in: i64,
@@ -21,7 +20,6 @@ pub struct UsageSample {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageBatchItem {
     pub tenant_id: Uuid,
-    pub node_id: Uuid,
     pub subscription_id: Uuid,
     pub device_id: Uuid,
     pub bytes_in: i64,
