@@ -4,7 +4,7 @@ WORKDIR /var/lib/anneal
 RUN useradd --system --create-home --home-dir /var/lib/anneal --shell /usr/sbin/nologin anneal
 COPY bundle/bin/node-agent /usr/local/bin/node-agent
 COPY bundle/runtime/xray /usr/local/bin/xray
-COPY bundle/runtime/hiddify-core /usr/local/bin/hiddify-core
+COPY bundle/runtime/sing-box /usr/local/bin/sing-box
 COPY node-supervisord.conf /etc/supervisor/conf.d/anneal-node.conf
 RUN mkdir -p /var/lib/anneal/xray /var/lib/anneal/singbox /var/lib/anneal/tls \
     && chown -R anneal:anneal /var/lib/anneal

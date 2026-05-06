@@ -1,5 +1,5 @@
 [Unit]
-Description=Anneal Hiddify Core Runtime
+Description=Anneal sing-box Runtime
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=simple
 User=anneal
 Group=anneal
 WorkingDirectory=/var/lib/anneal
-ExecStart=/opt/anneal/bin/hiddify-core run -c /var/lib/anneal/singbox/config.json
+ExecStart=/opt/anneal/bin/sing-box run -c /var/lib/anneal/singbox/config.json
 Restart=always
 RestartSec=5
 

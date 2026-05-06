@@ -8,8 +8,8 @@ TARGET_TRIPLE="${TARGET_TRIPLE:-linux-amd64}"
 RUST_TARGET="${RUST_TARGET:-x86_64-unknown-linux-musl}"
 XRAY_RELEASE_URL="${XRAY_RELEASE_URL:-https://github.com/XTLS/Xray-core/releases/download/v26.2.6/Xray-linux-64.zip}"
 XRAY_RELEASE_FALLBACK_URL="${XRAY_RELEASE_FALLBACK_URL:-https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip}"
-SINGBOX_RELEASE_URL="${SINGBOX_RELEASE_URL:-https://github.com/hiddify/hiddify-core/releases/download/v4.0.4/hiddify-core-linux-amd64.tar.gz}"
-SINGBOX_RELEASE_FALLBACK_URL="${SINGBOX_RELEASE_FALLBACK_URL:-https://github.com/hiddify/hiddify-core/releases/latest/download/hiddify-core-linux-amd64.tar.gz}"
+SINGBOX_RELEASE_URL="${SINGBOX_RELEASE_URL:-https://github.com/SagerNet/sing-box/releases/download/v1.13.11/sing-box-1.13.11-linux-amd64.tar.gz}"
+SINGBOX_RELEASE_FALLBACK_URL="${SINGBOX_RELEASE_FALLBACK_URL:-https://github.com/SagerNet/sing-box/releases/download/v1.13.11/sing-box-1.13.11-linux-amd64.tar.gz}"
 BUNDLE_VERSION_LABEL="${BUNDLE_VERSION_LABEL:-}"
 ANNEAL_VERSION=""
 BUNDLE_NAME=""
@@ -175,7 +175,7 @@ package_runtime_bundle() {
   tar -xzf "${TMP_DIR}/singbox-runtime.tar.gz" -C "${singbox_dir}"
 
   install -m 0755 "${xray_dir}/xray" "${BUNDLE_ROOT}/runtime/xray"
-  install -m 0755 "$(find "${singbox_dir}" -type f -name 'hiddify-core' | head -n 1)" "${BUNDLE_ROOT}/runtime/hiddify-core"
+  install -m 0755 "$(find "${singbox_dir}" -type f -name 'sing-box' | head -n 1)" "${BUNDLE_ROOT}/runtime/sing-box"
 }
 
 package_deploy_bundle() {
@@ -195,7 +195,7 @@ write_release_manifest() {
     "worker": "bin/worker",
     "node_agent": "bin/node-agent",
     "xray": "runtime/xray",
-    "singbox": "runtime/hiddify-core",
+    "singbox": "runtime/sing-box",
     "web": "web",
     "migrations": "migrations",
     "deploy": "deploy",

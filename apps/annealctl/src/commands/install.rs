@@ -214,7 +214,7 @@ impl Installer {
             )?;
             self.system.install_executable(
                 &self.bundle.singbox_path(),
-                &self.layout.bin_dir().join("hiddify-core"),
+                &self.layout.bin_dir().join("sing-box"),
             )?;
             for unit in [
                 "systemd/anneal-node-agent.service",
@@ -967,7 +967,7 @@ fn fill_node_env(
             );
             values.insert(
                 "ANNEAL_AGENT_SINGBOX_BINARY".into(),
-                layout.bin_dir().join("hiddify-core").display().to_string(),
+                layout.bin_dir().join("sing-box").display().to_string(),
             );
             values.insert("ANNEAL_AGENT_RUNTIME_CONTROLLER".into(), "systemctl".into());
             values.insert(
@@ -1066,7 +1066,7 @@ mod tests {
                     node_agent: "bin/node-agent".into(),
                     annealctl: Some("bin/annealctl".into()),
                     xray: "runtime/xray".into(),
-                    singbox: "runtime/hiddify-core".into(),
+                    singbox: "runtime/sing-box".into(),
                     web: "web".into(),
                     migrations: "migrations".into(),
                     deploy: "deploy".into(),
@@ -1198,7 +1198,7 @@ mod tests {
                     .get("ANNEAL_AGENT_SINGBOX_BINARY")
                     .expect("singbox binary")
             )
-            .ends_with("/opt/test-anneal/bin/hiddify-core")
+            .ends_with("/opt/test-anneal/bin/sing-box")
         );
         assert_eq!(
             values.get("ANNEAL_AGENT_RUNTIME_CONTROLLER"),

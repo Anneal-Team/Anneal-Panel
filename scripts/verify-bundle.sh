@@ -23,7 +23,7 @@ for required_path in \
   "${BUNDLE_ROOT}/bin/worker" \
   "${BUNDLE_ROOT}/bin/node-agent" \
   "${BUNDLE_ROOT}/runtime/xray" \
-  "${BUNDLE_ROOT}/runtime/hiddify-core" \
+  "${BUNDLE_ROOT}/runtime/sing-box" \
   "${BUNDLE_ROOT}/migrations" \
   "${BUNDLE_ROOT}/web" \
   "${BUNDLE_ROOT}/deploy/systemd/anneal-api.service" \

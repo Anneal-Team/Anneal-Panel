@@ -2233,7 +2233,7 @@ fn endpoint_templates_for_mode(mode: NodeDomainMode) -> Vec<GeneratedTemplate> {
                 protocol: ProtocolKind::VlessReality,
                 transport: anneal_config_engine::TransportKind::Ws,
                 security: SecurityKind::Tls,
-                public_port: 8443,
+                public_port: 30443,
                 path: Some("/vless-ws"),
                 service_name: None,
                 flow: None,
@@ -2246,7 +2246,7 @@ fn endpoint_templates_for_mode(mode: NodeDomainMode) -> Vec<GeneratedTemplate> {
                 protocol: ProtocolKind::VlessReality,
                 transport: anneal_config_engine::TransportKind::HttpUpgrade,
                 security: SecurityKind::Tls,
-                public_port: 10443,
+                public_port: 31443,
                 path: Some("/vless-upgrade"),
                 service_name: None,
                 flow: None,
@@ -2259,7 +2259,7 @@ fn endpoint_templates_for_mode(mode: NodeDomainMode) -> Vec<GeneratedTemplate> {
                 protocol: ProtocolKind::Trojan,
                 transport: anneal_config_engine::TransportKind::Ws,
                 security: SecurityKind::Tls,
-                public_port: 13443,
+                public_port: 32443,
                 path: Some("/trojan-ws"),
                 service_name: None,
                 flow: None,
@@ -2272,7 +2272,7 @@ fn endpoint_templates_for_mode(mode: NodeDomainMode) -> Vec<GeneratedTemplate> {
                 protocol: ProtocolKind::Vmess,
                 transport: anneal_config_engine::TransportKind::Ws,
                 security: SecurityKind::Tls,
-                public_port: 18443,
+                public_port: 33443,
                 path: Some("/vmess-ws"),
                 service_name: None,
                 flow: None,
@@ -2869,6 +2869,15 @@ mod tests {
                 .iter()
                 .all(|endpoint| endpoint.public_host == "test.aurausa.me")
         );
+        let mut xray_listeners = std::collections::HashSet::new();
+        for endpoint in &xray_endpoints {
+            assert!(
+                xray_listeners.insert((endpoint.listen_host.clone(), endpoint.listen_port)),
+                "duplicate xray listener {}:{}",
+                endpoint.listen_host,
+                endpoint.listen_port
+            );
+        }
 
         let singbox_token = service
             .create_enrollment_token(
@@ -2913,6 +2922,15 @@ mod tests {
                 .iter()
                 .any(|endpoint| endpoint.protocol == ProtocolKind::Hysteria2)
         );
+        let mut singbox_listeners = std::collections::HashSet::new();
+        for endpoint in &singbox_endpoints {
+            assert!(
+                singbox_listeners.insert((endpoint.listen_host.clone(), endpoint.listen_port)),
+                "duplicate singbox listener {}:{}",
+                endpoint.listen_host,
+                endpoint.listen_port
+            );
+        }
     }
 
     #[tokio::test]

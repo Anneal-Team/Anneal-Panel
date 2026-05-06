@@ -68,7 +68,7 @@ struct AgentArgs {
     #[arg(
         long,
         env = "ANNEAL_AGENT_SINGBOX_BINARY",
-        default_value = "/opt/anneal/bin/hiddify-core"
+        default_value = "/opt/anneal/bin/sing-box"
     )]
     singbox_binary: PathBuf,
     #[arg(

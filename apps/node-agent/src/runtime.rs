@@ -209,13 +209,7 @@ async fn validate_candidate(
         }
         ProxyEngine::Singbox => {
             let mut command = Command::new(&settings.singbox_binary);
-            let built_path = decorate_path(candidate_path, "built");
-            command
-                .arg("build")
-                .arg("-c")
-                .arg(candidate_path)
-                .arg("-o")
-                .arg(&built_path);
+            command.arg("check").arg("-c").arg(candidate_path);
             command
         }
     };
@@ -530,7 +524,7 @@ mod tests {
         let settings = RuntimeSettings {
             config_root: Path::new("/var/lib/anneal").to_path_buf(),
             xray_binary: Path::new("/opt/anneal/bin/xray").to_path_buf(),
-            singbox_binary: Path::new("/opt/anneal/bin/hiddify-core").to_path_buf(),
+            singbox_binary: Path::new("/opt/anneal/bin/sing-box").to_path_buf(),
             runtime_controller: super::RuntimeController::Systemctl,
             systemctl_binary: Path::new("/usr/bin/systemctl").to_path_buf(),
             xray_service: "anneal-xray.service".into(),

@@ -1,5 +1,5 @@
 use anneal_core::{ApplicationError, ApplicationResult, ProtocolKind, ProxyEngine};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::domain::{CanonicalConfig, InboundProfile, SecurityKind, TransportKind};
 
@@ -33,12 +33,14 @@ impl RendererStrategy for XrayRenderer {
             .iter()
             .map(|profile| render_xray_inbound(config, profile))
             .collect::<ApplicationResult<Vec<_>>>()?;
-        serde_json::to_string_pretty(&json!({
+        let mut rendered = json!({
             "log": { "loglevel": "warning" },
             "inbounds": inbounds,
             "outbounds": [{ "protocol": "freedom", "tag": "direct" }],
-        }))
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+        });
+        strip_null_fields(&mut rendered);
+        serde_json::to_string_pretty(&rendered)
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 }
 
@@ -53,13 +55,15 @@ impl RendererStrategy for SingboxRenderer {
             .iter()
             .map(|profile| render_singbox_inbound(config, profile))
             .collect::<ApplicationResult<Vec<_>>>()?;
-        serde_json::to_string_pretty(&json!({
+        let mut rendered = json!({
             "log": { "level": "warn" },
             "experimental": { "v2ray_api": { "listen": "127.0.0.1:10085" } },
             "inbounds": inbounds,
             "outbounds": [{ "type": "direct", "tag": "direct" }],
-        }))
-        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+        });
+        strip_null_fields(&mut rendered);
+        serde_json::to_string_pretty(&rendered)
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
     }
 }
 
@@ -452,6 +456,23 @@ fn security_name(security: SecurityKind) -> &'static str {
     }
 }
 
+fn strip_null_fields(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.retain(|_, value| !value.is_null());
+            for value in object.values_mut() {
+                strip_null_fields(value);
+            }
+        }
+        Value::Array(items) => {
+            for value in items {
+                strip_null_fields(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anneal_core::{ProtocolKind, ProxyEngine};
@@ -571,5 +592,18 @@ mod tests {
             .expect("render");
         assert!(rendered.contains("\"certificate_path\": \"/var/lib/anneal/tls/server.crt\""));
         assert!(rendered.contains("\"key_path\": \"/var/lib/anneal/tls/server.key\""));
+    }
+
+    #[test]
+    fn renderers_omit_null_runtime_fields() {
+        let rendered = ConfigRenderer
+            .render(&fixture(ProxyEngine::Singbox, ProtocolKind::Hysteria2))
+            .expect("render");
+        assert!(!rendered.contains(": null"));
+
+        let rendered = ConfigRenderer
+            .render(&fixture(ProxyEngine::Xray, ProtocolKind::VlessReality))
+            .expect("render");
+        assert!(!rendered.contains(": null"));
     }
 }
