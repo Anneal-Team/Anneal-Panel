@@ -69,7 +69,7 @@ jobs:
             bundle_label="${version}"
             release_name="Anneal ${version}"
             release_tag="${GITHUB_REF_NAME}"
-          elif [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" == "master" ]]; then
+          elif [[ "${GITHUB_REF_TYPE}" == "branch" && ( "${GITHUB_REF_NAME}" == "master" || ( "${GITHUB_REF_NAME}" == "dev" && "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ) ) ]]; then
             should_release=true
             bundle_label="rolling-master"
             release_name="Anneal master"
