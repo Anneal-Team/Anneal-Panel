@@ -10,7 +10,10 @@ use crate::{
     render::{render_caddyfile, render_mihomo_config, rewrite_panel_base_href, write_kv_file},
     state::{InstallState, InstallStep},
     system::System,
-    ui::wizard::prepare_install_args,
+    ui::{
+        progress::{InstallProgress, ProgressEvent},
+        wizard::prepare_install_args,
+    },
 };
 
 pub async fn run(layout: InstallLayout, args: InstallArgs) -> Result<()> {
@@ -20,7 +23,9 @@ pub async fn run(layout: InstallLayout, args: InstallArgs) -> Result<()> {
     let mut config = InstallConfig::from_args(args)?;
     config.release_version = Some(bundle.manifest.version.clone());
     let state = InstallState::load_or_new(&layout.state_path, config.role, config.deployment_mode)?;
-    let mut installer = Installer::new(layout, bundle, config, state);
+    let progress =
+        InstallProgress::start(&config, &state, layout.summary_path.display().to_string());
+    let mut installer = Installer::new(layout, bundle, config, state).with_progress(progress);
     installer.install().await
 }
 
@@ -30,7 +35,9 @@ pub async fn resume(layout: InstallLayout, args: ResumeArgs) -> Result<()> {
     let mut config = InstallConfig::load(&layout.config_path)?;
     config.release_version = Some(bundle.manifest.version.clone());
     let state = InstallState::load_or_new(&layout.state_path, config.role, config.deployment_mode)?;
-    let mut installer = Installer::new(layout, bundle, config, state);
+    let progress =
+        InstallProgress::start(&config, &state, layout.summary_path.display().to_string());
+    let mut installer = Installer::new(layout, bundle, config, state).with_progress(progress);
     installer.install().await
 }
 
@@ -53,6 +60,7 @@ struct Installer {
     config: InstallConfig,
     state: InstallState,
     system: System,
+    progress: Option<InstallProgress>,
 }
 
 impl Installer {
@@ -68,13 +76,24 @@ impl Installer {
             config,
             state,
             system: System::new(),
+            progress: None,
         }
+    }
+
+    fn with_progress(mut self, progress: InstallProgress) -> Self {
+        self.system = System::new().with_log_sender(progress.sender());
+        self.progress = Some(progress);
+        self
     }
 
     async fn install(&mut self) -> Result<()> {
         self.system.require_root()?;
         self.bundle.validate()?;
         self.persist()?;
+        self.send_progress(ProgressEvent::Started {
+            domain: self.config.control_plane.domain.clone(),
+            panel_url: self.config.control_plane.public_base_url.clone(),
+        });
         self.begin_step(InstallStep::Prepare, "validated bundle")?;
         self.complete_step(InstallStep::Prepare, "validated bundle")?;
 
@@ -111,6 +130,13 @@ impl Installer {
         self.cleanup_transient_secrets().await?;
         self.state.finish();
         self.persist()?;
+        self.send_progress(ProgressEvent::Finished {
+            panel_url: self.config.control_plane.public_base_url.clone(),
+            summary_path: self.layout.summary_path.display().to_string(),
+        });
+        if let Some(progress) = self.progress.take() {
+            progress.finish();
+        }
         Ok(())
     }
 
@@ -426,18 +452,36 @@ impl Installer {
     }
 
     fn begin_step(&mut self, step: InstallStep, detail: &str) -> Result<()> {
+        self.send_progress(ProgressEvent::StepStarted {
+            step,
+            detail: detail.to_owned(),
+        });
         self.state.mark_running(step, detail);
         self.persist()
     }
 
     fn complete_step(&mut self, step: InstallStep, detail: &str) -> Result<()> {
+        self.send_progress(ProgressEvent::StepCompleted {
+            step,
+            detail: detail.to_owned(),
+        });
         self.state.mark_completed(step, detail);
         self.persist()
     }
 
     fn fail_step(&mut self, step: InstallStep, detail: &str) -> Result<()> {
+        self.send_progress(ProgressEvent::StepFailed {
+            step,
+            detail: detail.to_owned(),
+        });
         self.state.mark_failed(step, detail);
         self.persist()
+    }
+
+    fn send_progress(&self, event: ProgressEvent) {
+        if let Some(progress) = self.progress.as_ref() {
+            progress.send(event);
+        }
     }
 
     fn persist(&mut self) -> Result<()> {

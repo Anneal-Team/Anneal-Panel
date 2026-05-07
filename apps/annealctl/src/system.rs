@@ -1,15 +1,21 @@
 use std::{
     ffi::OsStr,
     fs,
+    io::{BufRead, BufReader},
     path::Path,
     process::{Command, Output, Stdio},
+    sync::mpsc::Sender,
+    thread,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
 
-use crate::config::{InstallConfig, InstallLayout};
+use crate::{
+    config::{InstallConfig, InstallLayout},
+    ui::progress::ProgressEvent,
+};
 
 #[derive(Debug, Clone)]
 pub struct DatabaseParts {
@@ -21,7 +27,9 @@ pub struct DatabaseParts {
 }
 
 #[derive(Debug, Clone)]
-pub struct System;
+pub struct System {
+    log_sender: Option<Sender<ProgressEvent>>,
+}
 
 #[derive(Debug, Clone)]
 struct OsRelease {
@@ -32,7 +40,12 @@ struct OsRelease {
 
 impl System {
     pub fn new() -> Self {
-        Self
+        Self { log_sender: None }
+    }
+
+    pub fn with_log_sender(mut self, log_sender: Sender<ProgressEvent>) -> Self {
+        self.log_sender = Some(log_sender);
+        self
     }
 
     pub fn require_root(&self) -> Result<()> {
@@ -524,6 +537,9 @@ impl System {
     {
         let mut command = Command::new(program);
         command.args(args);
+        if let Some(log_sender) = self.log_sender.as_ref() {
+            return self.run_streaming(program, command, log_sender.clone());
+        }
         self.check_output(
             command
                 .output()
@@ -574,6 +590,65 @@ impl System {
             bail!(stdout);
         }
         bail!("command exited with {}", output.status)
+    }
+
+    fn run_streaming(
+        &self,
+        program: &str,
+        mut command: Command,
+        log_sender: Sender<ProgressEvent>,
+    ) -> Result<()> {
+        let _ = log_sender.send(ProgressEvent::Log(format!(
+            "$ {}",
+            command_display(program, &command)
+        )));
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("failed to execute {program}"))?;
+        let stdout_handle = child.stdout.take().map(|stdout| {
+            let log_sender = log_sender.clone();
+            thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    let _ = log_sender.send(ProgressEvent::Log(line));
+                }
+            })
+        });
+        let stderr_handle = child.stderr.take().map(|stderr| {
+            let log_sender = log_sender.clone();
+            thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    let _ = log_sender.send(ProgressEvent::Log(line));
+                }
+            })
+        });
+        let status = child
+            .wait()
+            .with_context(|| format!("failed to wait for {program}"))?;
+        if let Some(handle) = stdout_handle {
+            let _ = handle.join();
+        }
+        if let Some(handle) = stderr_handle {
+            let _ = handle.join();
+        }
+        if status.success() {
+            return Ok(());
+        }
+        bail!("{program} exited with {status}");
+    }
+}
+
+fn command_display(program: &str, command: &Command) -> String {
+    let args = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if args.is_empty() {
+        program.to_owned()
+    } else {
+        format!("{program} {args}")
     }
 }
 

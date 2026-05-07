@@ -1,17 +1,15 @@
 use std::{io::IsTerminal, time::Duration};
 
+use crate::{
+    cli::InstallArgs,
+    config::{DeploymentMode, InstallConfig, InstallRole},
+};
 use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     prelude::{Line, Modifier, Span, Style},
     widgets::{List, ListItem, Paragraph, Wrap},
-};
-use reqwest::Url;
-
-use crate::{
-    cli::InstallArgs,
-    config::{DeploymentMode, InstallConfig, InstallRole},
 };
 
 use super::tui::{
@@ -36,7 +34,7 @@ fn should_open_wizard(args: &InstallArgs) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Prompt {
-    PanelUrl,
+    Domain,
     SuperadminEmail,
     SuperadminDisplayName,
     ResellerTenantName,
@@ -294,12 +292,11 @@ impl RatatuiWizard {
         self.last_prompt = Some(prompt);
         self.error = None;
         match prompt {
-            Prompt::PanelUrl => self.set_input(
+            Prompt::Domain => self.set_input(
                 self.args
-                    .public_base_url
+                    .domain
                     .clone()
-                    .or_else(|| self.args.domain.clone())
-                    .unwrap_or_else(|| "https://panel.example.com/panel".into()),
+                    .unwrap_or_else(|| "panel.example.com".into()),
             ),
             Prompt::SuperadminEmail => self.set_input(
                 self.args
@@ -323,26 +320,18 @@ impl RatatuiWizard {
     fn commit_text(&mut self) -> Result<()> {
         let value = self.input.trim().to_owned();
         match self.current_prompt() {
-            Prompt::PanelUrl => {
+            Prompt::Domain => {
                 if value.is_empty() {
-                    bail!("domain or panel URL is required");
+                    bail!("domain is required");
                 }
-                if value.starts_with("http://") {
-                    bail!("panel URL must use https");
+                if value.starts_with("http://") || value.starts_with("https://") {
+                    bail!("enter only a domain, not a URL");
                 }
-                if value.starts_with("https://") {
-                    let url = Url::parse(&value)?;
-                    if url.host_str().is_none() {
-                        bail!("panel URL host is required");
-                    }
-                    self.args.public_base_url = Some(value);
-                    self.args.domain = None;
-                } else if value.contains('/') {
-                    bail!("domain must not contain path segments; use a full https URL instead");
-                } else {
-                    self.args.domain = Some(value);
-                    self.args.public_base_url = None;
+                if value.contains('/') {
+                    bail!("domain must not contain path segments");
                 }
+                self.args.domain = Some(value);
+                self.args.public_base_url = None;
             }
             Prompt::SuperadminEmail => {
                 if value.is_empty() || !value.contains('@') {
@@ -390,7 +379,7 @@ impl RatatuiWizard {
                 .as_deref()
                 .is_none_or(str::is_empty)
         {
-            prompts.push(Prompt::PanelUrl);
+            prompts.push(Prompt::Domain);
         }
         if self
             .args
@@ -461,7 +450,8 @@ impl RatatuiWizard {
                     .map(|item| item.tenant_name.as_str())
                     .unwrap_or("not configured");
                 format!(
-                    "Mode: native control-plane\nPublic URL: {}\nPanel path: {}\nAdmin email: {}\nAdmin password: {}\nTenant: {}\nDatabase: {}",
+                    "Mode: native control-plane\nDomain: {}\nPanel URL: {}\nPanel path: {}\nAdmin email: {}\nAdmin password: {}\nTenant: {}\nDatabase: {}",
+                    control_plane.domain,
                     control_plane.public_base_url,
                     control_plane.panel_path,
                     control_plane.superadmin.email,
@@ -478,7 +468,7 @@ impl RatatuiWizard {
 impl Prompt {
     fn title(self) -> &'static str {
         match self {
-            Self::PanelUrl => "Panel domain or URL",
+            Self::Domain => "Panel domain",
             Self::SuperadminEmail => "Superadmin email",
             Self::SuperadminDisplayName => "Superadmin display name",
             Self::ResellerTenantName => "Default tenant",
@@ -488,7 +478,7 @@ impl Prompt {
 
     fn subtitle(self) -> &'static str {
         match self {
-            Self::PanelUrl => "Enter a domain or full https URL for the panel.",
+            Self::Domain => "Enter the domain that points to this VPS.",
             Self::SuperadminEmail => "This email becomes the first admin login.",
             Self::SuperadminDisplayName => "This name is shown in the panel and audit log.",
             Self::ResellerTenantName => "The installer creates this tenant automatically.",
@@ -498,7 +488,7 @@ impl Prompt {
 
     fn hint(self) -> &'static str {
         match self {
-            Self::PanelUrl => "Example: panel.example.com or https://panel.example.com/private",
+            Self::Domain => "Example: panel.example.com. Do not enter https:// or a path.",
             Self::SuperadminEmail => "Use an email you will remember for the first login.",
             Self::SuperadminDisplayName => "Default value is fine for most installs.",
             Self::ResellerTenantName => "You can rename tenants later from the panel.",
@@ -508,7 +498,7 @@ impl Prompt {
 
     fn sidebar_label(self) -> &'static str {
         match self {
-            Self::PanelUrl => "Panel URL",
+            Self::Domain => "Domain",
             Self::SuperadminEmail => "Admin email",
             Self::SuperadminDisplayName => "Admin name",
             Self::ResellerTenantName => "Tenant",
@@ -565,7 +555,7 @@ mod tests {
         assert_eq!(
             wizard.prompts(),
             vec![
-                Prompt::PanelUrl,
+                Prompt::Domain,
                 Prompt::SuperadminEmail,
                 Prompt::ResellerTenantName,
                 Prompt::Confirm,
@@ -582,5 +572,26 @@ mod tests {
 
         assert_eq!(prepared.domain, args.domain);
         assert_eq!(prepared.public_base_url, args.public_base_url);
+    }
+
+    #[test]
+    fn domain_prompt_rejects_urls() {
+        let mut wizard = RatatuiWizard::new(sample_args());
+        wizard.set_input("https://panel.example.com/panel".into());
+
+        let error = wizard.commit_text().expect_err("url must be rejected");
+
+        assert!(error.to_string().contains("not a URL"));
+    }
+
+    #[test]
+    fn domain_prompt_accepts_bare_domain() {
+        let mut wizard = RatatuiWizard::new(sample_args());
+        wizard.set_input("panel.example.com".into());
+
+        wizard.commit_text().expect("domain accepted");
+
+        assert_eq!(wizard.args.domain.as_deref(), Some("panel.example.com"));
+        assert!(wizard.args.public_base_url.is_none());
     }
 }
