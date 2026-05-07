@@ -144,6 +144,12 @@ impl Installer {
         self.system.ensure_user(&self.config, &self.layout)?;
         self.system
             .ensure_postgres(&self.config.control_plane.database_url)?;
+        self.system.stop_if_running([
+            "anneal-api.service",
+            "anneal-worker.service",
+            "anneal-caddy.service",
+            "anneal-mihomo.service",
+        ])?;
         self.system
             .install_executable(&self.bundle.api_path(), &self.layout.bin_dir().join("api"))?;
         self.system.install_executable(

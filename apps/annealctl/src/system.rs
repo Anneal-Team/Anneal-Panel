@@ -245,8 +245,47 @@ impl System {
     }
 
     pub fn install_executable(&self, source: &Path, destination: &Path) -> Result<()> {
-        self.copy_file(source, destination)?;
-        set_executable(destination)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        let temporary_destination = temporary_path_for(destination);
+        fs::copy(source, &temporary_destination).with_context(|| {
+            format!(
+                "failed to copy {} to {}",
+                source.display(),
+                temporary_destination.display()
+            )
+        })?;
+        set_executable(&temporary_destination)?;
+        if let Err(error) = fs::rename(&temporary_destination, destination) {
+            #[cfg(windows)]
+            {
+                if destination.exists() {
+                    fs::remove_file(destination).with_context(|| {
+                        let _ = fs::remove_file(&temporary_destination);
+                        format!("failed to remove {}", destination.display())
+                    })?;
+                    fs::rename(&temporary_destination, destination).with_context(|| {
+                        let _ = fs::remove_file(&temporary_destination);
+                        format!(
+                            "failed to replace {} with {}",
+                            destination.display(),
+                            temporary_destination.display()
+                        )
+                    })?;
+                    return Ok(());
+                }
+            }
+            let _ = fs::remove_file(&temporary_destination);
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to replace {} with {}",
+                    destination.display(),
+                    temporary_destination.display()
+                )
+            });
+        }
         Ok(())
     }
 
@@ -338,6 +377,13 @@ impl System {
     pub fn restart<'a>(&self, services: impl IntoIterator<Item = &'a str>) -> Result<()> {
         for service in services {
             self.run("systemctl", ["restart", service])?;
+        }
+        Ok(())
+    }
+
+    pub fn stop_if_running<'a>(&self, services: impl IntoIterator<Item = &'a str>) -> Result<()> {
+        for service in services {
+            let _ = self.run("systemctl", ["stop", service]);
         }
         Ok(())
     }
@@ -652,6 +698,14 @@ fn command_display(program: &str, command: &Command) -> String {
     }
 }
 
+fn temporary_path_for(destination: &Path) -> std::path::PathBuf {
+    let file_name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("anneal-bin");
+    destination.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()))
+}
+
 fn quote_pg_ident(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
@@ -672,4 +726,48 @@ fn set_executable(_path: &Path) -> Result<()> {
             .with_context(|| format!("failed to chmod {}", _path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        io::Write,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+
+    fn test_dir() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("anneal-system-test-{nonce}"));
+        fs::create_dir_all(&dir).expect("test dir");
+        dir
+    }
+
+    #[test]
+    fn install_executable_replaces_existing_file() {
+        let dir = test_dir();
+        let source = dir.join("source-bin");
+        let destination = dir.join("target-bin");
+        fs::File::create(&source)
+            .expect("source")
+            .write_all(b"new")
+            .expect("write source");
+        fs::File::create(&destination)
+            .expect("destination")
+            .write_all(b"old")
+            .expect("write destination");
+
+        System::new()
+            .install_executable(&source, &destination)
+            .expect("install executable");
+
+        assert_eq!(fs::read(&destination).expect("read destination"), b"new");
+        let _ = fs::remove_dir_all(dir);
+    }
 }
