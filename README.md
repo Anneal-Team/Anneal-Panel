@@ -26,81 +26,51 @@
 
 ---
 
-## What is Anneal
+## What is Anneal?
 
-Anneal is a native control panel for operating subscription-based proxy access: user management, quotas, audit logs, subscription delivery, and Mihomo-compatible client configuration from one Rust control plane.
-
-It is built for multi-tenant environments where admins, resellers, and users need isolated access to their own data without carrying extra runtime orchestration.
+A self-hosted control panel for proxy subscription management. You get user and reseller management, quotas, audit logs, subscription delivery, and Mihomo config generation — all in one Rust binary, no extra orchestration needed.
 
 ---
 
-## Features
+## ✨ Features
 
-```text
-Multi-tenancy        - superadmin / admin / reseller / user roles
-Web interface        - users, subscriptions, usage, notifications
-Rust API             - migrations, audit log, TOTP, quota state, auth sessions
-Native installer     - PostgreSQL, Caddy, API, worker, web panel, Mihomo
-Mihomo runtime       - bundled binary, systemd service, generated config
-Subscriptions        - raw links, base64 bundles, Mihomo YAML
-```
+| | |
+|---|---|
+| 👥 **Roles** | Superadmin / admin / reseller / user |
+| 🖥️ **Web panel** | Users, subscriptions, usage, notifications |
+| 📦 **Subscriptions** | Raw links, base64 bundles, Mihomo YAML |
+| ⚡ **Mihomo** | Bundled binary, systemd service, auto-generated config |
+| 🔌 **API** | Migrations, audit log, TOTP, quota, auth sessions |
+| 🚀 **Installer** | PostgreSQL, Caddy, API, worker, web panel, Mihomo — one command |
 
 ---
 
-## Repository Layout
+## 📁 Repository Layout
 
 | Path | Purpose |
 |------|---------|
-| `apps/api` | HTTP API, auth, OpenAPI, transport layer |
-| `apps/annealctl` | Native installer, updater, service management |
+| `apps/api` | HTTP API, auth, OpenAPI |
+| `apps/annealctl` | Installer, updater, service management |
 | `apps/worker` | Background notification worker |
 | `crates/config-engine` | Mihomo and share-link rendering |
 | `crates/subscriptions` | Subscriptions, delivery links, devices |
 | `crates/users` | Users, resellers, tenants |
 | `crates/usage` | Usage samples, rollups, quota state |
-| `web` | Frontend - React / Vite |
-| `deploy/systemd` | Native systemd units |
-| `migrations` | PostgreSQL SQL schema |
+| `web` | Frontend — React / Vite |
+| `deploy/systemd` | Systemd units |
+| `migrations` | PostgreSQL schema |
 
 ---
 
-## Installation
+## 🛠️ Installation
 
-Anneal ships with a bootstrap wrapper that downloads one ready-made release bundle from GitHub Releases, verifies bundled SHA256 checksums, and runs `annealctl install --bundle-root ...`.
-
-- Installer file: [`scripts/install.sh`](./scripts/install.sh)
-- Direct link: [raw install.sh](https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh)
-
-Quick start:
+### ⚡ Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
 ```
 
-This command opens the installer prompts when required values are not passed as CLI flags.
-
-Release model:
-- the raw `master` installer prefers the rolling `rolling-master` release and falls back to the latest GitHub Release only if that rolling channel is missing
-- pushes to `master` refresh the `rolling-master` bundle, while stable bundles are published from semver tags such as `0.1.0` and `v0.1.0`
-- set `ANNEAL_RELEASE_TAG=0.1.0` to pin a specific release manually
-
-Supported distributions:
-- Debian 10, 11, 12, 13
-- Ubuntu 22.04 LTS, 24.04 LTS, 25.04, 25.10
-
-Package sources used by the installer:
-- PostgreSQL 17 comes from the official PGDG repository; Debian 10 uses the official PGDG archive
-- Caddy comes from the official Caddy APT repository
-- Mihomo is shipped inside the Anneal release bundle and installed as `anneal-mihomo.service`
-
-Pin a specific release:
-
-```bash
-curl -fsSLo /tmp/anneal-install.sh https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh
-sudo ANNEAL_RELEASE_TAG=0.1.0 bash /tmp/anneal-install.sh
-```
-
-Non-interactive control-plane install:
+Prompts for required values interactively. To skip prompts:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash -s -- \
@@ -108,37 +78,43 @@ curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scr
   --non-interactive
 ```
 
-The installer:
-- uses `annealctl` as the single source of truth for `install`, `resume`, `status`, `doctor`, `update`, `restart`, and `uninstall`
-- supports interactive prompts from the one-line bootstrap command and non-interactive CLI flags for automation
-- installs the native control plane only: API, worker, web panel, PostgreSQL, Caddy, and Mihomo
-- downloads exactly one release archive such as `anneal-rolling-master-linux-amd64.tar.gz` or `anneal-0.1.0-linux-amd64.tar.gz`
-- unpacks the bundle and launches the bundled `bin/annealctl`
-- generates panel path, database URL, admin credentials, reseller defaults, starter subscription, and secrets
-- writes typed install data to `/etc/anneal/install.toml`, `/var/lib/anneal/install-state.json`, `/etc/anneal/anneal.env`, and `/etc/anneal/admin-summary.env`
-- starts `postgresql`, `anneal-api.service`, `anneal-worker.service`, `anneal-caddy.service`, and `anneal-mihomo.service`
+### 📌 Pin a specific release
 
-After installation:
-- use `annealctl status`, `annealctl doctor`, `annealctl restart`, `annealctl update --bundle-root ...`, and `annealctl uninstall`
-- after a VPS/VDS reboot, Anneal services and Mihomo come back automatically through systemd
+```bash
+curl -fsSLo /tmp/anneal-install.sh https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh
+sudo ANNEAL_RELEASE_TAG=0.1.0 bash /tmp/anneal-install.sh
+```
+
+### 📦 What gets installed
+
+- **Services:** `anneal-api`, `anneal-worker`, `anneal-caddy`, `anneal-mihomo`, `postgresql` — all as systemd units, restart on boot automatically
+- **Config files:** `/etc/anneal/install.toml`, `anneal.env`, `admin-summary.env`, `/var/lib/anneal/install-state.json`
+- **Package sources:** PostgreSQL 17 from PGDG, Caddy from the official APT repo, Mihomo bundled in the release archive
+
+### 🐧 Supported distros
+
+Debian 10–13 · Ubuntu 22.04, 24.04, 25.04, 25.10
+
+### 🔧 Post-install
+
+```bash
+annealctl status
+annealctl doctor
+annealctl restart
+annealctl update --bundle-root ...
+annealctl uninstall
+```
+
+### 🔖 Release channels
+
+- `master` → rolling `rolling-master` release (default)
+- Semver tags like `0.1.0` → stable releases
+- Set `ANNEAL_RELEASE_TAG=0.1.0` to pin manually
 
 ---
 
-## Key Scenarios
+## 🤝 Contributing
 
-- Manage users, resellers, subscriptions, limits, and expiration dates
-- Deliver raw links, base64 link bundles, and Mihomo YAML configs
-- Track usage rollups and quota state
-- Audit security-sensitive actions
-- Run the control plane and Mihomo as native systemd services
+Bug reports, feature ideas, and PRs are welcome. For anything beyond a small fix, open an issue first so we can align on direction before you write the code.
 
----
-
-## Contributing
-
-Contributions are welcome. Bug reports, feature ideas, docs fixes, and pull requests all help move the project forward.
-
-If you are going to contribute code, open an issue first so we can discuss the direction. For small fixes and improvements, feel free to send a PR directly.
-
-> [!NOTE]
-> The project is in active development. Some areas of the codebase are still being shaped, so keep changes focused and verified.
+> **Note:** The project is in active development — keep PRs focused and tested.
