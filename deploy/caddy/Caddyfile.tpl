@@ -23,6 +23,12 @@
         reverse_proxy 127.0.0.1:8080
     }
 
+    handle {{PANEL_BASE_PATH}}/assets/* {
+        uri strip_prefix {{PANEL_BASE_PATH}}
+        root * /opt/anneal/web
+        file_server
+    }
+
     handle_path {{PANEL_BASE_PATH}}/* {
         root * /opt/anneal/web
         try_files {path} /index.html

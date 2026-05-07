@@ -73,7 +73,11 @@ impl InstallState {
         role: InstallRole,
         deployment_mode: DeploymentMode,
     ) -> Result<Self> {
-        Ok(Self::load(path)?.unwrap_or_else(|| Self {
+        Ok(Self::load(path)?.unwrap_or_else(|| Self::new(role, deployment_mode)))
+    }
+
+    pub fn new(role: InstallRole, deployment_mode: DeploymentMode) -> Self {
+        Self {
             role,
             deployment_mode,
             release_version: None,
@@ -82,7 +86,7 @@ impl InstallState {
             completed_at: None,
             steps: BTreeMap::new(),
             bootstrap: BootstrapState::default(),
-        }))
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {

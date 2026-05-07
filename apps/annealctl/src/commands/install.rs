@@ -22,7 +22,7 @@ pub async fn run(layout: InstallLayout, args: InstallArgs) -> Result<()> {
     let bundle = ReleaseBundle::load(&bundle_root)?;
     let mut config = InstallConfig::from_args(args)?;
     config.release_version = Some(bundle.manifest.version.clone());
-    let state = InstallState::load_or_new(&layout.state_path, config.role, config.deployment_mode)?;
+    let state = InstallState::new(config.role, config.deployment_mode);
     let progress =
         InstallProgress::start(&config, &state, layout.summary_path.display().to_string());
     let mut installer = Installer::new(layout, bundle, config, state).with_progress(progress);
