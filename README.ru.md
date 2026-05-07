@@ -1,8 +1,24 @@
 # Anneal
 
-Anneal - это Rust control-plane для пользователей, подписок, лимитов трафика, аудита и выдачи Mihomo-совместимых клиентских конфигов.
+Anneal - native Rust control-plane для пользователей, подписок, лимитов трафика, аудита и выдачи Mihomo-совместимых клиентских конфигов.
 
-Текущая сборка намеренно оставлена только в native-режиме. Установщик ставит API, worker, web-панель, Caddy, PostgreSQL и bundled Mihomo runtime. Legacy-оркестрация серверных узлов, контейнерный deploy и старые runtime-ядра удалены.
+Текущая сборка ставит API, worker, web-панель, Caddy, PostgreSQL и bundled Mihomo runtime. Docker deployment, серверная node-оркестрация и старые runtime-ядра удалены.
+
+## Установка
+
+Установить последний packaged build из GitHub release `rolling-master`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
+```
+
+Скрипт скачивает `anneal-rolling-master-linux-amd64.tar.gz`, проверяет `SHA256SUMS` и запускает bundled `annealctl install`.
+
+Установка из локального bundle:
+
+```bash
+sudo ./install.sh --bundle-root /path/to/anneal-bundle
+```
 
 ## Структура
 
@@ -13,24 +29,18 @@ Anneal - это Rust control-plane для пользователей, подпи
 | `apps/worker` | Фоновый worker уведомлений |
 | `crates/config-engine` | Рендер Mihomo/share-link конфигов |
 | `crates/subscriptions` | Подписки, delivery links, устройства |
-| `crates/users` | Пользователи, реселлеры, tenant-ы |
+| `crates/users` | Пользователи, реселлеры, tenants |
 | `crates/usage` | Usage samples, rollups, quota state |
 | `web` | React/Vite панель |
 | `deploy/systemd` | Native systemd units |
 | `migrations` | PostgreSQL схема |
 
-## Установка
+## Bundle
 
 Собрать release bundle:
 
 ```bash
 scripts/package-release.sh
-```
-
-Установить bundle на сервере:
-
-```bash
-sudo ./install.sh --bundle-root /path/to/anneal-bundle
 ```
 
 Установщик пишет `/etc/anneal/install.toml`, `/etc/anneal/anneal.env`, `/etc/anneal/admin-summary.env`, `/var/lib/anneal/install-state.json` и запускает:
@@ -53,4 +63,4 @@ annealctl uninstall
 
 ## Runtime
 
-Подписки отдаются как raw links, base64 link list или Mihomo YAML в зависимости от режима запроса и client headers. Установщик создает минимальный native-конфиг Mihomo, а данные delivery endpoint-ов берутся из настроек API.
+Подписки отдаются как raw links, base64 link list или Mihomo YAML в зависимости от режима запроса и client headers. Установщик создаёт минимальный native-конфиг Mihomo, а данные delivery endpoint берутся из настроек API.

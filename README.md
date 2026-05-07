@@ -1,8 +1,24 @@
 # Anneal
 
-Anneal is a Rust control plane for user management, subscription delivery, quota tracking, audit logs, and Mihomo-compatible client configuration.
+Anneal is a native Rust control plane for users, subscriptions, quota tracking, audit logs, and Mihomo-compatible client configuration.
 
-The current build is intentionally native-only. It installs the API, worker, web panel, Caddy, PostgreSQL, and the bundled Mihomo runtime. Legacy server-node orchestration, container deployment, and old runtime cores have been removed.
+The current build installs the API, worker, web panel, Caddy, PostgreSQL, and the bundled Mihomo runtime. Docker deployment, server-node orchestration, and old runtime cores have been removed.
+
+## Install
+
+Install the latest packaged build from the `rolling-master` GitHub release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Anneal-Team/Anneal-Panel/master/scripts/install.sh | sudo bash
+```
+
+The script downloads `anneal-rolling-master-linux-amd64.tar.gz`, verifies `SHA256SUMS`, and runs the bundled `annealctl install`.
+
+To install from a local bundle instead:
+
+```bash
+sudo ./install.sh --bundle-root /path/to/anneal-bundle
+```
 
 ## Repository Layout
 
@@ -19,18 +35,12 @@ The current build is intentionally native-only. It installs the API, worker, web
 | `deploy/systemd` | Native systemd units |
 | `migrations` | PostgreSQL schema |
 
-## Install
+## Bundle
 
 Build a release bundle with:
 
 ```bash
 scripts/package-release.sh
-```
-
-Install from a bundle on the target host:
-
-```bash
-sudo ./install.sh --bundle-root /path/to/anneal-bundle
 ```
 
 The installer writes `/etc/anneal/install.toml`, `/etc/anneal/anneal.env`, `/etc/anneal/admin-summary.env`, and `/var/lib/anneal/install-state.json`, then starts:
@@ -53,4 +63,4 @@ annealctl uninstall
 
 ## Runtime
 
-Subscriptions are served as raw links, base64 link lists, or Mihomo YAML depending on request mode and client headers. The installer provisions Mihomo with a minimal native config and exposes delivery endpoint metadata through the API settings.
+Subscriptions are served as raw links, base64 link lists, or Mihomo YAML depending on request mode and client headers. The installer provisions Mihomo with a minimal native config and exposes delivery endpoint metadata through API settings.
