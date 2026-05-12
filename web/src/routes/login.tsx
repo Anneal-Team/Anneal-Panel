@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,7 +24,7 @@ export function LoginPage() {
 
   useEffect(() => {
     if (api.readSession().accessToken) {
-      void navigate({ to: "/" });
+      void navigate("/");
     }
   }, [navigate]);
 
@@ -34,7 +34,7 @@ export function LoginPage() {
       setError(null);
       if (result.status === "authenticated") {
         api.storeAuthenticatedSession(result.tokens);
-        await navigate({ to: "/" });
+        void navigate("/");
         return;
       }
       api.storePreAuthToken(result.pre_auth_token);
@@ -57,7 +57,7 @@ export function LoginPage() {
     onSuccess: async (tokens) => {
       setError(null);
       api.storeAuthenticatedSession(tokens);
-      await navigate({ to: "/" });
+      void navigate("/");
     },
     onError: (mutationError) => {
       setError(mutationError.message);

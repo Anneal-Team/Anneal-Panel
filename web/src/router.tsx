@@ -1,12 +1,4 @@
-import {
-  Link,
-  Outlet,
-  createRootRoute,
-  createRoute,
-  createRouter,
-  useNavigate,
-  useRouterState,
-} from "@tanstack/react-router";
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
 import {
   Bell,
   LayoutDashboard,
@@ -49,9 +41,23 @@ const navigationGroups = [
   },
 ];
 
+function normalizeBasePath() {
+  const basePath = panelBasePath();
+  if (!basePath || basePath === "/") {
+    return undefined;
+  }
+  return basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
+}
+
+function routeLinkClassName(isActive: boolean) {
+  const baseClassName =
+    "flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition hover:bg-[#1f2d1e] hover:text-[#a4d872]";
+  return isActive ? `${baseClassName} bg-[#21321d] text-[#a4d872]` : baseClassName;
+}
+
 function Shell() {
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const { pathname } = useLocation();
   const hasAccessSession = Boolean(api.readSession().accessToken);
   const isLoginPage = pathname === "/login";
   const isPublicImportPage = pathname.startsWith("/import/");
@@ -59,7 +65,11 @@ function Shell() {
 
   async function handleLogout() {
     await api.logout();
-    await navigate({ to: "/login" });
+    void navigate("/login");
+  }
+
+  if (!hasAccessSession && !isLoginPage && !isPublicImportPage) {
+    return <Navigate to="/login" replace />;
   }
 
   const sidebarAssetUrl = panelAssetUrl("anneal-sidebar.svg");
@@ -81,15 +91,15 @@ function Shell() {
                   </div>
                   <div className="space-y-1">
                     {group.items.map(({ to, labelKey, icon: Icon }) => (
-                      <Link
+                      <NavLink
                         key={to}
                         to={to}
-                        className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition hover:bg-[#1f2d1e] hover:text-[#a4d872]"
-                        activeProps={{ className: "bg-[#21321d] text-[#a4d872]" }}
+                        end={to === "/"}
+                        className={({ isActive }) => routeLinkClassName(isActive)}
                       >
                         <Icon className="h-5 w-5" />
                         {t(labelKey)}
-                      </Link>
+                      </NavLink>
                     ))}
                   </div>
                 </div>
@@ -109,89 +119,39 @@ function Shell() {
                   {t("nav.logout")}
                 </button>
               ) : (
-                <Link
+                <NavLink
                   to="/login"
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#21321d] px-4 py-3 text-sm font-semibold text-[#a4d872] transition hover:opacity-90"
                 >
                   <LogIn className="h-5 w-5" />
                   {t("nav.login")}
-                </Link>
+                </NavLink>
               )}
             </div>
           </aside>
         ) : null}
 
         <main className="flex-1 rounded-[32px] border border-white/40 bg-[#f4efe6] p-5 shadow-panel md:p-10">
-          <Outlet />
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/import/:token" element={<PublicSubscriptionPage />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/devices" element={<DevicesPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="*" element={<DashboardPage />} />
+          </Routes>
         </main>
       </div>
     </div>
   );
 }
 
-const rootRoute = createRootRoute({
-  component: Shell,
-});
-
-const loginRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/login",
-  component: LoginPage,
-});
-
-const dashboardRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/",
-  component: DashboardPage,
-});
-
-const publicSubscriptionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/import/$token",
-  component: PublicSubscriptionPage,
-});
-
-const usersRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/users",
-  component: UsersPage,
-});
-
-const devicesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/devices",
-  component: DevicesPage,
-});
-
-const subscriptionsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/subscriptions",
-  component: SubscriptionsPage,
-});
-
-const notificationsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/notifications",
-  component: NotificationsPage,
-});
-
-const routeTree = rootRoute.addChildren([
-  loginRoute,
-  dashboardRoute,
-  publicSubscriptionRoute,
-  usersRoute,
-  devicesRoute,
-  subscriptionsRoute,
-  notificationsRoute,
-]);
-
-export const router = createRouter({
-  routeTree,
-  basepath: panelBasePath() || "/",
-});
-
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
+export function AppRouter() {
+  return (
+    <BrowserRouter basename={normalizeBasePath()}>
+      <Shell />
+    </BrowserRouter>
+  );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { useParams } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ function statusTone(suspended: boolean, expired: boolean, quotaState: string) {
 
 export function PublicSubscriptionPage() {
   const { t } = useTranslation();
-  const { token } = useParams({ from: "/import/$token" });
+  const { token = "" } = useParams();
   const now = useNow();
   const [copied, setCopied] = useState(false);
   const sidebarAssetUrl = panelAssetUrl("anneal-sidebar.svg");
