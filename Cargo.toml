@@ -36,7 +36,7 @@ anneal-subscriptions = { path = "crates/subscriptions" }
 anneal-usage = { path = "crates/usage" }
 anneal-users = { path = "crates/users" }
 anyhow = "1.0.102"
-apalis = "1.0.0-rc.6"
+apalis = "1.0.0-rc.9"
 apalis-postgres = { version = "1.0.0-rc.8", features = ["migrate", "tokio-comp", "chrono"] }
 argon2 = "0.5.3"
 async-trait = "0.1.89"
