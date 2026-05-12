@@ -1,5 +1,5 @@
 use anneal_core::ApplicationResult;
-use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -23,12 +23,10 @@ pub fn init_telemetry(service_name: &str, settings: &Settings) -> ApplicationRes
                     .build(),
             )
             .build();
-        let tracer = provider.tracer(service_name.to_string());
         global::set_tracer_provider(provider);
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
-            .with(tracing_opentelemetry::layer().with_tracer(tracer))
             .init();
     } else {
         tracing_subscriber::registry()

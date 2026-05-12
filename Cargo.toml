@@ -62,10 +62,9 @@ tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth"] }
 toml = "1.1.2"
 tracing = "0.1.44"
-tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 opentelemetry = "0.32.0"
-opentelemetry-otlp = { version = "0.31.1", features = ["grpc-tonic"] }
+opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic"] }
 opentelemetry_sdk = "0.32.0"
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
