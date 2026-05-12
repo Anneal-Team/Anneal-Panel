@@ -1,6 +1,6 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import type { LocaleDefinition } from "@/lib/i18n-types";
+import type { LocaleDefinition } from "./i18n-types";
 
 const localeModules = import.meta.glob<{ default: LocaleDefinition }>(
   "../locales/*.ts",

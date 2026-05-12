@@ -1,4 +1,4 @@
-import type { LocaleDefinition } from "@/lib/i18n-types";
+import type { LocaleDefinition } from "../lib/i18n-types";
 
 const en: LocaleDefinition = {
   label: "English",

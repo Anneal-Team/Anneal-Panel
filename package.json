@@ -1,0 +1,10 @@
+{
+  "name": "anneal",
+  "private": true,
+  "scripts": {
+    "lint": "npm --prefix web run lint",
+    "build": "npm --prefix web run build",
+    "dev": "npm --prefix web run dev",
+    "preview": "npm --prefix web run preview"
+  }
+}
