@@ -15,7 +15,7 @@
     "clsx": "^2.1.1",
     "i18next": "^26.0.8",
     "lucide-react": "^0.552.0",
-    "react": "^19.2.0",
+    "react": "^19.2.6",
     "react-dom": "^19.2.5",
     "react-i18next": "^17.0.4",
     "react-router": "^7.15.0",
