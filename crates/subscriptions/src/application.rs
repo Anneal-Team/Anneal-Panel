@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::RwLock,
 };
 
@@ -13,11 +13,13 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
 use chrono::Utc;
 use rand::{RngExt, distr::Alphanumeric};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::domain::{
     CreateDeviceCommand, CreateSubscriptionCommand, Device, RenderedSubscriptionBundle,
-    ResolvedSubscriptionContext, Subscription, SubscriptionLink, UpdateSubscriptionCommand,
+    ResolvedSubscriptionContext, Subscription, SubscriptionLink, SubscriptionSettings,
+    UpdateSubscriptionCommand,
 };
 
 #[async_trait]
@@ -61,6 +63,11 @@ pub trait SubscriptionRepository: Send + Sync {
         &self,
         link_id: Uuid,
     ) -> ApplicationResult<Option<ResolvedSubscriptionContext>>;
+    async fn get_subscription_settings(&self) -> ApplicationResult<SubscriptionSettings>;
+    async fn update_subscription_settings(
+        &self,
+        settings: SubscriptionSettings,
+    ) -> ApplicationResult<SubscriptionSettings>;
 }
 
 #[async_trait]
@@ -150,6 +157,17 @@ where
         link_id: Uuid,
     ) -> ApplicationResult<Option<ResolvedSubscriptionContext>> {
         (*self).find_by_delivery_token(link_id).await
+    }
+
+    async fn get_subscription_settings(&self) -> ApplicationResult<SubscriptionSettings> {
+        (*self).get_subscription_settings().await
+    }
+
+    async fn update_subscription_settings(
+        &self,
+        settings: SubscriptionSettings,
+    ) -> ApplicationResult<SubscriptionSettings> {
+        (*self).update_subscription_settings(settings).await
     }
 }
 
@@ -247,7 +265,8 @@ where
             tenant_id: command.tenant_id,
             user_id: actor.user_id,
             device_id: device.id,
-            name: command.name,
+            name: normalize_required_name(&command.name, "subscription name")?,
+            client_name: normalize_optional_name(command.client_name)?,
             note: command.note,
             access_key: generate_access_key(),
             traffic_limit_bytes: command.traffic_limit_bytes,
@@ -258,6 +277,7 @@ where
             created_at: now,
             updated_at: now,
             current_token: None,
+            proxy_name_overrides: normalize_proxy_name_overrides(command.proxy_name_overrides)?,
         };
         let link = SubscriptionLink {
             id: Uuid::new_v4(),
@@ -325,7 +345,10 @@ where
                 target_tenant_id: Some(subscription.tenant_id),
             },
         )?;
-        subscription.name = command.name;
+        subscription.name = normalize_required_name(&command.name, "subscription name")?;
+        subscription.client_name = normalize_optional_name(command.client_name)?;
+        subscription.proxy_name_overrides =
+            normalize_proxy_name_overrides(command.proxy_name_overrides)?;
         subscription.note = command.note;
         subscription.traffic_limit_bytes = command.traffic_limit_bytes;
         subscription.expires_at = command.expires_at;
@@ -334,6 +357,42 @@ where
             decide_quota_state(subscription.traffic_limit_bytes, subscription.used_bytes);
         subscription.updated_at = Utc::now();
         self.repository.update_subscription(subscription).await
+    }
+
+    pub async fn get_subscription_settings(
+        &self,
+        actor: &Actor,
+    ) -> ApplicationResult<SubscriptionSettings> {
+        self.rbac.authorize(
+            actor,
+            Permission::ManageSystemSettings,
+            AccessScope {
+                target_tenant_id: None,
+            },
+        )?;
+        self.repository.get_subscription_settings().await
+    }
+
+    pub async fn update_subscription_settings(
+        &self,
+        actor: &Actor,
+        settings: SubscriptionSettings,
+    ) -> ApplicationResult<SubscriptionSettings> {
+        self.rbac.authorize(
+            actor,
+            Permission::ManageSystemSettings,
+            AccessScope {
+                target_tenant_id: None,
+            },
+        )?;
+        self.repository
+            .update_subscription_settings(SubscriptionSettings {
+                default_client_name: normalize_required_name(
+                    &settings.default_client_name,
+                    "default client name",
+                )?,
+            })
+            .await
     }
 
     pub async fn delete_subscription(
@@ -531,6 +590,7 @@ where
             .catalog
             .list_delivery_endpoints(context.subscription.tenant_id)
             .await?;
+        let settings = self.subscriptions.get_subscription_settings().await?;
         if endpoints.is_empty() {
             return Err(ApplicationError::NotFound(
                 "no mihomo delivery endpoints configured".into(),
@@ -544,15 +604,16 @@ where
                 .then_with(|| left.public_port.cmp(&right.public_port))
         });
         let credential = ClientCredential {
-            email: context.subscription.name.clone(),
+            email: subscription_client_name(&context.subscription, &settings),
             uuid: context.subscription.id.to_string(),
             password: Some(context.subscription.access_key.clone()),
         };
+        let labels = delivery_labels(&context.subscription, &settings, &endpoints);
         let rendered_links = endpoints
             .iter()
-            .map(|endpoint| {
+            .zip(labels)
+            .map(|(endpoint, label)| {
                 let profile = map_delivery_endpoint(endpoint)?;
-                let label = delivery_label(&context.subscription.name, endpoint);
                 let uri = ShareLinkRenderer.render(&profile, &credential, &label)?;
                 Ok(RenderedShareLink {
                     label,
@@ -562,7 +623,11 @@ where
                 })
             })
             .collect::<ApplicationResult<Vec<_>>>()?;
-        let rendered = SubscriptionDocumentRenderer.render(&rendered_links, format)?;
+        let rendered = SubscriptionDocumentRenderer.render_named(
+            &rendered_links,
+            format,
+            &credential.email,
+        )?;
         Ok(RenderedSubscriptionBundle {
             content: rendered.content,
             links_count: rendered_links.len(),
@@ -577,6 +642,7 @@ pub struct InMemorySubscriptionRepository {
     subscriptions: RwLock<HashMap<Uuid, Subscription>>,
     links: RwLock<HashMap<Uuid, SubscriptionLink>>,
     tenant_users: RwLock<HashSet<(Uuid, Uuid)>>,
+    settings: RwLock<SubscriptionSettings>,
 }
 
 impl InMemorySubscriptionRepository {
@@ -817,6 +883,18 @@ impl SubscriptionRepository for InMemorySubscriptionRepository {
         });
         Ok(found)
     }
+
+    async fn get_subscription_settings(&self) -> ApplicationResult<SubscriptionSettings> {
+        Ok(self.settings.read().expect("lock").clone())
+    }
+
+    async fn update_subscription_settings(
+        &self,
+        settings: SubscriptionSettings,
+    ) -> ApplicationResult<SubscriptionSettings> {
+        *self.settings.write().expect("lock") = settings.clone();
+        Ok(settings)
+    }
 }
 
 pub fn generate_token() -> String {
@@ -878,60 +956,158 @@ fn map_delivery_endpoint(endpoint: &DeliveryEndpoint) -> ApplicationResult<Inbou
     })
 }
 
-fn protocol_name(protocol: anneal_core::ProtocolKind) -> &'static str {
+fn subscription_client_name(
+    subscription: &Subscription,
+    settings: &SubscriptionSettings,
+) -> String {
+    subscription
+        .client_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(settings.default_client_name.trim())
+        .to_owned()
+}
+
+fn delivery_labels(
+    subscription: &Subscription,
+    _settings: &SubscriptionSettings,
+    endpoints: &[DeliveryEndpoint],
+) -> Vec<String> {
+    let overrides = proxy_name_overrides(&subscription.proxy_name_overrides);
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut labels = endpoints
+        .iter()
+        .map(|endpoint| {
+            overrides
+                .get(protocol_override_key(endpoint.protocol))
+                .cloned()
+                .unwrap_or_else(|| default_proxy_name(endpoint.protocol))
+        })
+        .collect::<Vec<_>>();
+
+    for label in &labels {
+        *counts.entry(label.clone()).or_default() += 1;
+    }
+
+    for (label, endpoint) in labels.iter_mut().zip(endpoints) {
+        if counts.get(label).copied().unwrap_or_default() > 1 {
+            label.push_str(" | ");
+            label.push_str(&endpoint.public_host);
+            label.push(':');
+            label.push_str(&endpoint.public_port.to_string());
+        }
+    }
+    labels
+}
+
+fn default_proxy_name(protocol: anneal_core::ProtocolKind) -> String {
+    format!("Anneal | {}", protocol_client_name(protocol))
+}
+
+fn protocol_client_name(protocol: anneal_core::ProtocolKind) -> &'static str {
     match protocol {
-        anneal_core::ProtocolKind::VlessReality => "vless",
+        anneal_core::ProtocolKind::VlessReality => "xray",
         anneal_core::ProtocolKind::Vmess => "vmess",
         anneal_core::ProtocolKind::Trojan => "trojan",
-        anneal_core::ProtocolKind::Shadowsocks2022 => "ss2022",
+        anneal_core::ProtocolKind::Shadowsocks2022 => "shadowsocks",
         anneal_core::ProtocolKind::Tuic => "tuic",
-        anneal_core::ProtocolKind::Hysteria2 => "hy2",
+        anneal_core::ProtocolKind::Hysteria2 => "hysteria2",
     }
 }
 
-fn transport_name(transport: anneal_config_engine::TransportKind) -> &'static str {
-    match transport {
-        anneal_config_engine::TransportKind::Tcp => "tcp",
-        anneal_config_engine::TransportKind::Ws => "ws",
-        anneal_config_engine::TransportKind::Grpc => "grpc",
-        anneal_config_engine::TransportKind::HttpUpgrade => "httpupgrade",
+fn protocol_override_key(protocol: anneal_core::ProtocolKind) -> &'static str {
+    match protocol {
+        anneal_core::ProtocolKind::VlessReality => "vless_reality",
+        anneal_core::ProtocolKind::Vmess => "vmess",
+        anneal_core::ProtocolKind::Trojan => "trojan",
+        anneal_core::ProtocolKind::Shadowsocks2022 => "shadowsocks_2022",
+        anneal_core::ProtocolKind::Tuic => "tuic",
+        anneal_core::ProtocolKind::Hysteria2 => "hysteria2",
     }
 }
 
-fn delivery_label(name: &str, endpoint: &DeliveryEndpoint) -> String {
-    let mut parts = vec![
-        name.to_owned(),
-        endpoint.name.clone(),
-        protocol_name(endpoint.protocol).to_owned(),
-        transport_name(endpoint.transport).to_owned(),
-        endpoint.public_host.clone(),
-        endpoint.public_port.to_string(),
-    ];
-    if let Some(server_name) = endpoint
-        .server_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|server_name| !server_name.is_empty() && *server_name != endpoint.public_host)
-    {
-        parts.push(server_name.to_owned());
+fn proxy_name_overrides(value: &Value) -> BTreeMap<String, String> {
+    value
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(key, value)| {
+                    let value = value.as_str()?.trim();
+                    (!value.is_empty()).then(|| (key.clone(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_required_name(value: &str, field: &str) -> ApplicationResult<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ApplicationError::Validation(format!("{field} is required")));
     }
-    if let Some(path) = endpoint
-        .path
-        .as_deref()
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    {
-        parts.push(path.trim_matches('/').replace('/', "-"));
+    if value.chars().count() > 128 {
+        return Err(ApplicationError::Validation(format!(
+            "{field} must be 128 characters or fewer"
+        )));
     }
-    if let Some(service_name) = endpoint
-        .service_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|service_name| !service_name.is_empty())
-    {
-        parts.push(service_name.to_owned());
+    Ok(value.to_owned())
+}
+
+fn normalize_optional_name(value: Option<String>) -> ApplicationResult<Option<String>> {
+    value
+        .map(|value| {
+            let value = value.trim().to_owned();
+            if value.is_empty() {
+                return Ok(None);
+            }
+            if value.chars().count() > 128 {
+                return Err(ApplicationError::Validation(
+                    "client name must be 128 characters or fewer".into(),
+                ));
+            }
+            Ok(Some(value))
+        })
+        .transpose()
+        .map(Option::flatten)
+}
+
+fn normalize_proxy_name_overrides(value: Value) -> ApplicationResult<Value> {
+    let object = value.as_object().ok_or_else(|| {
+        ApplicationError::Validation("proxy_name_overrides must be an object".into())
+    })?;
+    let mut cleaned = serde_json::Map::new();
+    for (key, value) in object {
+        if !is_supported_proxy_name_key(key) {
+            return Err(ApplicationError::Validation(format!(
+                "unsupported proxy name key: {key}"
+            )));
+        }
+        let Some(value) = value.as_str() else {
+            return Err(ApplicationError::Validation(format!(
+                "proxy name for {key} must be a string"
+            )));
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.chars().count() > 128 {
+            return Err(ApplicationError::Validation(format!(
+                "proxy name for {key} must be 128 characters or fewer"
+            )));
+        }
+        cleaned.insert(key.clone(), json!(value));
     }
-    parts.join(" ")
+    Ok(Value::Object(cleaned))
+}
+
+fn is_supported_proxy_name_key(value: &str) -> bool {
+    matches!(
+        value,
+        "vless_reality" | "vmess" | "trojan" | "shadowsocks_2022" | "tuic" | "hysteria2"
+    )
 }
 
 fn protocol_order(protocol: anneal_core::ProtocolKind) -> usize {
@@ -954,14 +1130,17 @@ mod tests {
     use anneal_rbac::RbacService;
     use base64::{Engine as _, engine::general_purpose};
     use chrono::{Duration, Utc};
+    use serde_json::json;
     use uuid::Uuid;
 
     use crate::{
         application::{
             DeliveryEndpoint, InMemorySubscriptionRepository, StaticDeliveryEndpointCatalog,
-            SubscriptionService, UnifiedSubscriptionService, generate_access_key,
+            SubscriptionRepository, SubscriptionService, UnifiedSubscriptionService,
+            generate_access_key,
         },
         domain::CreateSubscriptionCommand,
+        domain::SubscriptionSettings,
     };
 
     fn endpoint(protocol: ProtocolKind, public_host: &str, public_port: u16) -> DeliveryEndpoint {
@@ -1021,6 +1200,8 @@ mod tests {
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
                     name: "main".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({}),
                     note: None,
                     traffic_limit_bytes: 1024,
                     expires_at: Utc::now() + Duration::days(30),
@@ -1063,6 +1244,8 @@ mod tests {
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
                     name: "main".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({}),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
                     expires_at: Utc::now() + Duration::days(30),
@@ -1103,6 +1286,8 @@ mod tests {
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
                     name: "main".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({}),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
                     expires_at: Utc::now() + Duration::days(30),
@@ -1125,15 +1310,15 @@ mod tests {
             .take_while(|line| *line != "proxy-groups:")
             .filter_map(|line| line.strip_prefix("  - name: "))
             .map(|line| line.trim_matches('"'))
-            .filter(|tag| tag.starts_with("main mihomo vmess"))
+            .filter(|tag| tag.starts_with("Anneal | vmess"))
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let unique = tags.iter().cloned().collect::<HashSet<_>>();
 
         assert_eq!(tags.len(), 2);
         assert_eq!(unique.len(), 2);
-        assert!(unique.contains("main mihomo vmess tcp edge.example.com 24443"));
-        assert!(unique.contains("main mihomo vmess tcp edge.example.com 24444"));
+        assert!(unique.contains("Anneal | vmess | edge.example.com:24443"));
+        assert!(unique.contains("Anneal | vmess | edge.example.com:24444"));
     }
 
     #[tokio::test]
@@ -1157,6 +1342,8 @@ mod tests {
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
                     name: "main".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({}),
                     note: None,
                     traffic_limit_bytes: 1_000_000,
                     expires_at: Utc::now() + Duration::days(30),
@@ -1184,8 +1371,56 @@ mod tests {
 
         assert_eq!(proxy_names.len(), 2);
         assert_eq!(unique.len(), 2);
-        assert!(unique.contains("main mihomo vmess tcp edge-a.example.com 24443"));
-        assert!(unique.contains("main mihomo vmess tcp edge-b.example.com 24443"));
+        assert!(unique.contains("Anneal | vmess | edge-a.example.com:24443"));
+        assert!(unique.contains("Anneal | vmess | edge-b.example.com:24443"));
+    }
+
+    #[tokio::test]
+    async fn subscription_bundle_uses_default_client_name_and_proxy_override() {
+        let subscriptions = InMemorySubscriptionRepository::default();
+        subscriptions
+            .update_subscription_settings(SubscriptionSettings {
+                default_client_name: "Custom Remote".into(),
+            })
+            .await
+            .expect("settings");
+        let subscription_service = SubscriptionService::new(&subscriptions, RbacService);
+        let catalog = StaticDeliveryEndpointCatalog::new(vec![endpoint(
+            ProtocolKind::VlessReality,
+            "edge.example.com",
+            443,
+        )]);
+        let actor = Actor {
+            user_id: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            role: UserRole::Reseller,
+        };
+        subscriptions.allow_user(actor.tenant_id.expect("tenant"), actor.user_id);
+
+        let (_subscription, link) = subscription_service
+            .create_subscription(
+                &actor,
+                CreateSubscriptionCommand {
+                    tenant_id: actor.tenant_id.expect("tenant"),
+                    name: "internal".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({ "vless_reality": "Primary Xray" }),
+                    note: None,
+                    traffic_limit_bytes: 1_000_000,
+                    expires_at: Utc::now() + Duration::days(30),
+                },
+            )
+            .await
+            .expect("subscription");
+
+        let unified = UnifiedSubscriptionService::new(&subscriptions, catalog)
+            .render_bundle(&link.id.to_string(), SubscriptionDocumentFormat::Mihomo)
+            .await
+            .expect("bundle");
+
+        assert!(unified.content.contains(r#"- name: "Custom Remote""#));
+        assert!(unified.content.contains(r#"- MATCH,"Custom Remote""#));
+        assert!(unified.content.contains(r#"- name: "Primary Xray""#));
     }
 
     #[tokio::test]
@@ -1204,6 +1439,8 @@ mod tests {
                 CreateSubscriptionCommand {
                     tenant_id: actor.tenant_id.expect("tenant"),
                     name: "main".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({}),
                     note: None,
                     traffic_limit_bytes: 1024,
                     expires_at: Utc::now() + Duration::days(30),
@@ -1236,6 +1473,8 @@ mod tests {
                 CreateSubscriptionCommand {
                     tenant_id,
                     name: "main".into(),
+                    client_name: None,
+                    proxy_name_overrides: json!({}),
                     note: None,
                     traffic_limit_bytes: 1024,
                     expires_at: Utc::now() + Duration::days(30),

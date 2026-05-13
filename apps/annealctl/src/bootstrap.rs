@@ -3,7 +3,6 @@ use chrono::{Duration, Utc};
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 
 use crate::{config::StarterSubscriptionConfig, state::InstallState};
@@ -32,9 +31,11 @@ struct SessionTokens {
     access_token: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TotpSetup {
-    secret: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SuperadminLogin {
+    Authenticated(String),
+    TotpRequired,
+    TotpSetupRequired,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,11 +71,6 @@ struct BootstrapRequest<'a> {
     email: &'a str,
     display_name: &'a str,
     password: &'a str,
-}
-
-#[derive(Debug, Serialize)]
-struct TotpVerifyRequest<'a> {
-    code: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -153,8 +149,8 @@ impl ApiClient {
         &self,
         email: &str,
         password: &str,
-        state: &mut InstallState,
-    ) -> Result<String> {
+        _state: &mut InstallState,
+    ) -> Result<SuperadminLogin> {
         let response = self
             .client
             .post(self.url("/auth/login"))
@@ -164,20 +160,15 @@ impl ApiClient {
             .context("failed to log in as superadmin")?;
         let login: LoginResponse = self.json_response(response, "superadmin login").await?;
         match login {
-            LoginResponse::Authenticated { tokens } => Ok(tokens.access_token),
-            LoginResponse::TotpRequired { pre_auth_token } => {
-                let secret = state
-                    .bootstrap
-                    .superadmin_totp_secret
-                    .clone()
-                    .ok_or_else(|| anyhow!("missing persisted TOTP secret for superadmin"))?;
-                self.verify_totp(&pre_auth_token, &secret).await
+            LoginResponse::Authenticated { tokens } => {
+                Ok(SuperadminLogin::Authenticated(tokens.access_token))
             }
-            LoginResponse::TotpSetupRequired { pre_auth_token } => {
-                let setup = self.begin_totp_setup(&pre_auth_token).await?;
-                state.bootstrap.superadmin_totp_secret = Some(setup.secret.clone());
-                self.verify_totp(&pre_auth_token, &setup.secret).await
-            }
+            LoginResponse::TotpRequired {
+                pre_auth_token: _pre_auth_token,
+            } => Ok(SuperadminLogin::TotpRequired),
+            LoginResponse::TotpSetupRequired {
+                pre_auth_token: _pre_auth_token,
+            } => Ok(SuperadminLogin::TotpSetupRequired),
         }
     }
 
@@ -271,31 +262,6 @@ impl ApiClient {
         Ok(created.delivery_url)
     }
 
-    async fn begin_totp_setup(&self, pre_auth_token: &str) -> Result<TotpSetup> {
-        let response = self
-            .client
-            .post(self.url("/auth/totp/setup"))
-            .bearer_auth(pre_auth_token)
-            .send()
-            .await
-            .context("failed to request TOTP setup")?;
-        self.json_response(response, "request TOTP setup").await
-    }
-
-    async fn verify_totp(&self, pre_auth_token: &str, secret: &str) -> Result<String> {
-        let code = generate_totp_code(secret)?;
-        let response = self
-            .client
-            .post(self.url("/auth/totp/verify"))
-            .bearer_auth(pre_auth_token)
-            .json(&TotpVerifyRequest { code: &code })
-            .send()
-            .await
-            .context("failed to verify TOTP")?;
-        let tokens: SessionTokens = self.json_response(response, "verify TOTP").await?;
-        Ok(tokens.access_token)
-    }
-
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
@@ -323,24 +289,6 @@ impl ApiClient {
         let body = response.text().await.unwrap_or_else(|_| String::new());
         bail!("{}", http_error_message(context, status, body.trim()));
     }
-}
-
-fn generate_totp_code(secret: &str) -> Result<String> {
-    let bytes = Secret::Encoded(secret.into())
-        .to_bytes()
-        .context("failed to decode TOTP secret")?;
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        bytes,
-        Some("Anneal".into()),
-        "installer".into(),
-    )
-    .context("failed to build TOTP generator")?;
-    totp.generate_current()
-        .context("failed to generate current TOTP code")
 }
 
 fn http_error_message(context: &str, status: StatusCode, body: &str) -> String {

@@ -1,3 +1,4 @@
+use anneal_subscriptions::SubscriptionSettings;
 use utoipa::OpenApi;
 
 use crate::transport::{
@@ -8,7 +9,7 @@ use crate::transport::{
     subscriptions::{
         CreateSubscriptionRequest, CreateSubscriptionResponse, DeviceResponse,
         PublicSubscriptionResponse, RotateSubscriptionLinkResponse, SubscriptionResponse,
-        UpdateSubscriptionRequest,
+        SubscriptionSettingsRequest, UpdateSubscriptionRequest,
     },
     users::{
         CreateResellerRequest, CreateUserRequest, UpdateResellerRequest, UpdateUserRequest,
@@ -39,6 +40,8 @@ use crate::transport::{
         crate::transport::users::update_reseller,
         crate::transport::users::delete_reseller,
         crate::transport::subscriptions::create_subscription,
+        crate::transport::subscriptions::get_subscription_settings,
+        crate::transport::subscriptions::update_subscription_settings,
         crate::transport::subscriptions::update_subscription,
         crate::transport::subscriptions::delete_subscription,
         crate::transport::subscriptions::public_subscription,
@@ -67,6 +70,8 @@ use crate::transport::{
         DeviceResponse,
         PublicSubscriptionResponse,
         SubscriptionResponse,
+        SubscriptionSettings,
+        SubscriptionSettingsRequest,
         RotateSubscriptionLinkResponse
     ))
 )]

@@ -546,23 +546,23 @@ export function UsersPage() {
             <Input
               placeholder="Название тенанта"
               value={resellerForm.tenant_name}
-              onChange={(event) =>
-                setResellerForm((current) => ({ ...current, tenant_name: event.target.value }))
-              }
+              onChange={(event) => {
+                setResellerForm((current) => ({ ...current, tenant_name: event.target.value }));
+              }}
             />
             <Input
               placeholder="Имя"
               value={resellerForm.display_name}
-              onChange={(event) =>
-                setResellerForm((current) => ({ ...current, display_name: event.target.value }))
-              }
+              onChange={(event) => {
+                setResellerForm((current) => ({ ...current, display_name: event.target.value }));
+              }}
             />
             <Input
               placeholder="Email"
               value={resellerForm.email}
-              onChange={(event) =>
-                setResellerForm((current) => ({ ...current, email: event.target.value }))
-              }
+              onChange={(event) => {
+                setResellerForm((current) => ({ ...current, email: event.target.value }));
+              }}
             />
             <Select
               value={resellerForm.status}
@@ -580,9 +580,9 @@ export function UsersPage() {
               placeholder="Новый пароль"
               type="password"
               value={resellerForm.password}
-              onChange={(event) =>
-                setResellerForm((current) => ({ ...current, password: event.target.value }))
-              }
+              onChange={(event) => {
+                setResellerForm((current) => ({ ...current, password: event.target.value }));
+              }}
             />
             <div className="flex justify-end gap-3">
               <Button
@@ -622,22 +622,22 @@ export function UsersPage() {
             <Input
               placeholder="Имя"
               value={userForm.display_name}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, display_name: event.target.value }))
-              }
+              onChange={(event) => {
+                setUserForm((current) => ({ ...current, display_name: event.target.value }));
+              }}
             />
             <Input
               placeholder="Email"
               value={userForm.email}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, email: event.target.value }))
-              }
+              onChange={(event) => {
+                setUserForm((current) => ({ ...current, email: event.target.value }));
+              }}
             />
             <Select
               value={userForm.role}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, role: event.target.value as UserRole }))
-              }
+              onChange={(event) => {
+                setUserForm((current) => ({ ...current, role: event.target.value as UserRole }));
+              }}
             >
               {(editTarget.role === "superadmin" ? ["superadmin"] : editableUserRoles.filter((role) => role !== "superadmin")) .map((role) => (
                 <option key={role} value={role}>
@@ -661,9 +661,9 @@ export function UsersPage() {
               placeholder="Новый пароль"
               type="password"
               value={userForm.password}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, password: event.target.value }))
-              }
+              onChange={(event) => {
+                setUserForm((current) => ({ ...current, password: event.target.value }));
+              }}
             />
             <div className="flex justify-end gap-3">
               <Button

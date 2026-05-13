@@ -67,6 +67,15 @@ impl SubscriptionDocumentRenderer {
         links: &[RenderedShareLink],
         format: SubscriptionDocumentFormat,
     ) -> ApplicationResult<RenderedSubscriptionDocument> {
+        self.render_named(links, format, "Anneal")
+    }
+
+    pub fn render_named(
+        &self,
+        links: &[RenderedShareLink],
+        format: SubscriptionDocumentFormat,
+        group_name: &str,
+    ) -> ApplicationResult<RenderedSubscriptionDocument> {
         let raw = render_raw_links(links);
         match format {
             SubscriptionDocumentFormat::Raw => Ok(RenderedSubscriptionDocument {
@@ -78,7 +87,7 @@ impl SubscriptionDocumentRenderer {
                 content_type: "text/plain; charset=utf-8",
             }),
             SubscriptionDocumentFormat::Mihomo => Ok(RenderedSubscriptionDocument {
-                content: render_clash_meta(links),
+                content: render_clash_meta(links, group_name),
                 content_type: "application/yaml; charset=utf-8",
             }),
         }
@@ -93,7 +102,7 @@ fn render_raw_links(links: &[RenderedShareLink]) -> String {
         .join("\n")
 }
 
-fn render_clash_meta(links: &[RenderedShareLink]) -> String {
+fn render_clash_meta(links: &[RenderedShareLink], group_name: &str) -> String {
     let proxies = links
         .iter()
         .map(render_clash_proxy)
@@ -104,8 +113,14 @@ fn render_clash_meta(links: &[RenderedShareLink]) -> String {
         .map(|entry| format!("      - {}", yaml_quote(&entry.label)))
         .collect::<Vec<_>>()
         .join("\n");
+    let group_name = if group_name.trim().is_empty() {
+        "Anneal"
+    } else {
+        group_name.trim()
+    };
     format!(
-        "mixed-port: 7890\nallow-lan: false\nmode: rule\nproxies:\n{proxies}\nproxy-groups:\n  - name: \"Anneal\"\n    type: select\n    proxies:\n{proxy_names}\nrules:\n  - MATCH,Anneal\n"
+        "mixed-port: 7890\nallow-lan: false\nmode: rule\nproxies:\n{proxies}\nproxy-groups:\n  - name: {group_name}\n    type: select\n    proxies:\n{proxy_names}\nrules:\n  - MATCH,{group_name}\n",
+        group_name = yaml_quote(group_name),
     )
 }
 

@@ -50,6 +50,7 @@ impl RbacService {
             Permission::ManageResellers
             | Permission::ManageGlobalUsers
             | Permission::ManageAudit
+            | Permission::ManageSystemSettings
             | Permission::Bootstrap => false,
         }
     }

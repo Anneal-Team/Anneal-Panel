@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -18,6 +18,8 @@ import { useNow } from "@/lib/use-now";
 type CreateSubscriptionForm = {
   tenant_id: string;
   name: string;
+  client_name: string;
+  proxy_name_overrides: Record<string, string>;
   note: string;
   traffic_limit_gb: string;
   package_days: string;
@@ -27,11 +29,34 @@ type EditSubscriptionForm = {
   subscription_id: string;
   tenant_id: string;
   name: string;
+  client_name: string;
+  proxy_name_overrides: Record<string, string>;
   note: string;
   traffic_limit_gb: string;
   expires_at: string;
   suspended: boolean;
 };
+
+const proxyNameFields = [
+  ["vless_reality", "Xray"],
+  ["vmess", "VMess"],
+  ["trojan", "Trojan"],
+  ["shadowsocks_2022", "Shadowsocks"],
+  ["tuic", "TUIC"],
+  ["hysteria2", "Hysteria2"],
+] as const;
+
+function emptyProxyNames() {
+  return Object.fromEntries(proxyNameFields.map(([key]) => [key, ""]));
+}
+
+function normalizeProxyNames(values: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(values)
+      .map(([key, value]) => [key, value.trim()] as const)
+      .filter(([, value]) => value.length > 0),
+  );
+}
 
 type SubscriptionArtifact = {
   subscription_id: string;
@@ -75,6 +100,8 @@ function createInitialForm(tenantId = ""): CreateSubscriptionForm {
   return {
     tenant_id: tenantId,
     name: "",
+    client_name: "",
+    proxy_name_overrides: emptyProxyNames(),
     note: "",
     traffic_limit_gb: "100",
     package_days: "30",
@@ -86,6 +113,8 @@ function editFormFromSubscription(subscription: Subscription): EditSubscriptionF
     subscription_id: subscription.id,
     tenant_id: subscription.tenant_id,
     name: subscription.name,
+    client_name: subscription.client_name ?? "",
+    proxy_name_overrides: { ...emptyProxyNames(), ...subscription.proxy_name_overrides },
     note: subscription.note ?? "",
     traffic_limit_gb: gigabytesFromBytes(subscription.traffic_limit_bytes),
     expires_at: toDateTimeLocalValue(subscription.expires_at),
@@ -124,6 +153,7 @@ export function SubscriptionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Subscription | null>(null);
   const [createForm, setCreateForm] = useState<CreateSubscriptionForm>(() => createInitialForm());
   const [editForm, setEditForm] = useState<EditSubscriptionForm | null>(null);
+  const [settingsForm, setSettingsForm] = useState("Anneal");
 
   const usersQuery = useQuery({
     queryKey: ["users"],
@@ -134,6 +164,11 @@ export function SubscriptionsPage() {
     queryKey: ["subscriptions"],
     queryFn: api.listSubscriptions,
     enabled: Boolean(session.accessToken),
+  });
+  const settingsQuery = useQuery({
+    queryKey: ["subscription-settings"],
+    queryFn: api.getSubscriptionSettings,
+    enabled: Boolean(session.accessToken) && actor?.role !== "reseller" && actor?.role !== "user",
   });
 
   const tenantCandidates = useMemo(
@@ -175,6 +210,31 @@ export function SubscriptionsPage() {
 
   const expiresAt = daysToExpiresAt(createForm.package_days, now);
 
+  useEffect(() => {
+    if (settingsQuery.data) {
+      setSettingsForm(settingsQuery.data.default_client_name);
+    }
+  }, [settingsQuery.data]);
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: () =>
+      api.updateSubscriptionSettings({
+        default_client_name: settingsForm.trim(),
+      }),
+    onSuccess: async (settings) => {
+      setError(null);
+      setMessage(t("subscriptions.settings.updated", { name: settings.default_client_name }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["subscription-settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["subscriptions"] }),
+      ]);
+    },
+    onError: (mutationError) => {
+      setMessage(null);
+      setError(mutationError.message);
+    },
+  });
+
   const createSubscriptionMutation = useMutation({
     mutationFn: () => {
       if (!expiresAt) {
@@ -184,6 +244,8 @@ export function SubscriptionsPage() {
       return api.createSubscription({
         tenant_id: createForm.tenant_id,
         name: createForm.name.trim() || t("subscriptions.default_name"),
+        client_name: createForm.client_name.trim() || null,
+        proxy_name_overrides: normalizeProxyNames(createForm.proxy_name_overrides),
         note: createForm.note.trim() || null,
         traffic_limit_bytes: bytesFromGigabytes(createForm.traffic_limit_gb),
         expires_at: expiresAt.toISOString(),
@@ -217,6 +279,8 @@ export function SubscriptionsPage() {
 
       return api.updateSubscription(editForm.subscription_id, {
         name: editForm.name.trim(),
+        client_name: editForm.client_name.trim() || null,
+        proxy_name_overrides: normalizeProxyNames(editForm.proxy_name_overrides),
         note: editForm.note.trim() || null,
         traffic_limit_bytes: bytesFromGigabytes(editForm.traffic_limit_gb),
         expires_at: expiresAtValue,
@@ -313,6 +377,40 @@ export function SubscriptionsPage() {
 
       {message ? <div className="text-sm text-emerald-700">{message}</div> : null}
       {error ? <div className="text-sm text-danger">{error}</div> : null}
+
+      {actor?.role === "superadmin" || actor?.role === "admin" ? (
+        <Card className="space-y-4 shadow-sm">
+          <div>
+            <h2 className="text-xl font-bold text-[#1d271a]">
+              {t("subscriptions.settings.title")}
+            </h2>
+            <p className="mt-2 text-sm text-foreground/80">
+              {t("subscriptions.settings.description")}
+            </p>
+          </div>
+          <form
+            className="flex flex-col gap-3 md:flex-row md:items-end"
+            onSubmit={(event) => {
+              event.preventDefault();
+              updateSettingsMutation.mutate();
+            }}
+          >
+            <Input
+              placeholder={t("subscriptions.settings.default_client_name")}
+              value={settingsForm}
+              onChange={(event) => {
+                setSettingsForm(event.target.value);
+              }}
+            />
+            <Button
+              type="submit"
+              disabled={updateSettingsMutation.isPending || !settingsForm.trim()}
+            >
+              {updateSettingsMutation.isPending ? t("subscriptions.settings.saving") : t("common.save")}
+            </Button>
+          </form>
+        </Card>
+      ) : null}
 
       {artifact ? (
         <Card className="space-y-4 break-all bg-gradient-to-r from-muted to-card text-sm">
@@ -523,6 +621,14 @@ export function SubscriptionsPage() {
             onChange={(event) => { setCreateForm((current) => ({ ...current, name: event.target.value })); }}
           />
 
+          <Input
+            placeholder={t("subscriptions.client_name_placeholder")}
+            value={createForm.client_name}
+            onChange={(event) => {
+              setCreateForm((current) => ({ ...current, client_name: event.target.value }));
+            }}
+          />
+
           <Textarea
             placeholder={t("subscriptions.create.note_placeholder")}
             value={createForm.note}
@@ -615,6 +721,16 @@ export function SubscriptionsPage() {
               value={editForm.name}
               onChange={(event) => {
                 setEditForm((current) => (current ? { ...current, name: event.target.value } : current));
+              }}
+            />
+
+            <Input
+              placeholder={t("subscriptions.client_name_placeholder")}
+              value={editForm.client_name}
+              onChange={(event) => {
+                setEditForm((current) =>
+                  current ? { ...current, client_name: event.target.value } : current,
+                );
               }}
             />
 

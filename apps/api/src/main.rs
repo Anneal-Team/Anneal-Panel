@@ -83,6 +83,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/usage", get(usage::list_usage))
         .route("/api/v1/devices", get(subscriptions::list_devices))
         .route(
+            "/api/v1/subscription-settings",
+            get(subscriptions::get_subscription_settings)
+                .patch(subscriptions::update_subscription_settings),
+        )
+        .route(
             "/api/v1/subscriptions",
             get(subscriptions::list_subscriptions).post(subscriptions::create_subscription),
         )

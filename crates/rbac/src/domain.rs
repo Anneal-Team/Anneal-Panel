@@ -11,5 +11,6 @@ pub enum Permission {
     ManageUsage,
     ManageAudit,
     ManageNotifications,
+    ManageSystemSettings,
     SelfService,
 }

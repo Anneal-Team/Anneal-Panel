@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -29,6 +30,7 @@ pub struct Subscription {
     pub user_id: Uuid,
     pub device_id: Uuid,
     pub name: String,
+    pub client_name: Option<String>,
     pub note: Option<String>,
     #[serde(skip_serializing, default)]
     pub access_key: String,
@@ -42,6 +44,8 @@ pub struct Subscription {
     #[serde(skip_serializing, default)]
     #[sqlx(default)]
     pub current_token: Option<String>,
+    #[sqlx(default)]
+    pub proxy_name_overrides: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
@@ -70,6 +74,8 @@ pub struct CreateDeviceCommand {
 pub struct CreateSubscriptionCommand {
     pub tenant_id: Uuid,
     pub name: String,
+    pub client_name: Option<String>,
+    pub proxy_name_overrides: Value,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
     pub expires_at: DateTime<Utc>,
@@ -78,10 +84,25 @@ pub struct CreateSubscriptionCommand {
 #[derive(Debug, Clone)]
 pub struct UpdateSubscriptionCommand {
     pub name: String,
+    pub client_name: Option<String>,
+    pub proxy_name_overrides: Value,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
     pub expires_at: DateTime<Utc>,
     pub suspended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SubscriptionSettings {
+    pub default_client_name: String,
+}
+
+impl Default for SubscriptionSettings {
+    fn default() -> Self {
+        Self {
+            default_client_name: "Anneal".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

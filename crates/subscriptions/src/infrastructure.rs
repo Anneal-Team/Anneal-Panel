@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -6,7 +7,9 @@ use anneal_core::{ApplicationError, ApplicationResult, SecretBox};
 
 use crate::{
     application::SubscriptionRepository,
-    domain::{Device, ResolvedSubscriptionContext, Subscription, SubscriptionLink},
+    domain::{
+        Device, ResolvedSubscriptionContext, Subscription, SubscriptionLink, SubscriptionSettings,
+    },
 };
 
 #[derive(Clone)]
@@ -113,8 +116,8 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         sqlx::query(
             r#"
             insert into subscriptions (
-                id, tenant_id, user_id, device_id, name, note, access_key, traffic_limit_bytes, used_bytes, quota_state, suspended, expires_at, created_at, updated_at
-            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                id, tenant_id, user_id, device_id, name, client_name, note, access_key, traffic_limit_bytes, used_bytes, quota_state, suspended, expires_at, created_at, updated_at, proxy_name_overrides
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             "#,
         )
         .bind(subscription.id)
@@ -122,6 +125,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(subscription.user_id)
         .bind(subscription.device_id)
         .bind(&subscription.name)
+        .bind(&subscription.client_name)
         .bind(&subscription.note)
         .bind(&encrypted_access_key)
         .bind(subscription.traffic_limit_bytes)
@@ -131,6 +135,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(subscription.expires_at)
         .bind(subscription.created_at)
         .bind(subscription.updated_at)
+        .bind(&subscription.proxy_name_overrides)
         .execute(&mut *transaction)
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
@@ -264,12 +269,13 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         sqlx::query(
             r#"
             update subscriptions
-            set name = $2, note = $3, access_key = $4, traffic_limit_bytes = $5, used_bytes = $6, quota_state = $7, suspended = $8, expires_at = $9, updated_at = $10
+            set name = $2, client_name = $3, note = $4, access_key = $5, traffic_limit_bytes = $6, used_bytes = $7, quota_state = $8, suspended = $9, expires_at = $10, updated_at = $11, proxy_name_overrides = $12
             where id = $1
             "#,
         )
         .bind(subscription.id)
         .bind(&subscription.name)
+        .bind(&subscription.client_name)
         .bind(&subscription.note)
         .bind(&encrypted_access_key)
         .bind(subscription.traffic_limit_bytes)
@@ -278,6 +284,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         .bind(subscription.suspended)
         .bind(subscription.expires_at)
         .bind(subscription.updated_at)
+        .bind(&subscription.proxy_name_overrides)
         .execute(&mut *transaction)
         .await
         .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
@@ -437,5 +444,39 @@ impl SubscriptionRepository for PgSubscriptionRepository {
             .map(|subscription| self.decrypt_subscription(subscription))
             .transpose()?;
         Ok(subscription.map(|subscription| ResolvedSubscriptionContext { subscription, link }))
+    }
+
+    async fn get_subscription_settings(&self) -> ApplicationResult<SubscriptionSettings> {
+        let value = sqlx::query_scalar::<_, Value>(
+            "select value from app_settings where key = 'subscription_settings'",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        let Some(value) = value else {
+            return Ok(SubscriptionSettings::default());
+        };
+        serde_json::from_value(value)
+            .map_err(|error| ApplicationError::Infrastructure(error.to_string()))
+    }
+
+    async fn update_subscription_settings(
+        &self,
+        settings: SubscriptionSettings,
+    ) -> ApplicationResult<SubscriptionSettings> {
+        let value = json!(settings);
+        sqlx::query(
+            r#"
+            insert into app_settings (key, value, updated_at)
+            values ('subscription_settings', $1, now() at time zone 'utc')
+            on conflict (key) do update
+            set value = excluded.value, updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(value)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| ApplicationError::Infrastructure(error.to_string()))?;
+        Ok(settings)
     }
 }

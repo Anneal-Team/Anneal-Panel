@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fs, path::PathBuf, time::Duration};
 use anyhow::{Context, Result, anyhow};
 
 use crate::{
-    bootstrap::ApiClient,
+    bootstrap::{ApiClient, SuperadminLogin},
     cli::{InstallArgs, ResumeArgs},
     config::{InstallConfig, InstallLayout, ResellerConfig},
     release::ReleaseBundle,
@@ -264,13 +264,30 @@ impl Installer {
         )?;
         let api = ApiClient::local()?;
         let control_plane = self.config.control_plane.clone();
-        let access_token = api
+        let access_token = match api
             .login_superadmin(
                 &control_plane.superadmin.email,
                 &control_plane.superadmin.password,
                 &mut self.state,
             )
-            .await?;
+            .await?
+        {
+            SuperadminLogin::Authenticated(access_token) => access_token,
+            SuperadminLogin::TotpSetupRequired => {
+                self.complete_step(
+                    InstallStep::StarterSubscription,
+                    "starter subscription skipped until admin completes TOTP setup",
+                )?;
+                return Ok(());
+            }
+            SuperadminLogin::TotpRequired => {
+                self.complete_step(
+                    InstallStep::StarterSubscription,
+                    "starter subscription skipped because admin TOTP is already enabled",
+                )?;
+                return Ok(());
+            }
+        };
         let tenant_id = self
             .ensure_reseller_tenant(&api, &access_token, control_plane.reseller.as_ref())
             .await?;

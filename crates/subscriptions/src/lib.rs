@@ -9,6 +9,7 @@ pub use application::{
 };
 pub use domain::{
     CreateDeviceCommand, CreateSubscriptionCommand, Device, RenderedSubscriptionBundle,
-    ResolvedSubscriptionContext, Subscription, SubscriptionLink, UpdateSubscriptionCommand,
+    ResolvedSubscriptionContext, Subscription, SubscriptionLink, SubscriptionSettings,
+    UpdateSubscriptionCommand,
 };
 pub use infrastructure::PgSubscriptionRepository;

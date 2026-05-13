@@ -143,6 +143,10 @@ launch_installer() {
   local control_utility="$1"
   local bundle_root="$2"
   shift 2
+  if [[ -f "/etc/anneal/install.toml" && -f "/var/lib/anneal/install-state.json" ]]; then
+    "${control_utility}" update --bundle-root "${bundle_root}"
+    return
+  fi
   if [[ ! -t 0 && -r /dev/tty ]]; then
     "${control_utility}" install --bundle-root "${bundle_root}" "$@" </dev/tty
     return

@@ -9,7 +9,10 @@ use serde_json::json;
 use utoipa::ToSchema;
 
 use anneal_config_engine::SubscriptionDocumentFormat;
-use anneal_subscriptions::{CreateSubscriptionCommand, UpdateSubscriptionCommand};
+use anneal_subscriptions::{
+    CreateSubscriptionCommand, SubscriptionRepository, SubscriptionSettings,
+    UpdateSubscriptionCommand,
+};
 
 use crate::{app_state::AppState, error::ApiError, extractors::authenticated_actor};
 
@@ -45,6 +48,8 @@ pub struct SubscriptionResponse {
     pub user_id: uuid::Uuid,
     pub device_id: uuid::Uuid,
     pub name: String,
+    pub client_name: Option<String>,
+    pub proxy_name_overrides: serde_json::Value,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
     pub used_bytes: i64,
@@ -60,6 +65,9 @@ pub struct SubscriptionResponse {
 pub struct CreateSubscriptionRequest {
     pub tenant_id: uuid::Uuid,
     pub name: String,
+    pub client_name: Option<String>,
+    #[serde(default = "empty_proxy_name_overrides")]
+    pub proxy_name_overrides: serde_json::Value,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -68,6 +76,9 @@ pub struct CreateSubscriptionRequest {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct UpdateSubscriptionRequest {
     pub name: String,
+    pub client_name: Option<String>,
+    #[serde(default = "empty_proxy_name_overrides")]
+    pub proxy_name_overrides: serde_json::Value,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -88,6 +99,7 @@ pub struct RotateSubscriptionLinkResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PublicSubscriptionResponse {
     pub name: String,
+    pub client_name: String,
     pub note: Option<String>,
     pub traffic_limit_bytes: i64,
     pub used_bytes: i64,
@@ -95,6 +107,11 @@ pub struct PublicSubscriptionResponse {
     pub suspended: bool,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub delivery_url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SubscriptionSettingsRequest {
+    pub default_client_name: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -117,6 +134,8 @@ pub async fn create_subscription(
             CreateSubscriptionCommand {
                 tenant_id: request.tenant_id,
                 name: request.name,
+                client_name: request.client_name,
+                proxy_name_overrides: request.proxy_name_overrides,
                 note: request.note,
                 traffic_limit_bytes: request.traffic_limit_bytes,
                 expires_at: request.expires_at,
@@ -181,6 +200,52 @@ pub async fn list_subscriptions(
     ))
 }
 
+#[utoipa::path(get, path = "/api/v1/subscription-settings")]
+pub async fn get_subscription_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<SubscriptionSettings>, ApiError> {
+    let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let settings = state
+        .subscription_service()
+        .get_subscription_settings(&actor)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(settings))
+}
+
+#[utoipa::path(patch, path = "/api/v1/subscription-settings", request_body = SubscriptionSettingsRequest)]
+pub async fn update_subscription_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SubscriptionSettingsRequest>,
+) -> Result<Json<SubscriptionSettings>, ApiError> {
+    let actor = authenticated_actor(&headers, &state).map_err(ApiError)?;
+    let settings = state
+        .subscription_service()
+        .update_subscription_settings(
+            &actor,
+            SubscriptionSettings {
+                default_client_name: request.default_client_name,
+            },
+        )
+        .await
+        .map_err(ApiError)?;
+    state
+        .audit_service()
+        .write(
+            Some(actor.user_id),
+            None,
+            "subscription_settings.update",
+            "subscription_settings",
+            None,
+            json!({ "default_client_name": settings.default_client_name }),
+        )
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(settings))
+}
+
 #[utoipa::path(patch, path = "/api/v1/subscriptions/{id}", request_body = UpdateSubscriptionRequest)]
 pub async fn update_subscription(
     State(state): State<AppState>,
@@ -196,6 +261,8 @@ pub async fn update_subscription(
             subscription_id,
             UpdateSubscriptionCommand {
                 name: request.name,
+                client_name: request.client_name,
+                proxy_name_overrides: request.proxy_name_overrides,
                 note: request.note,
                 traffic_limit_bytes: request.traffic_limit_bytes,
                 expires_at: request.expires_at,
@@ -345,9 +412,15 @@ pub async fn public_subscription(
         .resolve_subscription(&token)
         .await
         .map_err(ApiError)?;
+    let settings = state
+        .subscriptions
+        .get_subscription_settings()
+        .await
+        .map_err(ApiError)?;
     Ok(Json(public_subscription_response(
         &state.settings.public_base_url,
         context.subscription,
+        &settings,
     )))
 }
 
@@ -382,6 +455,8 @@ fn subscription_response(
         user_id: subscription.user_id,
         device_id: subscription.device_id,
         name: subscription.name,
+        client_name: subscription.client_name,
+        proxy_name_overrides: subscription.proxy_name_overrides,
         note: subscription.note,
         traffic_limit_bytes: subscription.traffic_limit_bytes,
         used_bytes: subscription.used_bytes,
@@ -401,7 +476,12 @@ fn format_delivery_url(base_url: &str, link_id: &uuid::Uuid) -> String {
 fn public_subscription_response(
     base_url: &str,
     subscription: anneal_subscriptions::Subscription,
+    settings: &SubscriptionSettings,
 ) -> PublicSubscriptionResponse {
+    let client_name = subscription
+        .client_name
+        .clone()
+        .unwrap_or_else(|| settings.default_client_name.clone());
     let delivery_url = subscription
         .current_token
         .as_deref()
@@ -410,6 +490,7 @@ fn public_subscription_response(
         .unwrap_or_default();
     PublicSubscriptionResponse {
         name: subscription.name,
+        client_name,
         note: subscription.note,
         traffic_limit_bytes: subscription.traffic_limit_bytes,
         used_bytes: subscription.used_bytes,
@@ -418,6 +499,10 @@ fn public_subscription_response(
         expires_at: subscription.expires_at,
         delivery_url,
     }
+}
+
+fn empty_proxy_name_overrides() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 fn format_public_page_url(base_url: &str, token: &str) -> String {

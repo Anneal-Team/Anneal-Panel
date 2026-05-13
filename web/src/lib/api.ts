@@ -60,6 +60,8 @@ export interface Subscription {
   user_id: string;
   device_id: string;
   name: string;
+  client_name: string | null;
+  proxy_name_overrides: Record<string, string>;
   note: string | null;
   traffic_limit_bytes: number;
   used_bytes: number;
@@ -82,6 +84,7 @@ export interface RotateSubscriptionLinkResponse {
 
 export interface PublicSubscription {
   name: string;
+  client_name: string;
   note: string | null;
   traffic_limit_bytes: number;
   used_bytes: number;
@@ -192,6 +195,10 @@ export function resolveApiUrl(rawBaseUrl: string, path: string, origin: string) 
     throw new Error(`API path escaped base URL: ${path}`);
   }
   return requestUrl;
+}
+
+export interface SubscriptionSettings {
+  default_client_name: string;
 }
 
 export function buildApiUrl(path: string) {
@@ -475,12 +482,23 @@ export const api = {
   listSubscriptions() {
     return apiFetch<Subscription[]>("/subscriptions");
   },
+  getSubscriptionSettings() {
+    return apiFetch<SubscriptionSettings>("/subscription-settings");
+  },
+  updateSubscriptionSettings(input: SubscriptionSettings) {
+    return apiFetch<SubscriptionSettings>("/subscription-settings", {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
   getPublicSubscription(token: string) {
     return publicFetch<PublicSubscription>(`/subscriptions/public/${token}`);
   },
   createSubscription(input: {
     tenant_id: string;
     name: string;
+    client_name?: string | null;
+    proxy_name_overrides?: Record<string, string>;
     note?: string | null;
     traffic_limit_bytes: number;
     expires_at: string;
@@ -494,6 +512,8 @@ export const api = {
     subscriptionId: string,
     input: {
       name: string;
+      client_name?: string | null;
+      proxy_name_overrides?: Record<string, string>;
       note?: string | null;
       traffic_limit_bytes: number;
       expires_at: string;
