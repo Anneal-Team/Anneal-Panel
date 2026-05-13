@@ -137,6 +137,7 @@ impl Installer {
         if let Some(progress) = self.progress.take() {
             progress.finish();
         }
+        println!("{}", self.completion_summary());
         Ok(())
     }
 
@@ -457,6 +458,23 @@ impl Installer {
         values
     }
 
+    fn completion_summary(&self) -> String {
+        let control_plane = &self.config.control_plane;
+        let mut lines = vec![
+            "Anneal installation completed.".to_owned(),
+            format!("Panel URL: {}", control_plane.public_base_url),
+            format!("Admin email: {}", control_plane.superadmin.email),
+            format!("Admin password: {}", control_plane.superadmin.password),
+            format!("Credentials file: {}", self.layout.summary_path.display()),
+        ];
+
+        if let Some(url) = self.state.bootstrap.starter_subscription_url.as_ref() {
+            lines.push(format!("Starter subscription URL: {url}"));
+        }
+
+        lines.join("\n")
+    }
+
     fn begin_step(&mut self, step: InstallStep, detail: &str) -> Result<()> {
         self.send_progress(ProgressEvent::StepStarted {
             step,
@@ -629,5 +647,24 @@ mod tests {
             values.get("ANNEAL_MIHOMO_PROTOCOLS"),
             Some(&"vless_reality,vmess".into())
         );
+    }
+
+    #[test]
+    fn completion_summary_prints_panel_and_credentials() {
+        let installer = Installer::new(
+            test_layout(),
+            release_bundle(),
+            sample_config(),
+            sample_state(),
+        );
+
+        let summary = installer.completion_summary();
+
+        assert!(summary.contains("Anneal installation completed."));
+        assert!(summary.contains("Panel URL: https://panel.example.com/private-path"));
+        assert!(summary.contains("Admin email: admin@panel.example.com"));
+        assert!(summary.contains("Admin password: superadmin-password"));
+        assert!(summary.contains("Credentials file: /etc/test-anneal/admin-summary.env"));
+        assert!(summary.contains("Starter subscription URL: https://panel.example.com/s/token"));
     }
 }
