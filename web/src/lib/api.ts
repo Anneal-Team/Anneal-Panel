@@ -175,10 +175,9 @@ function getBaseUrl() {
   return `${panelBasePath() || ""}/api/v1`;
 }
 
-function buildApiUrl(path: string) {
+export function resolveApiUrl(rawBaseUrl: string, path: string, origin: string) {
   const normalizedPath = normalizeApiPath(path);
-  const rawBaseUrl = getBaseUrl();
-  const baseUrl = new URL(rawBaseUrl, window.location.origin);
+  const baseUrl = new URL(rawBaseUrl, origin);
 
   if (!["http:", "https:"].includes(baseUrl.protocol)) {
     throw new Error(`Unsupported API protocol: ${baseUrl.protocol}`);
@@ -187,11 +186,16 @@ function buildApiUrl(path: string) {
     throw new Error("API base URL must not include credentials or fragments");
   }
 
-  const requestUrl = new URL(normalizedPath, baseUrl);
+  const basePath = baseUrl.pathname.replace(/\/+$/, "");
+  const requestUrl = new URL(`${basePath}${normalizedPath}`, baseUrl.origin);
   if (requestUrl.origin !== baseUrl.origin) {
     throw new Error(`API path escaped base URL: ${path}`);
   }
   return requestUrl;
+}
+
+export function buildApiUrl(path: string) {
+  return resolveApiUrl(getBaseUrl(), path, window.location.origin);
 }
 
 async function sendApiRequest(input: {
