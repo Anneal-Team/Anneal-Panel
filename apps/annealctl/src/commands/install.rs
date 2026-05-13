@@ -130,14 +130,16 @@ impl Installer {
         self.cleanup_transient_secrets().await?;
         self.state.finish();
         self.persist()?;
+        let completion_summary = self.completion_summary();
         self.send_progress(ProgressEvent::Finished {
             panel_url: self.config.control_plane.public_base_url.clone(),
             summary_path: self.layout.summary_path.display().to_string(),
+            completion_summary: completion_summary.clone(),
         });
         if let Some(progress) = self.progress.take() {
             progress.finish();
         }
-        println!("{}", self.completion_summary());
+        println!("{completion_summary}");
         Ok(())
     }
 
@@ -462,6 +464,7 @@ impl Installer {
         let control_plane = &self.config.control_plane;
         let mut lines = vec![
             "Anneal installation completed.".to_owned(),
+            "IMPORTANT: SAVE THESE CREDENTIALS NOW.".to_owned(),
             format!("Panel URL: {}", control_plane.public_base_url),
             format!("Admin email: {}", control_plane.superadmin.email),
             format!("Admin password: {}", control_plane.superadmin.password),
@@ -661,6 +664,7 @@ mod tests {
         let summary = installer.completion_summary();
 
         assert!(summary.contains("Anneal installation completed."));
+        assert!(summary.contains("IMPORTANT: SAVE THESE CREDENTIALS NOW."));
         assert!(summary.contains("Panel URL: https://panel.example.com/private-path"));
         assert!(summary.contains("Admin email: admin@panel.example.com"));
         assert!(summary.contains("Admin password: superadmin-password"));

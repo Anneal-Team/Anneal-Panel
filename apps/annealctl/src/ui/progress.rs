@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     prelude::{Line, Modifier, Span, Style},
@@ -43,6 +44,7 @@ pub enum ProgressEvent {
     Finished {
         panel_url: String,
         summary_path: String,
+        completion_summary: String,
     },
 }
 
@@ -66,6 +68,7 @@ impl InstallProgress {
             domain: config.control_plane.domain.clone(),
             panel_url: config.control_plane.public_base_url.clone(),
             summary_path,
+            completion_summary: String::new(),
             logs: VecDeque::new(),
             done: false,
             failed: false,
@@ -86,7 +89,7 @@ impl InstallProgress {
                         let should_stop = snapshot.apply(event);
                         let _ = session.draw(|frame| snapshot.render(frame));
                         if should_stop {
-                            thread::sleep(Duration::from_millis(900));
+                            wait_for_enter(&mut session, &snapshot);
                             let _ = session.restore();
                             break;
                         }
@@ -130,6 +133,7 @@ struct ProgressSnapshot {
     domain: String,
     panel_url: String,
     summary_path: String,
+    completion_summary: String,
     logs: VecDeque<String>,
     done: bool,
     failed: bool,
@@ -167,9 +171,11 @@ impl ProgressSnapshot {
             ProgressEvent::Finished {
                 panel_url,
                 summary_path,
+                completion_summary,
             } => {
                 self.panel_url = panel_url;
                 self.summary_path = summary_path;
+                self.completion_summary = completion_summary;
                 self.done = true;
                 self.push_log("installation completed");
             }
@@ -232,7 +238,11 @@ impl ProgressSnapshot {
             status_area,
         );
         frame.render_widget(
-            footer("installer active  command output is streamed below"),
+            footer(if self.done {
+                "press Enter to close  save credentials before closing"
+            } else {
+                "installer active  command output is streamed below"
+            }),
             footer_area,
         );
     }
@@ -286,19 +296,51 @@ impl ProgressSnapshot {
                 .label(format!("{:.0}%", ratio * 100.0)),
             content[0],
         );
-        let lines = self.logs.iter().cloned().collect::<Vec<_>>().join("\n");
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(muted_card("Live log"))
-                .wrap(Wrap { trim: false }),
-            content[1],
-        );
+        if self.done && !self.failed {
+            let final_text = format!(
+                "{}\n\nPress Enter only after you saved these credentials.",
+                self.completion_summary
+            );
+            frame.render_widget(
+                Paragraph::new(final_text)
+                    .style(Style::default().fg(WARNING))
+                    .block(card("Save credentials"))
+                    .wrap(Wrap { trim: false }),
+                content[1],
+            );
+        } else {
+            let lines = self.logs.iter().cloned().collect::<Vec<_>>().join("\n");
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .block(muted_card("Live log"))
+                    .wrap(Wrap { trim: false }),
+                content[1],
+            );
+        }
     }
 
     fn push_log(&mut self, line: impl Into<String>) {
         self.logs.push_back(line.into());
         while self.logs.len() > 120 {
             self.logs.pop_front();
+        }
+    }
+}
+
+fn wait_for_enter(session: &mut TuiSession, snapshot: &ProgressSnapshot) {
+    loop {
+        let _ = session.draw(|frame| snapshot.render(frame));
+        if !event::poll(Duration::from_millis(250)).unwrap_or(false) {
+            continue;
+        }
+        let Ok(Event::Key(key)) = event::read() else {
+            continue;
+        };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        if matches!(key.code, KeyCode::Enter | KeyCode::Char('\n' | '\r')) {
+            break;
         }
     }
 }
