@@ -107,7 +107,7 @@ annealctl uninstall
 
 ### 🔖 Каналы релизов
 
-- `master` → rolling-релиз `rolling-master` (по умолчанию)
+- тег `vX.Y.Z` / `X.Y.Z` → версионный релиз, например `Anneal 0.1.0`
 - Semver-теги вроде `0.1.0` → стабильные релизы
 - `ANNEAL_RELEASE_TAG=0.1.0` — ручная фиксация версии
 

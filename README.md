@@ -107,7 +107,7 @@ annealctl uninstall
 
 ### 🔖 Release channels
 
-- `master` → rolling `rolling-master` release (default)
+- `vX.Y.Z` / `X.Y.Z` tag → versioned release, for example `Anneal 0.1.0`
 - Semver tags like `0.1.0` → stable releases
 - Set `ANNEAL_RELEASE_TAG=0.1.0` to pin manually
 

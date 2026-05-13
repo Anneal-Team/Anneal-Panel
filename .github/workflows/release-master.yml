@@ -1,9 +1,7 @@
-name: Release Master
+name: Release
 
 on:
   push:
-    branches:
-      - master
     tags:
       - 'v*.*.*'
       - '*.*.*'
@@ -17,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-master
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -69,15 +67,15 @@ jobs:
             bundle_label="${version}"
             release_name="Anneal ${version}"
             release_tag="${GITHUB_REF_NAME}"
-          elif [[ "${GITHUB_REF_TYPE}" == "branch" && ( "${GITHUB_REF_NAME}" == "master" || ( "${GITHUB_REF_NAME}" == "dev" && "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ) ) ]]; then
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             should_release=true
-            bundle_label="rolling-master"
-            release_name="Anneal master"
-            release_tag="rolling-master"
+            bundle_label="${version}"
+            release_name="Anneal ${version}"
+            release_tag="${version}"
             commit_ref="${GITHUB_SHA}"
           fi
 
-          if [[ "${should_release}" == "true" && "${release_tag}" != "rolling-master" ]]; then
+          if [[ "${should_release}" == "true" ]]; then
             existing_tag_commit="$(git ls-remote --tags origin "refs/tags/${release_tag}^{}" | awk 'NR==1 { print $1 }')"
             if [[ -z "${existing_tag_commit}" ]]; then
               existing_tag_commit="$(git ls-remote --tags origin "refs/tags/${release_tag}" | awk 'NR==1 { print $1 }')"
@@ -123,11 +121,6 @@ jobs:
         run: bash scripts/package-release.sh
       - name: Verify release bundle
         run: bash scripts/verify-bundle.sh dist/*.tar.gz
-      - name: Update rolling release tag
-        if: needs.prepare.outputs.release_tag == 'rolling-master'
-        run: |
-          git tag -f rolling-master "${GITHUB_SHA}"
-          git push origin refs/tags/rolling-master --force
       - name: Publish release
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd
         with:

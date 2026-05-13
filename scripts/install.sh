@@ -58,10 +58,6 @@ resolve_latest_release_tag() {
 }
 
 resolve_default_release_tag() {
-  if github_api_get "https://api.github.com/repos/${ANNEAL_GITHUB_REPOSITORY}/releases/tags/rolling-master" >/dev/null 2>&1; then
-    printf '%s' "rolling-master"
-    return
-  fi
   resolve_latest_release_tag
 }
 
