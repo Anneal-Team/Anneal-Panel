@@ -48,7 +48,7 @@ dialoguer = "0.12.0"
 futures = "0.3.32"
 hmac = "0.13.0"
 indicatif = "0.18.4"
-jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
 rand = "0.10.1"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 serde = { version = "1.0.228", features = ["derive"] }
